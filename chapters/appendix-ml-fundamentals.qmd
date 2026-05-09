@@ -1,0 +1,51 @@
+# ML Fundamentals Refresher {#sec-appendix-ml}
+
+::: {.callout-note}
+This appendix covers classical ML concepts that frequently appear in entry-level GenAI interview screening rounds. It assumes you have seen these topics before and need a quick recall pass, not a first introduction.
+:::
+
+## Core Algorithms
+
+**Linear Regression** — Fits a line (or hyperplane) by minimizing mean squared error. Closed-form solution via normal equations; gradient descent for large datasets. Key assumption: linear relationship between features and target.
+
+**Logistic Regression** — Classification via sigmoid-squashed linear output. Minimizes cross-entropy loss. Despite the name, it's a classifier. Interpretable coefficients. L1/L2 regularization applied directly.
+
+**Decision Trees** — Recursively partition feature space using information gain (entropy) or Gini impurity. Prone to overfitting; depth and min-samples hyperparameters control this.
+
+**SVMs** — Find the maximum-margin hyperplane. Kernel trick extends to non-linear boundaries (RBF, polynomial). Effective in high-dimensional spaces; expensive at scale.
+
+**k-NN** — Classify by majority vote of k nearest neighbors. No training phase (lazy learner). Distance metric choice matters. Degrades in high dimensions (curse of dimensionality).
+
+**K-Means Clustering** — Assign points to k centroids, recompute centroids, repeat. Sensitive to initialization (k-means++). Choose k with elbow method or silhouette score.
+
+**PCA** — Project data onto directions of maximum variance (eigenvectors of covariance matrix). Reduces dimensionality. Features become uninterpretable linear combinations.
+
+## Key Concepts
+
+**Bias-Variance Tradeoff** — High bias = underfitting (model too simple). High variance = overfitting (model memorizes training data). Increasing model complexity moves bias down and variance up.
+
+**Regularization** — L2 (Ridge): penalizes large weights, shrinks all weights. L1 (Lasso): can zero out weights, producing sparse models. Both added as λ||w|| term to the loss.
+
+**Cross-Validation** — k-fold CV partitions data into k folds, trains on k-1, evaluates on 1, rotates. Produces more reliable generalization estimates than a single train/val split.
+
+**Evaluation Metrics**
+
+| Metric | Formula | When to use |
+|---|---|---|
+| Accuracy | (TP+TN)/(P+N) | Balanced classes |
+| Precision | TP/(TP+FP) | False positives are costly |
+| Recall | TP/(TP+FN) | False negatives are costly |
+| F1 | 2·P·R/(P+R) | Imbalanced classes |
+| AUC-ROC | Area under ROC curve | Comparing classifiers |
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level — ML Screening"}
+1. What is the bias-variance tradeoff? Give an example of a high-bias and high-variance model.
+2. When would you use L1 vs. L2 regularization?
+3. You have a dataset with 95% class A and 5% class B. Your model predicts class A 100% of the time. What is the accuracy, and why is it misleading?
+4. What is cross-validation and why is it better than a single train/test split?
+5. How does gradient descent work at a high level?
+:::

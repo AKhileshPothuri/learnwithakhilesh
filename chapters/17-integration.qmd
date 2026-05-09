@@ -1,0 +1,46 @@
+# Enterprise Integration Patterns
+
+::: {.callout-note}
+**Who this chapter is for:** FDE (Mid+ background assumed)
+**What you'll be able to answer after reading this:**
+
+- How to design a GenAI API layer that fits into an existing enterprise architecture
+- Data pipeline patterns for keeping a RAG index fresh
+- Authentication, rate limiting, and cost governance for enterprise deployments
+- Common integration anti-patterns and how to avoid them
+:::
+
+## API Design for GenAI Features
+
+*REST vs. streaming (SSE / WebSocket). Idempotency. Async patterns for long-running generations. Versioning prompts like code.*
+
+## Data Pipeline Patterns
+
+*Batch ingestion vs. event-driven ingestion. Document change detection (webhooks, polling, CDC). Index freshness SLAs.*
+
+## Authentication and Authorization
+
+*Who can query which knowledge? Row-level security in the vector DB. Credential injection for tool use.*
+
+## Cost Governance
+
+*Per-team token budgets. Cost attribution tagging. Alerting on anomalous spend. Model routing by cost tier.*
+
+## Observability
+
+*Tracing LLM calls (LangSmith, Arize, Helicone). Logging prompt + completion for debugging. Latency percentiles.*
+
+## Common Anti-Patterns
+
+*Chunking too small. No re-ranking. Prompt injection risk from retrieved documents. No human escalation path. Hardcoded model versions.*
+
+---
+
+## Interview Questions
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer wants to integrate your company's LLM API into their existing enterprise software. What are the first five questions you ask about their architecture?
+2. The customer's RAG index goes stale within hours of document updates. Design a near-real-time ingestion pipeline.
+3. How would you implement document-level access control in a RAG system where different employees have different document permissions?
+4. Design a cost governance system for a company deploying LLM features across 10 internal teams.
+:::

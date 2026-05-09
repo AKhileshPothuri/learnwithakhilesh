@@ -1,0 +1,159 @@
+# Prompt Engineering
+
+::: {.callout-note}
+**Who this chapter is for:** Entry → Mid Level (and FDE for customer-facing scenarios)
+**What you'll be able to answer after reading this:**
+
+- The five components every well-designed prompt should contain
+- Why few-shot examples are the highest-leverage optimization tool
+- When chain-of-thought hurts rather than helps
+- How to build a systematic evaluation harness instead of guessing
+- When prompting stops being sufficient and fine-tuning becomes necessary
+:::
+
+## The Problem With Trial-and-Error Prompting
+
+Most prompt optimization looks like expensive gambling. Practitioners tweak language incrementally, add "think step by step," and hope for consistency. But identical prompts sometimes produce brilliant outputs and sometimes produce nonsense.
+
+The distinction between lucky results and reliable performance is *repeatability*. Lucky prompts work once under specific conditions. Systematic prompts succeed because the author understands the mechanics and can adjust them predictably when results disappoint.
+
+The field has matured. Organizations building production LLM systems now version-control prompts, test them against benchmark datasets, and deploy them through CI/CD pipelines — the same rigor applied to software.
+
+## Foundational Structure: The Five Components
+
+Apply the "new employee test" — if a smart intern couldn't follow your instructions on day one, an LLM can't either. Both have general intelligence but lack domain context and require explicit guidance rather than hints.
+
+Every well-designed prompt contains five components:
+
+| Component | Purpose | Example |
+|---|---|---|
+| **Role** | Sets the model's persona and expertise frame | "You are a senior data analyst at a fintech company..." |
+| **Context** | Background the model needs to answer well | "The dataset has 500k rows, quarterly, with nulls in the revenue column..." |
+| **Task** | The concrete action required | "Identify the top 3 anomalies in the attached data..." |
+| **Format** | Desired output structure | "Respond as a JSON array with fields: finding, severity, recommendation" |
+| **Constraints** | Boundaries and priorities | "Do not include findings with confidence < 0.8. Maximum 3 items." |
+
+**Format specification matters more than most engineers expect.** "Provide a summary" yields unpredictable lengths and structures. "Three bullets, maximum 15 words each" creates a measurable target. In practice, prompts with explicit output formats show 40–60% consistency improvements over open-ended alternatives.
+
+## Few-Shot Prompting: Learn Through Examples
+
+Rather than exhaustively explaining desired behavior, demonstrate it. Provide 3–5 concrete examples before the actual request. This works because humans and language models learn patterns more efficiently from demonstration than from abstract explanation.
+
+Research shows diminishing returns beyond five examples:
+
+- 1 example: establishes a pattern
+- 2 examples: confirms it's intentional
+- 3 examples: allows triangulation of the underlying principle
+- 4–5 examples: useful for nuanced edge cases
+- 6+ examples: typically waste context tokens without meaningfully improving results
+
+**Select examples strategically.** Include straightforward cases, ambiguous scenarios, and borderline situations. Your examples should demonstrate how to handle uncertainty, not just celebrate easy wins.
+
+## Chain-of-Thought Reasoning
+
+The phrase "let's think step by step" can dramatically boost accuracy on certain tasks — documented improvements from 18% to 79% on some math benchmarks. The mechanism: intermediate reasoning steps constrain subsequent outputs. Instead of jumping from question to answer, the model generates intermediate work that reduces the probability of wrong-turn errors.
+
+**When CoT helps:**
+- Multi-step math or logic problems
+- Tasks requiring sequential reasoning
+- Problems where intermediate states need to be validated
+
+**When CoT hurts:**
+- Simple pattern-matching (basic sentiment classification, straightforward categorization)
+- Tasks where the model second-guesses obvious answers, introducing noise through overthinking
+- High-volume, latency-sensitive production paths where reasoning tokens add cost
+
+For complex problems, combine CoT with few-shot: show 2–3 examples of detailed reasoning, then ask the model to follow the same pattern. You're demonstrating *how* to reason about this specific problem type, not just instructing it to reason. This hybrid consistently outperforms either technique alone.
+
+## The Counterintuitive Power of Brevity
+
+Longer prompts often underperform shorter alternatives. Research on prompt compression shows many prompts can be shortened 50%+ with minimal quality degradation — and sometimes compressed versions outperform originals.
+
+Signal-to-noise explains this. Your prompt's "signal" is the necessary task information, constraints, and context. "Noise" is filler that dilutes the core message:
+
+**Common padding that degrades performance:**
+- Apologetic language ("I would like you to please...")
+- Restating instructions multiple ways
+- Persona descriptions irrelevant to the output
+- Excessive examples when fewer suffice
+- Hedging phrases ("if possible," "try to")
+
+Every unnecessary token competes for attention within the context window. Burying essential requirements under conversational scaffolding forces the model to work harder to extract what matters.
+
+**Test this:** cut your longest prompt in half. Often output quality improves because essential instructions gain clarity. Start minimal, then add only elements that demonstrably improve results.
+
+## Systematic Evaluation: From Artisanal to Industrial
+
+Individual successful prompts may simply benefit from favorable randomness. Running the same prompt five times and declaring success ignores the probabilistic nature of language model outputs. Running it a hundred times typically yields outputs ranging from excellent to unusable.
+
+**The artisanal vs. industrial gap:**
+- Artisanal: tweak until something works, assume consistency
+- Industrial: demonstrate reliability across actual input distributions
+
+**Building an evaluation dataset:**
+- Collect edge cases systematically: unclear inputs, unusual formats, adversarial examples
+- Include inputs that previously failed and representative samples from every production category
+- Aim for 100+ test cases minimum for a production prompt
+
+**Define success explicitly.** Does the output match the required length? Does it contain mandatory fields? Does it avoid forbidden content? Can a function verify each criterion automatically?
+
+For semantic quality, use LLM-as-judge: a separate (usually stronger) model scores outputs against a rubric. Validate that your judge correlates with human assessment before trusting it.
+
+**Evaluate every prompt change against the full test set.** The prompt achieving 94% accuracy across 200 test cases consistently beats the one that "felt better" on three examples.
+
+## Treating Prompts as Software
+
+Production teams that get real LLM value treat prompts with the same rigor as production code:
+
+- **Version control** with commit messages and pull request reviews
+- **CI/CD pipelines** that run evaluation suites on every prompt change — failed tests block deployment
+- **Cost, latency, quality tradeoffs** understood and tracked explicitly
+
+Every prompt decision balances three constraints:
+- **Cost** (tokens processed → API spend)
+- **Latency** (response time → user experience)
+- **Quality** (output accuracy → business value)
+
+You can't optimize all three simultaneously. Few-shot examples improve quality while increasing cost. CoT adds accuracy but adds latency. Prompt compression trades some quality for dramatic token reduction. Understand which constraint dominates your use case, then optimize deliberately.
+
+## When Prompting Isn't Enough
+
+Signs that prompting has hit its ceiling:
+
+- The model consistently misformatts output despite explicit format instructions
+- The model lacks knowledge that doesn't appear in its training data
+- The desired style or tone is subtle and hard to describe but easy to demonstrate
+- Edge case handling requires more examples than fit in a context window
+- You need guaranteed response latency and prompt size is growing uncontrollably
+
+Fine-tuning becomes the right answer when you have abundant labeled domain data and consistent misbehavior across thousands of edge cases. Most teams should exhaust prompting options first because it's faster to iterate, cheaper to operate, and simpler to reverse.
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is few-shot prompting and why does it work?
+2. What is chain-of-thought prompting and when would you use it?
+3. What is a system prompt?
+4. Name five components a well-structured prompt should contain.
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. When does chain-of-thought prompting *hurt* performance rather than help it?
+2. How would you design a prompt evaluation framework that catches regressions when you update prompts? What does the test set look like?
+3. Explain the signal-to-noise tradeoff in prompt design. What kinds of prompt content count as noise?
+4. You changed a prompt and outputs seem better on manual spot-checks. How do you confirm it's actually better before deploying to production?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer's GPT-4-based classification pipeline has 15% error rate. Before recommending fine-tuning, what prompt engineering techniques would you try first and in what order?
+2. A customer wants to use LLMs for customer support but is worried about inconsistency — the model says different things to different users about the same policy. What prompt engineering mitigations do you apply?
+3. How do you explain to a non-technical PM the difference between prompt engineering and fine-tuning? What determines which approach to use?
+:::
+
+## Further Reading
+
+- [Chain-of-Thought Prompting Elicits Reasoning in LLMs (Wei et al., 2022)](https://arxiv.org/abs/2201.11903)
+- [Large Language Models are Zero-Shot Reasoners (Kojima et al., 2022)](https://arxiv.org/abs/2205.11916)
+- [Lost in the Middle: How LLMs Use Long Contexts (Liu et al., 2023)](https://arxiv.org/abs/2307.03172)

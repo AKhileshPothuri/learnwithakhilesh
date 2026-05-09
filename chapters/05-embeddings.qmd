@@ -1,0 +1,155 @@
+# Embeddings — Representations That Encode Meaning
+
+::: {.callout-note}
+**Who this chapter is for:** Entry → Mid Level
+**What you'll be able to answer after reading this:**
+
+- Why computers can't read text natively and how embeddings solve that
+- How models learn which words belong in similar neighborhoods
+- Why cosine similarity measures semantic relatedness better than Euclidean distance
+- How embeddings power semantic search, RAG, and recommendation systems
+- The production realities that textbooks omit
+:::
+
+## Why Computers Can't Read (And How Engineers Solved It)
+
+Computers don't understand word meanings. When you input "dog," your machine perceives only binary codes representing individual characters — it treats "dog" identically to "xqz": both are mere sequences with no inherent connection to reality.
+
+This created a real obstacle. How could engineers build search systems that recognize "puppy" and "dog" as related? How could chatbots understand that "I'm feeling blue" represents emotion rather than color?
+
+**Early attempt: one-hot encoding.** Assign each word a unique integer — "dog" = 1, "cat" = 2, "puppy" = 3,847. This fails immediately: the numerical distance between "dog" (1) and "puppy" (3,847) appears identical to the distance between "dog" and "quantum" (12,459), despite the first pair being semantically related.
+
+**The pivotal insight:** what if semantically similar words had similar numerical values? Rather than arbitrary identifiers, what if we could position words in mathematical space where "dog" and "puppy" naturally cluster together, while "dog" and "refrigerator" remain distant?
+
+This concept birthed embeddings.
+
+## From Words to Coordinates
+
+Think of it as GPS for meaning. GPS coordinates like `40.7128° N, 74.0060° W` communicate exact physical location — nearby coordinates mean nearby locations. Embeddings work identically, except they describe *meaning location* rather than physical location.
+
+Each word receives coordinates in meaning space — typically hundreds of dimensions rather than two. Words sharing similar meanings end up with comparable coordinates. "King" and "queen" cluster in the royalty neighborhood. "Banana" and "mango" occupy the fruit region. "King" and "banana" reside in completely different areas.
+
+These are actual coordinates — you can apply arithmetic to meanings.
+
+### The Famous Example: King − Man + Woman ≈ Queen
+
+Take "king's" vector. Subtract "man's" vector. Add "woman's" vector. The result lands remarkably near "queen's" vector.
+
+This demonstrates that the embedding captured the relationship between "king" and "queen" as identical to "man" and "woman" — it learned the concept of gender applied to royalty *without explicit instruction*. This pattern surfaced from encountering millions of sentences containing these words in comparable contexts.
+
+## How Models Learn These Coordinates
+
+Embedding training centers on linguist J.R. Firth's 1957 observation: *"You shall know a word by the company it keeps."* Words appearing in comparable contexts typically share similar meanings. "Coffee" and "tea" both appear alongside "drink," "morning," "cup," and "caffeine." A model recognizing this pattern can deduce these words are related — without comprehending what coffee or tea fundamentally are.
+
+**Word2Vec (2013)** formalized this into a prediction task: given one word, predict neighboring words. The network starts with random coordinates for every word. When it correctly predicts that "roast" appears adjacent to "coffee," their vectors nudge marginally closer. After millions of nudges, words with similar company end up in similar neighborhoods.
+
+**The shift to contextual embeddings:** Single-word embeddings have a problem — "bank" means something different in "river bank" vs "bank account." Models like BERT solve this by assigning different coordinates to the same word depending on surrounding context. Modern LLMs take this further, producing embeddings for entire sentences, paragraphs, and documents.
+
+**Why 384 dimensions?** Why not 3, or 3,000? Each dimension captures some aspect of meaning, though not in interpretable ways — dimension 47 might partially encode formality, dimension 203 might correlate with physical vs. abstract concepts. More dimensions enable finer distinctions, but with diminishing returns and increasing cost. 384-dim models often outperform 1536-dim models because they're better trained, not because they have more parameters.
+
+## Measuring Similarity in Meaning Space
+
+Once text becomes vectors, you need to measure how close two vectors are.
+
+**Euclidean distance** is the intuitive choice — the straight-line distance. It fails in practice. A short recipe document and a long cookbook chapter might be semantically identical, but the long one has larger values throughout. Euclidean distance says they're far apart simply because one vector is longer.
+
+**Cosine similarity** fixes this by measuring the *angle* between vectors, ignoring length:
+
+$$\text{cosine\_similarity}(A, B) = \frac{A \cdot B}{\|A\| \cdot \|B\|}$$
+
+Two vectors pointing identically score 1.0 (same meaning), perpendicular vectors score 0 (unrelated), opposite vectors score −1.0. This captures what matters: direction in meaning space, regardless of magnitude.
+
+| Metric | Formula | Best for |
+|---|---|---|
+| Cosine similarity | angle between vectors | Text of varying lengths |
+| Euclidean distance | straight-line distance | When magnitude matters |
+| Dot product | $A \cdot B$ | Fast approximation when vectors are normalized |
+
+Most production systems start with cosine similarity threshold around 0.7–0.8 for semantic search, then tune empirically based on whether results feel too strict or too loose.
+
+## Why This Powers Modern AI Systems
+
+**Semantic search** finds documents by meaning, not keyword overlap. Searching "affordable places to stay in Paris" can surface results mentioning "budget hotels near the Eiffel Tower" with zero vocabulary overlap. Your query becomes a vector; every document is already a vector; you find nearest neighbors.
+
+**RAG (Retrieval-Augmented Generation)** is how ChatGPT can "remember" documents outside its training data. When you upload a PDF to Claude or deploy a custom GPT over your knowledge base:
+
+1. Documents get chunked and converted to embedding vectors
+2. Vectors are stored in a vector database
+3. At query time, your question becomes a vector
+4. Most similar document chunks are retrieved
+5. Those chunks are injected into the LLM's context window
+
+The LLM doesn't search — it reads the retrieved context and synthesizes. Embeddings power the retrieval step.
+
+**Recommendation systems** encode preferences as coordinates. Spotify doesn't just know you like jazz — it knows where you sit in 128-dimensional taste space, surrounded by songs you'll probably enjoy.
+
+**Duplicate detection** matches text that string comparison misses entirely. "JPMorgan Chase," "JP Morgan," and "J.P. Morgan & Co." look different as strings, but their embedding vectors are nearly indistinguishable — critical for deduplicating customer databases.
+
+## Practical Example: Semantic Search
+
+```{python}
+#| label: semantic-search-basic
+#| eval: false
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+docs = [
+    "Budget hotels near the Eiffel Tower",
+    "Luxury apartments in Paris city center",
+    "Affordable hostels in Montmartre",
+    "Five-star hotels in London",
+]
+
+doc_embeddings = model.encode(docs)
+query = "cheap places to stay in Paris"
+query_embedding = model.encode([query])
+
+# Cosine similarities
+similarities = np.dot(doc_embeddings, query_embedding.T).flatten()
+similarities /= (np.linalg.norm(doc_embeddings, axis=1) * np.linalg.norm(query_embedding))
+
+for doc, score in sorted(zip(docs, similarities), key=lambda x: -x[1]):
+    print(f"{score:.3f}  {doc}")
+```
+
+## Production Realities Nobody Talks About
+
+**Embeddings don't capture meaning — they capture patterns in training data.** If that training data associates "doctor" predominantly with "he" rather than "she," the embeddings reflect this bias. It's baked into the vector space geometry, not configurable away with a flag.
+
+**Domain mismatch silently destroys performance.** A model trained on Wikipedia and web content hasn't seen your organization's internal terminology, legal language, or medical vocabulary. When embedding "SOW" (Statement of Work), a general model positions it near agricultural content. Your legal contracts need a fine-tuned embedding model — without one, retrieval degrades silently without raising errors.
+
+**Hybrid retrieval outperforms pure vector search in production.** Vector search excels at "find documents about renewable energy policy" but struggles with "find documents mentioning EPA Form 7520." Exact keywords are better for exact matches; embeddings are better for conceptual matches. Systems like Pinecone and Elasticsearch now offer hybrid modes because practitioners discovered this empirically.
+
+**More dimensions ≠ better performance.** In very high-dimensional spaces, distance metrics become unstable — everything starts appearing equidistant (the curse of dimensionality). A well-trained 384-dim model routinely outperforms a mediocre 1536-dim one. Bigger is only better when training data and architecture are held equal.
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is a word embedding and what does it represent?
+2. What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?
+3. What is a vector database used for?
+4. Explain the "king − man + woman = queen" example. What does it tell you about embeddings?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?
+2. Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don't.
+3. Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?
+4. A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer's semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.
+2. How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?
+3. A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?
+:::
+
+## Further Reading
+
+- [Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks (Reimers & Gurevych, 2019)](https://arxiv.org/abs/1908.10084)
+- [FAISS: A Library for Efficient Similarity Search](https://faiss.ai/)
+- [Matryoshka Representation Learning (Kusupati et al., 2022)](https://arxiv.org/abs/2205.13147) — flexible-length embeddings

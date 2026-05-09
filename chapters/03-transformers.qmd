@@ -1,0 +1,90 @@
+# The Transformer Architecture
+
+::: {.callout-note}
+**Who this chapter is for:** Entry → Mid Level
+**What you'll be able to answer after reading this:**
+
+- What self-attention computes and why it replaced RNNs for sequence modeling
+- The role of every sub-component: embedding, positional encoding, MHA, FFN, LayerNorm
+- The difference between encoder-only, decoder-only, and encoder-decoder architectures
+- Why transformers scale — and what the scaling bottlenecks are
+:::
+
+## Why RNNs Weren't Enough
+
+*Sequential computation, vanishing gradients over long sequences, no parallelism. The problem transformers solved.*
+
+## Self-Attention: The Core Idea
+
+*Queries, Keys, Values. The dot-product attention formula. Why it works as a soft lookup table.*
+
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+$$
+
+## Multi-Head Attention
+
+*Why multiple heads? Each head can attend to different aspects of the sequence.*
+
+## Positional Encoding
+
+*Absolute (sinusoidal, learned) vs. relative (RoPE, ALiBi). Why position matters and how modern LLMs handle it.*
+
+## The Full Block: LayerNorm, FFN, Residuals
+
+*Pre-LN vs Post-LN. The role of the feed-forward network (the "memory" of the transformer).*
+
+## Architecture Variants
+
+| Variant | Examples | Pretraining Objective | Best for |
+|---|---|---|---|
+| Encoder-only | BERT, RoBERTa | Masked LM | Classification, NER, embeddings |
+| Decoder-only | GPT, Llama, Gemma | Causal LM | Text generation |
+| Encoder-decoder | T5, BART | Seq2Seq | Translation, summarization |
+
+## Minimal Transformer in PyTorch
+
+```{python}
+#| label: transformer-pytorch
+#| eval: false
+# Minimal self-attention block
+import torch
+import torch.nn as nn
+
+class SelfAttention(nn.Module):
+    def __init__(self, d_model, n_heads):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x):
+        attn_out, _ = self.attn(x, x, x)
+        return self.norm(x + attn_out)
+```
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What problem does the attention mechanism solve that RNNs couldn't?
+2. Explain the Query, Key, Value abstraction in attention.
+3. What is positional encoding and why is it needed?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Why is attention complexity O(n²) in sequence length, and what architectural changes address this?
+2. Compare encoder-only vs. decoder-only architectures — when would you choose each?
+3. What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?
+2. How would you explain context window limitations to a customer who wants to "just feed in the whole database"?
+:::
+
+## Further Reading
+
+- [Attention Is All You Need (Vaswani et al., 2017)](https://arxiv.org/abs/1706.03762)
+- [The Illustrated Transformer (Jay Alammar)](https://jalammar.github.io/illustrated-transformer/)
+- [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864)

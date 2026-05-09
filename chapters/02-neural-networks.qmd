@@ -1,0 +1,69 @@
+# Neural Networks — Intuition to Backprop
+
+::: {.callout-note}
+**Who this chapter is for:** Entry Level (review for Mid/FDE)
+**What you'll be able to answer after reading this:**
+
+- How a perceptron makes a decision and what activation functions do
+- How backpropagation propagates error signals through a network
+- Why gradient descent converges and what can go wrong
+- The intuition behind common optimizers (SGD, Adam)
+:::
+
+## The Perceptron
+
+*[Draft content here]*
+
+## Activation Functions
+
+*ReLU, Sigmoid, Tanh, Softmax — when to use each and why ReLU dominates.*
+
+## Loss Functions
+
+*Cross-entropy for classification, MSE for regression. What the loss surface looks like.*
+
+## Backpropagation
+
+*The chain rule applied to computation graphs. Intuitive walkthrough + a worked NumPy example.*
+
+```{python}
+#| label: backprop-numpy
+#| eval: false
+# Minimal two-layer network with manual backprop in NumPy
+import numpy as np
+
+# TODO: implement forward + backward pass
+```
+
+## Gradient Descent and Optimizers
+
+*SGD, momentum, Adam. Why Adam is the default and when SGD generalizes better.*
+
+## Vanishing & Exploding Gradients
+
+*Why deep networks struggled before residual connections and normalization.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What does an activation function do, and why do we need non-linearity?
+2. Explain backpropagation in plain English.
+3. What is the difference between batch gradient descent and stochastic gradient descent?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Why does ReLU suffer from "dying neurons" and how do variants like Leaky ReLU address it?
+2. Compare Adam and SGD with momentum — in what regimes does each perform better?
+3. What is the vanishing gradient problem and how did ResNets address it architecturally?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer's model is overfitting badly. What diagnostic steps and mitigations would you recommend?
+:::
+
+## Further Reading
+
+- [Neural Networks and Deep Learning (Nielsen)](http://neuralnetworksanddeeplearning.com/)
+- [Deep Learning (Goodfellow, Bengio, Courville)](https://www.deeplearningbook.org/)

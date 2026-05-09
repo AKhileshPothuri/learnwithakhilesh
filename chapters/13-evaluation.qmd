@@ -1,0 +1,60 @@
+# Evaluation — Measuring What Matters
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- Why automated benchmarks are insufficient for production LLM evaluation
+- How LLM-as-judge evaluation works and its biases
+- How to build a custom eval harness for a specific use case
+- Key metrics for RAG, generation quality, and safety
+:::
+
+## Why Evaluation Is Hard
+
+*No single ground truth. Task diversity. Benchmark contamination. The gap between benchmark and production performance.*
+
+## Standard Benchmarks
+
+*MMLU, HellaSwag, HumanEval, MT-Bench. What they measure and what they miss.*
+
+## LLM-as-Judge
+
+*Using a stronger model to score another model's outputs. Positional bias, verbosity bias, self-preference bias and how to mitigate them.*
+
+## RAG-Specific Metrics
+
+*Faithfulness (is the answer grounded?), relevance (did we retrieve the right chunks?), answer quality. RAGAS framework.*
+
+## Human Evaluation
+
+*When to invest in human annotation. Pairwise comparisons (ELO) vs. absolute scoring.*
+
+## Building a Production Eval Pipeline
+
+*Curate a golden test set. Regression testing on model/prompt changes. CI integration.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. Why is perplexity not always a good evaluation metric for chat models?
+2. What is BLEU score and what are its limitations?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. What is LLM-as-judge and what biases does it introduce?
+2. How would you build an eval suite for a customer support chatbot?
+3. What is RAGAS and what does each of its metrics measure?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer is switching from GPT-4 to a cheaper model. Design an evaluation process to validate the switch won't degrade their product.
+2. The customer's model performs well in testing but poorly in production. How would you approach closing the eval gap?
+:::
+
+## Further Reading
+
+- [RAGAS: Automated Evaluation of Retrieval Augmented Generation](https://arxiv.org/abs/2309.15217)
+- [Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena](https://arxiv.org/abs/2306.05685)

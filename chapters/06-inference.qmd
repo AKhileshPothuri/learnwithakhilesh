@@ -1,0 +1,61 @@
+# Inference & Decoding Strategies
+
+::: {.callout-note}
+**Who this chapter is for:** Entry → Mid Level
+**What you'll be able to answer after reading this:**
+
+- What happens step-by-step during autoregressive generation
+- How temperature, top-p, and top-k shape output diversity
+- Why greedy decoding fails and when beam search helps
+- The KV cache and why it's critical for inference efficiency
+:::
+
+## Autoregressive Generation
+
+*Token-by-token prediction loop. The vocabulary distribution at each step.*
+
+## Greedy Decoding and Its Failures
+
+*Always picking argmax. Why it leads to repetitive, boring outputs.*
+
+## Sampling Strategies
+
+*Temperature scaling. Top-k sampling. Top-p (nucleus) sampling. Typical sampling.*
+
+## Beam Search
+
+*Keeping k candidate sequences in parallel. When it helps (translation) vs. hurts (open-ended generation).*
+
+## The KV Cache
+
+*Avoiding recomputation of key-value pairs across timesteps. Memory vs. speed tradeoff. How it affects batch size.*
+
+## Structured Outputs and Constrained Decoding
+
+*JSON mode. Grammar-constrained decoding (llama.cpp, outlines). Why this matters for agentic systems.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is temperature in text generation and what happens at temperature=0 vs temperature=1?
+2. What is the difference between top-k and top-p sampling?
+3. What is greedy decoding?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. When would you use beam search over sampling, and why is beam search rarely used in chat models?
+2. Explain the KV cache: what it stores, why it exists, and what tradeoff it makes.
+3. How does structured output / constrained decoding work under the hood?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer reports that their chatbot gives different answers to the same question on repeated runs. How do you explain this and what do you recommend?
+2. How would you tune decoding parameters for a customer whose use case is document summarization vs. creative writing?
+:::
+
+## Further Reading
+
+- [The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)](https://arxiv.org/abs/1904.09751)
+- [Outlines: Structured Text Generation](https://github.com/outlines-dev/outlines)

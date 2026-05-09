@@ -1,0 +1,52 @@
+# What Is Generative AI?
+
+::: {.callout-note}
+**Who this chapter is for:** All levels — Entry, Mid, FDE
+**What you'll be able to answer after reading this:**
+
+- What distinguishes generative models from discriminative models
+- Why the transformer architecture catalyzed the current GenAI wave
+- How the modern AI stack is layered (foundation models → APIs → applications)
+- What interviewers mean when they ask "explain GenAI to a non-technical stakeholder"
+:::
+
+## The Generative vs. Discriminative Distinction
+
+*[Draft content here — adapt from Medium article if applicable]*
+
+## Why Now? The Ingredients That Made GenAI Possible
+
+*Scale of compute, scale of data, the transformer architecture (2017), RLHF (2022), open-source model releases.*
+
+## The Modern AI Stack
+
+*Foundation models → inference APIs → orchestration layers → applications. Where each role (GenAI Engineer, FDE) operates in this stack.*
+
+## How This Book Is Organized
+
+*Brief orientation: Part I builds foundations, Parts II–IV cover the technical core, Part V is the FDE track.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is generative AI and how does it differ from traditional ML?
+2. Name three categories of generative models and give an example of each.
+3. What is a foundation model?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Explain the scaling hypothesis and its implications for model development strategy.
+2. What are the key tradeoffs between open-source and proprietary foundation models for a production system?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer asks whether they should build on top of a foundation model API or fine-tune their own. Walk through the decision framework you'd use.
+2. How would you explain hallucination risk to a non-technical executive stakeholder?
+:::
+
+## Further Reading
+
+- [Attention Is All You Need (Vaswani et al., 2017)](https://arxiv.org/abs/1706.03762)
+- [Language Models are Few-Shot Learners (GPT-3, Brown et al., 2020)](https://arxiv.org/abs/2005.14165)

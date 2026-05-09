@@ -1,0 +1,25 @@
+# Preface {.unnumbered}
+
+This book is a depth-first interview preparation guide for engineers entering or advancing in Generative AI roles. It is structured around three role profiles:
+
+| Role | Target Reader |
+|---|---|
+| **Entry-Level GenAI Engineer** | 0–2 years experience; needs theory + code foundations |
+| **Mid-Level GenAI Engineer** | 2–5 years; architectural depth, system design, tradeoff reasoning |
+| **Forward Deployed Engineer (FDE)** | Customer-facing technical work; solution design, integration, deployment |
+
+Each chapter covers a core concept end-to-end: the theory, working code, real-world context, and a tiered set of interview questions you can use for self-assessment.
+
+## How to Read This Book {.unnumbered}
+
+- **If you're interviewing soon:** Jump directly to the **Interview Questions** section at the end of each chapter.
+- **If you want to build depth:** Read chapters sequentially — each part builds on the last.
+- **If you're an FDE:** Part V is written specifically for your role, but Parts III and IV are equally important for your interviews.
+
+## About the Author {.unnumbered}
+
+Akhilesh Pothuri is a Machine Learning Engineer focused on Generative AI systems. He writes about GenAI on [Medium](https://medium.com) and maintains this open book as a companion resource.
+
+## License {.unnumbered}
+
+This work is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Free to read and share with attribution; not for commercial reproduction.

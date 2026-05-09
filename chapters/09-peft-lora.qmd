@@ -1,0 +1,73 @@
+# PEFT, LoRA & QLoRA
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level
+**What you'll be able to answer after reading this:**
+
+- Why Parameter-Efficient Fine-Tuning (PEFT) exists and what problem it solves
+- How LoRA works mathematically and where adapters are injected
+- QLoRA: 4-bit quantization + LoRA and why it enables fine-tuning on consumer GPUs
+- How to choose rank, alpha, and target modules
+:::
+
+## Why Not Always Full Fine-Tune?
+
+*Memory requirements for optimizer states, gradients, activations. LoRA as the practical alternative.*
+
+## LoRA: Low-Rank Adaptation
+
+*Decompose weight update into two low-rank matrices: $W + \Delta W = W + BA$. Rank $r$, scaling $\alpha$. Why only attention matrices? Why this works.*
+
+$$\Delta W = BA, \quad B \in \mathbb{R}^{d \times r}, \quad A \in \mathbb{R}^{r \times k}, \quad r \ll \min(d, k)$$
+
+## Choosing LoRA Hyperparameters
+
+*Rank r: expressiveness vs. parameter count. Alpha: learning rate scaling. Target modules: q_proj, v_proj vs. all linear layers.*
+
+## QLoRA: 4-bit Quantization + LoRA
+
+*NF4 data type. Double quantization. Paged optimizers. Practical: fine-tuning 70B on a single A100.*
+
+## Practical Walkthrough with Hugging Face PEFT
+
+```{python}
+#| label: lora-setup
+#| eval: false
+from peft import LoraConfig, get_peft_model
+from transformers import AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.1-8B")
+config = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"])
+model = get_peft_model(model, config)
+model.print_trainable_parameters()
+```
+
+## Merging Adapters for Deployment
+
+*`merge_and_unload()`: fusing LoRA weights back into base model for clean serving.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is PEFT and why was it developed?
+2. What does LoRA stand for and what is the core idea?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Explain the LoRA math: why does decomposing the weight update into two low-rank matrices work?
+2. What is the tradeoff between LoRA rank and model expressiveness? How would you pick rank for a new task?
+3. How does QLoRA make 70B model fine-tuning feasible on a single GPU?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer needs to fine-tune on 5 different customer verticals independently. Would you train 5 separate LoRA adapters or one multi-task model? Justify your answer.
+2. After fine-tuning with LoRA, the customer wants to serve the model at low latency. What do you recommend for deployment?
+:::
+
+## Further Reading
+
+- [LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)](https://arxiv.org/abs/2106.09685)
+- [QLoRA: Efficient Finetuning of Quantized LLMs (Dettmers et al., 2023)](https://arxiv.org/abs/2305.14314)
+- [Hugging Face PEFT Library](https://huggingface.co/docs/peft)

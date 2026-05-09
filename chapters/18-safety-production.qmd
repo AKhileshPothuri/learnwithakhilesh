@@ -1,0 +1,65 @@
+# Safety & Responsible Deployment
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- The categories of LLM risk: hallucination, bias, prompt injection, jailbreaking
+- Guardrail architectures: input and output filtering
+- Red-teaming: how to adversarially test your own system
+- What responsible deployment means in practice (not just in theory)
+:::
+
+## Categories of LLM Risk
+
+*Hallucination. Harmful content generation. PII leakage. Prompt injection. Jailbreaking. Copyright and IP risk.*
+
+## Hallucination: Causes and Mitigations
+
+*Why models confidently confabulate. RAG grounding as a mitigation. Citation requirements. Uncertainty elicitation.*
+
+## Prompt Injection
+
+*Direct injection (user manipulates model) vs. indirect injection (retrieved document manipulates model). Mitigations.*
+
+## Guardrail Architecture
+
+*Input classifiers (topic, safety, PII detection) → LLM call → output classifiers (faithfulness, safety, format). NeMo Guardrails, Llama Guard.*
+
+## Red-Teaming
+
+*Adversarial prompting to find failure modes before users do. Manual + automated red-teaming. Internal red teams.*
+
+## Bias and Fairness
+
+*Training data bias. Representation in outputs. Evaluation for demographic parity.*
+
+## Responsible Deployment Checklist
+
+*Human escalation path. Disclosure (this is AI). Audit logging. Incident response plan. Model card.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is hallucination in LLMs and why does it happen?
+2. What is prompt injection?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Design a guardrail architecture for a customer-facing chatbot. What checks happen before and after the LLM call?
+2. What is indirect prompt injection and how would you mitigate it in a RAG system?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer wants to deploy an LLM-powered chat assistant in healthcare. What safety and compliance considerations would you raise before agreeing to build it?
+2. How would you run a red-teaming session with a customer's team who has never done adversarial testing before?
+3. After deployment, a customer reports their chatbot gave harmful advice to a user. Walk through your incident response process.
+:::
+
+## Further Reading
+
+- [OWASP Top 10 for LLM Applications](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+- [Llama Guard: LLM-based Input-Output Safeguard](https://arxiv.org/abs/2312.06674)
+- [Anthropic's Responsible Scaling Policy](https://www.anthropic.com/index/anthropics-responsible-scaling-policy)

@@ -1,0 +1,61 @@
+# RLHF & Alignment
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level
+**What you'll be able to answer after reading this:**
+
+- The three-stage RLHF pipeline: SFT → reward model → PPO
+- Why alignment is needed and what "helpful, harmless, honest" means in practice
+- DPO as a simpler alternative to PPO-based RLHF
+- What Constitutional AI is and how it differs
+:::
+
+## Why Alignment?
+
+*A pretrained LLM predicts tokens; it doesn't "want" to be helpful. The gap between pretraining and deployment.*
+
+## Stage 1: Supervised Fine-Tuning (SFT)
+
+*Human-written demonstrations. Building the initial instruction-following baseline.*
+
+## Stage 2: Reward Modeling
+
+*Human preference pairs. Training a classifier to score response quality. Bradley-Terry model.*
+
+## Stage 3: PPO (Proximal Policy Optimization)
+
+*Using the reward model as a signal to optimize the LLM. KL penalty to prevent over-optimization.*
+
+## Direct Preference Optimization (DPO)
+
+*Skip the reward model entirely. Directly optimize on preference data. Why DPO has largely replaced PPO.*
+
+## Constitutional AI (CAI)
+
+*Anthropic's approach: self-critique and revision using a set of principles ("constitution"). RLAIF.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is RLHF and why is it used?
+2. What is the role of the reward model in RLHF?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Walk through the three stages of RLHF and what each one accomplishes.
+2. What is DPO and how does it differ from PPO-based RLHF?
+3. What is "reward hacking" and how does the KL penalty address it?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer's chatbot is technically accurate but sounds cold and robotic. Which alignment technique would you recommend they apply and why?
+2. How would you explain the difference between safety alignment and capability alignment to a non-technical stakeholder?
+:::
+
+## Further Reading
+
+- [Training Language Models to Follow Instructions with Human Feedback (Ouyang et al., 2022)](https://arxiv.org/abs/2203.02155)
+- [Direct Preference Optimization (Rafailov et al., 2023)](https://arxiv.org/abs/2305.18290)
+- [Constitutional AI: Harmlessness from AI Feedback (Bai et al., 2022)](https://arxiv.org/abs/2212.08073)

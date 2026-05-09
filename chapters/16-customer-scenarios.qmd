@@ -1,0 +1,145 @@
+# Common GenAI Customer Use Cases
+
+::: {.callout-note}
+**Who this chapter is for:** FDE
+**What you'll be able to answer after reading this:**
+
+- The canonical GenAI use cases and the architecture patterns behind each
+- How to match a customer's problem to the right GenAI pattern
+- What "good" vs. "bad" looks like for each use case type
+- How to quickly prototype and de-risk a solution
+:::
+
+## Use Case Taxonomy
+
+| Use Case | Core Pattern | Key Technical Challenge |
+|---|---|---|
+| Document Q&A | RAG | Retrieval quality, context length |
+| Internal search | Embeddings + semantic search | Index freshness, hybrid retrieval |
+| Code generation / copilot | Fine-tuned decoder | Security, hallucination in code |
+| Customer support chatbot | RAG + guardrails | Hallucination, escalation logic |
+| Data extraction / classification | Structured output | Consistency, edge cases |
+| Summarization | Direct generation | Length control, faithfulness |
+| Report generation | Agents + RAG | Multi-step reasoning, citations |
+
+## Document Q&A
+
+The most common enterprise use case. A user asks a natural-language question; the system retrieves relevant document sections and generates a grounded answer with citations.
+
+**Architecture:**
+1. Ingest documents → chunk → embed → store in vector DB
+2. At query time: embed query → retrieve top-k chunks → inject into LLM prompt
+3. LLM generates answer citing specific retrieved passages
+
+**The questions that determine architecture:**
+- How large is the document corpus? (determines vector DB choice)
+- How often do documents change? (determines ingestion pipeline complexity)
+- What's the acceptable latency? (determines whether re-ranking is affordable)
+- What access control is needed? (document-level auth in the retrieval layer)
+
+**Key failure modes:** retrieving irrelevant chunks (fix: re-ranking + hybrid search), hallucinating beyond the retrieved context (fix: explicit grounding instruction + faithfulness eval), stale answers from outdated index (fix: event-driven re-ingestion).
+
+## Enterprise Search
+
+Replacing keyword search with semantic + hybrid search. Users often don't know the exact terminology — they search by concept, not by the specific words a document uses.
+
+**Architecture:**
+- Index documents with both dense embeddings and BM25 sparse index
+- At query time: execute both, fuse results with Reciprocal Rank Fusion (RRF)
+- Optional: add faceted filters (department, date range, document type) on top of semantic results
+
+**When keyword search still wins:** compliance lookups ("find all documents citing regulation 45 CFR 164.514"), exact product code lookups, anything where the user knows the precise string.
+
+## Code Copilots
+
+In-editor autocomplete (GitHub Copilot model) vs. chat interface (Cursor model) are architecturally different products.
+
+**Autocomplete** requires sub-100ms latency — speculative decoding, small fine-tuned models, prefix caching. **Chat** can afford 2–5 second responses and benefits from full repository context.
+
+**Security considerations:** the model sees proprietary source code. For enterprise customers: on-prem deployment or VPC-deployed API, audit logging of all completions, output scanning for secrets and PII.
+
+**Evaluation:** run the model on your actual codebase, measure pass@k on unit tests the model doesn't see, track whether suggestions require edits before acceptance.
+
+## Customer Support Automation
+
+**Architecture:**
+```
+User message
+  → Intent classifier (is this in-scope?)
+  → RAG retrieval (relevant policy/product docs)
+  → LLM response generation
+  → Output safety check
+  → If confidence < threshold: human escalation
+```
+
+The escalation path is not optional — it's the core reliability mechanism. A system that handles 80% of tickets accurately but fails silently on 20% is worse than no automation.
+
+**Tone and safety guardrails:** input classifiers for harmful content, output classifiers for policy violations, explicit prohibition on the model making commitments the business can't keep (refund amounts, timelines, guarantees).
+
+## Data Extraction and Structured Output
+
+The pattern: give the LLM an unstructured document and a JSON schema, ask it to fill the schema. LLMs are surprisingly good at this for complex documents (contracts, medical records, financial filings) that rule-based extractors fail on.
+
+**Validation loop:**
+1. LLM generates candidate JSON
+2. Schema validation (Pydantic, jsonschema) — catch structural errors
+3. Business logic validation — catch semantic errors ("end date before start date")
+4. If validation fails: retry with error message in context (typically 1–2 retries resolves 95%+ of failures)
+
+**Confidence signals:** ask the model to include a `confidence` field per extracted item. Items below threshold route to human review rather than auto-acceptance.
+
+---
+
+## Case Studies: Real Projects
+
+### Case Study 1: Marketing Automation Agent (CMO Agent)
+
+**Problem:** Small engineering teams build technically superior products that fail commercially because they have no marketing bandwidth. Hiring a full CMO is out of budget.
+
+**Solution:** A multi-agent marketing system that automates four functions:
+
+| Function | Agent | Tools |
+|---|---|---|
+| Competitive intelligence | Research Agent | Web scraping (Firecrawl), price monitoring |
+| Positioning & messaging | Messaging Agent | Copy generation, A/B variant drafting |
+| Launch planning | Launch Agent | Timeline coordination, channel strategy |
+| Analytics synthesis | Analytics Agent | Mixpanel/Amplitude integration |
+
+**Critical design decision:** Human approval gates on brand voice, pricing decisions, and positioning direction. The agents propose; humans approve. The value is in the pattern-matching work (competitor monitoring, copy generation, launch checklists) — not in strategic judgment calls that require human context.
+
+**Framework used:** CrewAI for role-based agent personas; LangGraph for deterministic sequential workflows.
+
+**What it can't do:** strategic pivots, crisis judgment ("do we apologize or stay silent?"), category-redefining creative leaps.
+
+**Lesson for FDEs:** when scoping a marketing automation engagement, diagnose which of the four functions the customer actually needs. Most customers need competitive intelligence and messaging consistency — not a full CMO replacement.
+
+### Case Study 2: Personalized Music Library Organization (Full-Stack AI Tool)
+
+**Problem:** Spotify's genre tags are unreliable, especially for non-Western music. A 2,000-song library is effectively unsearchable.
+
+**Solution:** Full-stack TypeScript app that batches tracks to an LLM for classification across six custom dimensions (genre, mood, language, occasion, era, energy level), presents results in a human-review dashboard, then pushes approved playlists to Spotify.
+
+**Architecture decisions worth noting:**
+
+*Batch classification, not per-track:* Sending 25 tracks per LLM request with strict JSON output ("the array must have exactly as many elements as tracks given, in the same order") makes parsing trivial and reduces cost ~25x vs. per-track.
+
+*Custom taxonomy enforcement:* Allowed values per dimension get appended to the system prompt. The LLM classifies into your categories, not its own — ensuring every track lands in a user-defined bucket.
+
+*Human-in-the-loop by default:* Nothing pushes to Spotify until the user reviews and approves. The rename-before-push step converts machine taxonomy ("Study") into human-friendly playlist names.
+
+*Background processing without a job queue:* 2,000 tracks takes minutes — too long for HTTP. Rather than adding BullMQ infrastructure, the implementation discards the classification promise intentionally and uses database polling for progress. Practical over perfect.
+
+**Cost:** $0.30–$0.50 in LLM API tokens to classify 2,000 songs. Trivial.
+
+**Lesson for FDEs:** the most elegant GenAI solutions often have a simple core pattern (batch → classify → review → act) with the complexity in the integration layer (OAuth, background jobs, UI). Don't over-architect the AI part.
+
+---
+
+## Interview Questions
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A legal firm wants to use GenAI to answer questions about their contract database. Design the solution.
+2. A customer wants to replace their internal search tool with an AI-powered alternative. What questions do you ask before writing any code?
+3. A software company wants to build a code review copilot. What are the top 3 risks you'd want to mitigate before shipping?
+4. Walk me through how you'd de-risk a document Q&A POC in a two-week sprint.
+:::

@@ -1,0 +1,56 @@
+# Fine-Tuning LLMs
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level
+**What you'll be able to answer after reading this:**
+
+- The difference between full fine-tuning and instruction tuning
+- How to build and curate a fine-tuning dataset
+- What catastrophic forgetting is and how to mitigate it
+- When fine-tuning beats prompting, and when it doesn't
+:::
+
+## Full Fine-Tuning
+
+*Update all parameters on domain-specific data. Compute requirements. When it's justified.*
+
+## Instruction Tuning
+
+*Supervised fine-tuning on (instruction, response) pairs. How FLAN, Alpaca, and similar models were created. Data format (ShareGPT, Alpaca format).*
+
+## Dataset Curation
+
+*Quality vs. quantity. Deduplication, filtering, human review. Data flywheel thinking.*
+
+## Catastrophic Forgetting
+
+*Why fine-tuning on narrow data degrades general capabilities. Replay buffers, multi-task training.*
+
+## Full Fine-Tuning vs. PEFT vs. Prompting Decision Tree
+
+*Decision framework: data volume, compute budget, latency requirements, customization depth.*
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is the difference between pretraining and fine-tuning?
+2. What is instruction tuning?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. You have 500 labeled examples. Would you full fine-tune, use LoRA, or stick with few-shot prompting? Justify your answer.
+2. What is catastrophic forgetting and how would you detect it during a fine-tuning run?
+3. What makes a good fine-tuning dataset vs. a bad one?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer wants to fine-tune a model on their internal docs so it "knows their product." Walk through the data, compute, and deployment considerations.
+2. The customer's fine-tuned model performs well on the training distribution but poorly in production. What would you investigate first?
+:::
+
+## Further Reading
+
+- [FLAN: Finetuned Language Models Are Zero-Shot Learners](https://arxiv.org/abs/2109.01652)
+- [Self-Instruct: Aligning LMs with Self-Generated Instructions](https://arxiv.org/abs/2212.10560)

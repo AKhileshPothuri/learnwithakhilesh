@@ -1,0 +1,105 @@
+# Deployment & Optimization
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- Quantization techniques: INT8, INT4, GPTQ, AWQ — tradeoffs and use cases
+- How vLLM's PagedAttention enables high-throughput serving
+- Distillation as a model compression strategy
+- How to estimate latency, throughput, and cost for a production deployment
+:::
+
+## Serving Modes
+
+**Online inference** (real-time, low latency) vs. **batch inference** (high throughput, no latency requirement). Most GenAI features need online inference — users wait for a response. Data pipelines and offline enrichment jobs use batch.
+
+**Streaming** returns tokens as they're generated rather than waiting for the full response. Critical for chat interfaces (users see progress) and long outputs. Implemented via Server-Sent Events (SSE) or WebSockets; the LLM API sends partial tokens, your frontend renders them.
+
+## Quantization
+
+Quantization reduces numerical precision of model weights to decrease memory footprint and increase inference speed:
+
+| Precision | Memory (7B model) | Quality loss | When to use |
+|---|---|---|---|
+| FP32 | ~28 GB | None (baseline) | Training only |
+| FP16 / BF16 | ~14 GB | Negligible | Standard inference |
+| INT8 | ~7 GB | Minimal | Good tradeoff |
+| INT4 (GPTQ/AWQ) | ~3.5 GB | Noticeable on some tasks | Resource-constrained |
+| 2-bit | ~1.75 GB | Significant | Rarely acceptable |
+
+**GPTQ** (post-training quantization): quantizes weights by minimizing reconstruction error layer by layer. Requires calibration data. Slower to quantize but well-supported.
+
+**AWQ** (Activation-Aware Weight Quantization): identifies important weight channels by observing activation magnitudes, preserves those at higher precision. Generally better quality than GPTQ at same compression.
+
+Rule of thumb: INT8 is safe for most production use cases. INT4 is acceptable for tasks where the quality gap on your specific use case is small (verify empirically).
+
+## Knowledge Distillation
+
+Teacher-student training: train a smaller "student" model to mimic the output distribution of a larger "teacher" model. The student learns from soft probability distributions (not just hard labels), transferring the teacher's generalization to a cheaper model.
+
+Why it works: the teacher's output probabilities encode rich information — a 0.7 / 0.2 / 0.1 split across three classes tells the student more than a hard label of "class 1."
+
+When to use distillation: you have a task-specific use case, abundant unlabeled data, and latency or cost constraints that the teacher model can't meet. Distilled models routinely match teacher performance on narrow tasks while being 3–10x cheaper to serve.
+
+## vLLM and Continuous Batching
+
+**The KV cache problem.** During generation, each new token attends to all previous tokens — those attention key-value pairs must be stored. For a 32k context window at FP16, one request can consume gigabytes of GPU memory. Standard serving allocates the maximum possible KV cache per request upfront, leaving most GPU memory unused while requests are waiting.
+
+**PagedAttention** (vLLM) borrows virtual memory concepts from OS design: KV cache is stored in non-contiguous "pages" that are allocated and freed dynamically. Multiple requests share GPU memory efficiently. Result: 2–4x higher throughput at the same GPU footprint.
+
+**Continuous batching** vs. static batching: static batching waits until a fixed batch size is filled before processing — wastes GPU time when requests arrive unevenly. Continuous batching processes new requests as they arrive, interleaved with ongoing generations. Standard in production serving.
+
+## Serving Infrastructure
+
+| Tool | Best for |
+|---|---|
+| vLLM | High-throughput self-hosted serving, PagedAttention |
+| TGI (Hugging Face) | Easy deployment with broad model support |
+| Ollama | Local development, small team use |
+| Triton Inference Server | Enterprise, multi-model, NVIDIA ecosystem |
+| Modal / Replicate | Serverless GPU — no infra management |
+| AWS SageMaker | Existing AWS infrastructure |
+
+## Cost and Latency Estimation
+
+GPU memory required for a model: **~2 bytes per parameter in FP16**. A 70B parameter model needs ~140 GB — two A100 80GB GPUs minimum, with additional memory for KV cache and activations.
+
+**Cost per million tokens** varies widely: GPT-4o is ~$5/MTok input, Claude Sonnet ~$3/MTok, open-source models on Modal ~$0.20–0.80/MTok depending on GPU size.
+
+**The context tax.** Standard RAG pipelines inject 2,000–8,000 tokens of retrieved context per query. If your query is 100 tokens but your context is 3,000 tokens, you're paying 30x more per query than you might expect. This compounds fast at scale.
+
+## Case Study: How Poor Context Management Burned a Budget
+
+A real example: consuming 75% of a monthly API token budget in 7 days — not from excessive usage, but from inefficient context. The root cause was file-based RAG for code: when a function in `auth.ts` needed context from `db.ts`, the system pulled both *entire files*, when only the relevant function signatures were needed.
+
+This is the **context confusion tax**: the LLM receives thousands of boilerplate tokens when it only needed hundreds of signal tokens, leading to hallucinated imports, broken logic, and 5–10x the API cost.
+
+The fix: structure-aware retrieval. Parse code into symbol graphs that map relationships between functions and classes. Retrieve only the k-step neighborhood of the symbols relevant to the query — the function signature, its dependencies, and callers — not the entire file. Token usage drops ~70% per query with improved code quality.
+
+The lesson generalizes beyond code: always ask "what is the minimum context needed to answer this query correctly?" before blindly injecting full documents.
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is model quantization and why is it used?
+2. What is knowledge distillation?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Explain PagedAttention: what problem it solves and how it works.
+2. Compare GPTQ and AWQ quantization approaches.
+3. Walk through how you'd estimate the GPU memory required to serve a 70B parameter model at FP16.
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer needs <100ms p99 latency for their GenAI feature. Walk through the deployment architecture decisions you'd make.
+2. The customer's inference costs are 10x higher than budgeted. What is your optimization playbook?
+:::
+
+## Further Reading
+
+- [Efficient Memory Management for LLM Serving with PagedAttention (Kwon et al., 2023)](https://arxiv.org/abs/2309.06180)
+- [GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers](https://arxiv.org/abs/2210.17323)

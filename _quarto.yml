@@ -1,0 +1,85 @@
+project:
+  type: book
+  output-dir: _site
+
+book:
+  title: "GenAI Interview Prep"
+  subtitle: "A Technical Guide for Entry, Mid-Level & Forward Deployed Engineers"
+  author: "Akhilesh Pothuri"
+  date: last-modified
+  date-format: "MMMM YYYY"
+  description: |
+    A depth-first interview preparation guide covering Generative AI foundations,
+    large language models, fine-tuning, GenAI systems architecture, and a dedicated
+    track for Forward Deployed Engineers.
+  site-url: https://akhileshpothuri.github.io/learnwithakhilesh
+  repo-url: https://github.com/AKhileshPothuri/learnwithakhilesh
+  repo-actions: [edit, issue]
+  search: true
+  navbar:
+    right:
+      - icon: github
+        href: https://github.com/AKhileshPothuri/learnwithakhilesh
+  sidebar:
+    style: docked
+  chapters:
+    - index.qmd
+    - part: "Part I — Foundations"
+      chapters:
+        - chapters/01-intro.qmd
+        - chapters/02-neural-networks.qmd
+        - chapters/03-transformers.qmd
+    - part: "Part II — Large Language Models"
+      chapters:
+        - chapters/04-llm-pretraining.qmd
+        - chapters/05-embeddings.qmd
+        - chapters/06-inference.qmd
+    - part: "Part III — Adapting & Aligning LLMs"
+      chapters:
+        - chapters/07-prompting.qmd
+        - chapters/08-finetuning.qmd
+        - chapters/09-peft-lora.qmd
+        - chapters/10-rlhf-alignment.qmd
+    - part: "Part IV — GenAI Systems & Architecture"
+      chapters:
+        - chapters/11-rag.qmd
+        - chapters/12-agents.qmd
+        - chapters/13-evaluation.qmd
+        - chapters/14-deployment.qmd
+    - part: "Part V — Forward Deployed Engineer Track"
+      chapters:
+        - chapters/15-fde-overview.qmd
+        - chapters/16-customer-scenarios.qmd
+        - chapters/17-integration.qmd
+        - chapters/18-safety-production.qmd
+  appendices:
+    - chapters/appendix-ml-fundamentals.qmd
+
+format:
+  html:
+    theme:
+      light: flatly
+      dark: darkly
+    code-fold: true
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    highlight-style: github
+    df-print: paged
+  pdf:
+    documentclass: scrbook
+    classoption: oneside
+    number-sections: true
+    toc: true
+    toc-depth: 3
+    colorlinks: true
+    geometry:
+      - top=25mm
+      - left=25mm
+      - right=25mm
+      - bottom=25mm
+
+execute:
+  freeze: auto
+  cache: true

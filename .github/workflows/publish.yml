@@ -1,0 +1,55 @@
+name: Publish Book
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install jupyter nbformat
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: "1.6.43"
+
+      - name: Install TinyTeX (for PDF)
+        run: quarto install tinytex
+
+      - name: Render HTML
+        run: quarto render --to html --no-execute
+
+      - name: Render PDF
+        run: quarto render --to pdf --no-execute
+        continue-on-error: true  # PDF failures don't block web deploy
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: genai-interview-prep-book
+          path: _site/*.pdf
+          if-no-files-found: ignore
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          cname: ""  # Set to your custom domain if you have one, e.g. book.learnwithakhilesh.com

@@ -1,0 +1,50 @@
+# The Forward Deployed Engineer Role
+
+::: {.callout-note}
+**Who this chapter is for:** FDE (all levels)
+**What you'll be able to answer after reading this:**
+
+- What distinguishes an FDE from a traditional software or ML engineer
+- How to scope and scope a GenAI solution engagement
+- How to navigate the stakeholder landscape (technical, product, executive)
+- What FDE interviews test that pure engineering interviews don't
+:::
+
+## What Is a Forward Deployed Engineer?
+
+*The intersection of deep technical skill, customer empathy, and solution architecture. Not a sales engineer. Not a consultant. The person who goes on-site, understands the problem, builds the proof-of-concept, and hands it off.*
+
+*Companies that hire FDEs: Palantir, Anthropic, OpenAI, Scale AI, and enterprise software companies embedding AI into their platform.*
+
+## Core Responsibilities
+
+*Discovery and scoping. Rapid prototyping. Technical architecture. Enablement and handoff.*
+
+## Solution Scoping Framework
+
+*What problem does the customer have? What data do they have? What does "success" look like? What are the constraints (latency, cost, compliance)?*
+
+## Stakeholder Navigation
+
+*Who is the economic buyer vs. technical champion vs. end user? How to run a discovery conversation. How to handle conflicting requirements.*
+
+## The FDE Interview Format
+
+*Behavioral (customer scenario) + technical (whiteboard architecture) + live coding or take-home. What interviewers look for: customer empathy + technical depth + communication clarity.*
+
+---
+
+## Interview Questions
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. Tell me about a time you had to explain a complex technical concept to a non-technical stakeholder. How did you approach it?
+2. A customer comes to you and says "we want to use AI." How do you turn that into a scoped project?
+3. You're on-site and discover the customer's data quality is much worse than they described. What do you do?
+4. How do you balance building the "ideal" solution vs. what can ship in 4 weeks?
+5. Walk me through how you'd run a discovery session with a new enterprise customer.
+:::
+
+## Further Reading
+
+- Palantir FDE blog posts
+- *The Trusted Advisor* by Maister, Green, Galford — canonical reading for client-facing technical roles

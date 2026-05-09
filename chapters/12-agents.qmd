@@ -1,0 +1,240 @@
+# Agents & Tool Use
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- The spectrum from chatbots to agents — and what makes each different
+- How the ReAct pattern combines reasoning and acting
+- How function calling / tool use works at the API level
+- Framework taxonomy: when to use lightweight vs. heavy orchestration
+- Multi-agent architectures and when they're justified
+- Real failure modes and how production agents handle them
+:::
+
+## From Chatbots to Agents: The Spectrum
+
+The AI landscape has four distinct categories, each a step further from passive to active:
+
+| Level | Capability | Example |
+|---|---|---|
+| **Chatbot** | Responds to queries. No memory, no actions. | Basic FAQ bot |
+| **Copilot** | Suggests actions while the user stays in control | GitHub Copilot |
+| **Assistant** | Completes discrete tasks with contextual understanding | Calendar scheduling |
+| **Agent** | Pursues goals autonomously, initiates actions, adapts | Autonomous research agent |
+
+The critical distinction is *agency*: tools you operate require your attention throughout. Systems that operate *for you* need only your intent and trust.
+
+Conventional software is like a calculator — identical inputs always produce identical outputs, no adaptation. AI agents are like capable human assistants: they observe, reason, decide, and act — without constant micromanagement.
+
+## The Three Organs of an Agent
+
+Every AI agent has three coordinated components:
+
+### Perception Layer
+The agent's "senses" — information sources that extend beyond just conversation. Sophisticated agents monitor email, observe database changes, examine web content, and interpret files. They ask continuously: what has appeared? What has changed? What needs attention? Crucially, they understand *context* — not just that a calendar shows "2 PM client call," but that this means clearing schedule blocks, assembling relevant materials, and reviewing the client's history.
+
+### Reasoning Engine (LLM)
+The decision-making brain. When given a task like "handle this customer support ticket," the reasoning layer asks: What's the problem? What solutions exist? What has worked before? Should this escalate? This mimics a capable junior employee deliberating methodically — except this worker never tires and has instant access to every organizational document.
+
+Effective agents don't rely on a single LLM for all decisions. They combine LLMs with conventional logic, external databases, and purpose-specific tools.
+
+### Action System
+What distinguishes agents from chatbots: they interface with real systems via APIs. Sending email via a communication API. Modifying spreadsheets via Google Sheets API. Booking meetings via a calendar API. The action system turns decisions into accomplished work.
+
+## The ReAct Pattern
+
+ReAct (Reasoning + Acting) interleaves reasoning traces with actions in a loop:
+
+```
+Thought: I need to find the customer's account status
+Action: lookup_account(customer_id="12345")
+Observation: Account is active, last order 3 days ago, no open tickets
+Thought: The customer has an active account. I should check the order status.
+Action: get_order_status(order_id="ORD-9876")
+Observation: Order is in transit, estimated delivery tomorrow
+Thought: I can answer the customer's question with this information.
+Final Answer: Your order is in transit and should arrive tomorrow.
+```
+
+Why it works: intermediate reasoning steps constrain subsequent outputs. Instead of jumping from input to answer, the model generates a scratchpad that reduces the probability of wrong-turn errors. This is the same reason chain-of-thought prompting improves reasoning accuracy — extended to include real-world actions.
+
+## Tool Use / Function Calling
+
+Function calling is how the model "calls" an external tool. The pattern:
+
+1. You define tools as JSON schemas describing available functions
+2. The LLM outputs structured JSON describing which function to call and with what arguments
+3. Your code executes the function
+4. The result is injected back into the conversation
+5. The LLM reasons over the result and either calls another tool or produces a final answer
+
+```{python}
+#| label: function-calling
+#| eval: false
+from anthropic import Anthropic
+
+client = Anthropic()
+
+tools = [
+    {
+        "name": "search_documents",
+        "description": "Search the internal knowledge base for relevant documents",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "max_results": {"type": "integer", "default": 5}
+            },
+            "required": ["query"]
+        }
+    }
+]
+
+# Agent loop
+messages = [{"role": "user", "content": "What is our current refund policy?"}]
+
+while True:
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        tools=tools,
+        messages=messages
+    )
+
+    if response.stop_reason == "end_turn":
+        print(response.content[0].text)
+        break
+
+    # Process tool use
+    for block in response.content:
+        if block.type == "tool_use":
+            # Execute the tool
+            result = execute_tool(block.name, block.input)
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": block.id, "content": result}
+            ]})
+```
+
+## Memory Patterns
+
+Agents need memory to be useful across more than one turn. Three types:
+
+| Type | Storage | Lifetime | Best for |
+|---|---|---|---|
+| **In-context** | Conversation history | Current session | Short conversations |
+| **External** | Vector DB / SQL | Persistent | Facts, documents |
+| **Episodic** | Structured log of past actions | Persistent | Learning from past runs |
+
+What to store vs. retrieve is the key design decision. Storing everything creates retrieval noise. Storing too little means the agent lacks context. Most production agents store: user preferences, key facts from past interactions, and the outcomes of previous decisions.
+
+## Framework Selection
+
+All agents are fundamentally the same architecture: an LLM + tool loop + memory. Frameworks wrap this in varying levels of abstraction.
+
+**Start light.** Many engineers over-engineer by reaching for heavyweight frameworks before understanding the problem. A calendar scheduling agent accomplishable in 47 lines of Python doesn't need LangGraph.
+
+| When to choose | Framework |
+|---|---|
+| Just starting, single agent | Raw SDK or Instructor (structured output) |
+| Need structured output reliably | Instructor + LiteLLM |
+| Stateful workflows with pause/resume | LangGraph |
+| Role-based multi-agent content pipelines | CrewAI |
+| Multi-agent code generation / debate | AutoGen |
+| GCP / Vertex AI production deployment | Google ADK |
+
+**The 5-question flowchart:**
+1. Does the task require more than ~5 tools? → if no, stay lightweight
+2. Do you need multi-agent coordination? → if no, stay lightweight
+3. Do you need to pause/resume mid-workflow? → LangGraph
+4. Do you need role-based agents with personas? → CrewAI
+5. Is debugging transparency critical? → raw SDK or lightweight tools
+
+**Start with the raw SDK. Add Instructor for structured output. Build a simple tool loop. Only reach for a full framework when you hit a concrete limitation you can't solve with 60 lines of code.**
+
+## Multi-Agent Architectures
+
+Single "universal" agents are overextended and error-prone — like trying to do everything yourself rather than building a team. Multi-agent architectures deploy specialized agents, each optimized for a specific function:
+
+**CrewAI example — EV market research:**
+
+```{python}
+#| label: multi-agent-crew
+#| eval: false
+from crewai import Agent, Task, Crew
+
+researcher = Agent(
+    role="Market Researcher",
+    goal="Gather comprehensive data about electric vehicle market trends",
+    backstory="Expert at finding reliable sources and extracting key insights",
+)
+
+analyst = Agent(
+    role="Data Analyst",
+    goal="Analyze research findings and identify key patterns",
+    backstory="Skilled at spotting trends and drawing meaningful conclusions",
+)
+
+writer = Agent(
+    role="Content Writer",
+    goal="Create clear, engaging reports from analysis",
+    backstory="Expert at translating complex data into readable insights",
+)
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[
+        Task(description="Research current EV market trends", agent=researcher),
+        Task(description="Identify 3 key trends from the research", agent=analyst),
+        Task(description="Write a 500-word executive summary", agent=writer),
+    ]
+)
+result = crew.kickoff()
+```
+
+**When multi-agent helps:** tasks that naturally decompose into sequential specialist work, quality-checking via critic agents, parallelizing independent research.
+
+**When it adds complexity without benefit:** simple linear tasks, when the orchestration overhead dominates, when debugging across agent boundaries is harder than the task itself.
+
+## Reliability and Production Failure Modes
+
+| Failure | Cause | Mitigation |
+|---|---|---|
+| Hallucinated tool calls | Model invents functions that don't exist | Strict tool schema validation, retry with error message |
+| Infinite loops | Agent never decides it's done | Max step limits, explicit completion criteria |
+| Context window overflow | Conversation history grows unbounded | Summarize history periodically |
+| Prompt injection via tool results | Tool output contains adversarial instructions | Sanitize tool results before injecting |
+| Over-permission | Agent has access to tools it doesn't need | Principle of least privilege in tool design |
+
+**Human-in-the-loop** is the most powerful reliability mechanism. Before any consequential action (sending email, modifying data, spending money), pause and require explicit user confirmation. The agent acts as an intelligent proposal system; humans approve.
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+1. What is an AI agent and how does it differ from a chatbot?
+2. What is function calling and why is it useful?
+3. What is the ReAct pattern?
+:::
+
+::: {.callout-warning title="Mid Level"}
+1. Explain the three components of an AI agent (perception, reasoning, action). What breaks when each one fails?
+2. Walk through the full function calling loop: how does the model "call" a tool and how does the result flow back?
+3. When would you choose a multi-agent architecture over a single agent with many tools?
+4. What is an agent loop and what safeguards prevent it from running forever?
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+1. A customer wants an agent to automate their IT helpdesk — password resets, software requests, access provisioning. What tools does the agent need, and what guardrails would you insist on before deploying?
+2. An agent is making repeated API calls in a loop and burning cost without completing its task. Walk through your debugging process.
+3. A customer asks whether to use LangGraph or CrewAI for their pipeline. What questions do you ask before recommending either?
+4. How do you explain the difference between a copilot and an autonomous agent to a non-technical stakeholder, and what governance implications does each have?
+:::
+
+## Further Reading
+
+- [ReAct: Synergizing Reasoning and Acting in Language Models (Yao et al., 2022)](https://arxiv.org/abs/2210.03629)
+- [Tool Learning with Foundation Models (Qin et al., 2023)](https://arxiv.org/abs/2304.08354)
+- [Anthropic Tool Use Documentation](https://docs.anthropic.com/en/docs/tool-use)
