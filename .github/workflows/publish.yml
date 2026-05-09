@@ -32,12 +32,8 @@ jobs:
       - name: Install TinyTeX (for PDF)
         run: quarto install tinytex
 
-      - name: Render HTML
-        run: quarto render --to html --no-execute
-
-      - name: Render PDF
-        run: quarto render --to pdf --no-execute
-        continue-on-error: true  # PDF failures don't block web deploy
+      - name: Render all formats
+        run: quarto render --no-execute
 
       - name: Upload PDF artifact
         uses: actions/upload-artifact@v4
