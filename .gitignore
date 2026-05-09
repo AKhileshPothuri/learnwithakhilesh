@@ -1,7 +1,7 @@
 /.quarto/
 /_site/
 /_freeze/
-/.jupyter_cache/
+**/.jupyter_cache/
 /__pycache__/
 *.pyc
 .DS_Store
