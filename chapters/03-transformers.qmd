@@ -67,20 +67,117 @@ class SelfAttention(nn.Module):
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level"}
-1. What problem does the attention mechanism solve that RNNs couldn't?
-2. Explain the Query, Key, Value abstraction in attention.
-3. What is positional encoding and why is it needed?
+
+**Q1. What problem does the attention mechanism solve that RNNs couldn't?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+RNNs process sequences token-by-token in strict order, which creates two compounding problems. First, long-range dependencies degrade badly — the signal from token 1 must pass through every intermediate hidden state to influence token 512, and gradients vanish or explode along the way. Second, sequential processing prevents parallelism, making training slow.
+
+Attention solves both simultaneously. Every token attends directly to every other token in a single operation — the famous dot-product: softmax(QKᵀ/√d_k)V. This means token 1 and token 512 have equal "distance" regardless of how far apart they are in the sequence. There's no gradient path length problem because the connection is direct.
+
+The parallelism gain is enormous for training: instead of O(n) serial steps, attention computes all pairwise relationships in one matrix multiplication, allowing full GPU utilization. The practical result is that BERT trained in days what would have taken weeks as an LSTM, and could learn that "The trophy didn't fit in the suitcase because it was too big" — "it" refers to the trophy, not the suitcase — because it could directly model that long-range coreference.
+:::
+
+**Q2. Explain the Query, Key, Value abstraction in attention.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The QKV abstraction is a soft, differentiable lookup table. Think of a library: the Query is your search request, the Keys are the index labels on every book, and the Values are the actual book contents.
+
+Mechanically: every token gets projected into three vectors — Q, K, and V — via learned weight matrices W_Q, W_K, W_V. To compute how much token i should attend to token j, we take the dot product of Q_i with K_j (measuring compatibility), scale by 1/√d_k to prevent softmax saturation, then softmax across all j to get attention weights that sum to 1. The output is a weighted sum of all Values, where the weights reflect relevance.
+
+What makes it powerful is that Q, K, and V are independent projections. A token can "ask about" one aspect of meaning (Q) while "advertising" a different aspect (K), and "contribute" yet another aspect (V). In multi-head attention, different heads learn different Q/K/V projections in parallel — head 1 might capture syntactic dependencies, head 5 might track coreference. The heads run simultaneously and their outputs are concatenated and projected, letting the model attend to different representation subspaces at once.
+:::
+
+**Q3. What is positional encoding and why is it needed?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The attention operation itself is permutation-invariant — if you shuffle the tokens, the attention weights change but the mechanism has no built-in notion of position. Without positional encoding, "dog bites man" and "man bites dog" would be indistinguishable to the model.
+
+Positional encodings inject sequence position information into the token representations before attention. The original Vaswani et al. (2017) paper used fixed sinusoidal functions: PE(pos, 2i) = sin(pos/10000^(2i/d_model)), with different frequencies for even/odd dimensions. This gives every position a unique fingerprint, and the sinusoidal structure means relative distances can be computed via linear transformations.
+
+Modern LLMs have moved to learned and relative approaches. RoPE (Rotary Position Embedding, used in Llama, Mistral) applies a rotation to Q and K vectors based on position — this means the dot product QᵢKⱼ naturally encodes the relative distance (i−j) rather than absolute positions. ALiBi (used in MPT) applies a position penalty directly to attention logits. Both approaches generalize better to sequence lengths longer than those seen during training than the original sinusoidal encoding does.
+:::
+
 :::
 
 ::: {.callout-warning title="Mid Level"}
-1. Why is attention complexity O(n²) in sequence length, and what architectural changes address this?
-2. Compare encoder-only vs. decoder-only architectures — when would you choose each?
-3. What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?
+
+**Q1. Why is attention complexity O(n²) in sequence length, and what architectural changes address this?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Standard attention computes pairwise compatibility between every token and every other token. For a sequence of length n, that's an n×n attention matrix — O(n²) in both compute and memory. At n=4,096 this is manageable; at n=100,000 it becomes prohibitive (a 100k×100k FP16 matrix is ~20 GB just for attention weights, per head).
+
+Several architectural approaches reduce this:
+
+**Sparse attention** (Longformer, BigBird): each token only attends to a local window plus a few global tokens. Reduces to O(n·w) where w is the window size. Longformer uses window size 512 with global tokens at [CLS] and task-relevant positions.
+
+**Linear attention** (Performer, RWKV): approximates or replaces softmax attention with kernel methods that decompose into O(n·d) operations. Quality tradeoff is real.
+
+**Flash Attention** (Dao et al., 2022): doesn't reduce algorithmic complexity but dramatically reduces memory I/O by tiling computation to stay in SRAM rather than repeatedly reading/writing HBM. Result: same O(n²) compute but 5–20x faster and uses 10x less memory in practice. This is the dominant approach in production today.
+
+**Sliding window + retrieval** (used in Gemini 1.5): process locally with sliding window attention, retrieve from distant context when needed. Achieves 1M+ context windows.
+:::
+
+**Q2. Compare encoder-only vs. decoder-only architectures — when would you choose each?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The key difference is the attention mask. Encoder-only models (BERT, RoBERTa) use full bidirectional attention — every token attends to every other token in both directions. Decoder-only models (GPT, Llama) use causal masking — each token can only attend to prior tokens, enabling autoregressive generation.
+
+**Choose encoder-only when:**
+- You need a representation of the full input (classification, NER, embeddings, semantic similarity)
+- Examples: BERT for sentiment classification, a RoBERTa-based NLI model for entailment, all-MiniLM for generating sentence embeddings
+- The task is discriminative — you're mapping input to label, not generating new text
+
+**Choose decoder-only when:**
+- You need open-ended text generation, completion, or instruction following
+- Examples: GPT-4 for summarization, Llama-3 for code generation, any chat/assistant use case
+- The task is generative — you're producing new tokens
+
+**Encoder-decoder** (T5, BART) bridges both: encode the full input bidirectionally, then generate output autoregressively. Best for structured generation tasks where input and output are distinct (translation, summarization with controlled format).
+
+In practice, the industry has largely converged on decoder-only for general-purpose LLMs because they scale better and few-shot prompting effectively handles discriminative tasks too.
+:::
+
+**Q3. What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The difference is where LayerNorm is applied within each transformer block relative to the sublayers (attention, FFN).
+
+**Post-LN** (original Vaswani 2017): LayerNorm is applied after the residual addition — x = LayerNorm(x + Sublayer(x)). The residual path bypasses normalization entirely, so early in training when weights are random, gradients can be very large. This makes post-LN models sensitive to learning rate and requiring careful warmup schedules. Deep post-LN models (24+ layers) are notoriously difficult to train from scratch.
+
+**Pre-LN**: LayerNorm is applied before the sublayer — x = x + Sublayer(LayerNorm(x)). Normalization happens on the input to each sublayer, which stabilizes gradient magnitudes throughout the network. GPT-2, GPT-3, and most modern LLMs use pre-LN because it trains stably without extensive hyperparameter tuning and scales to hundreds of layers.
+
+The practical consequence: if you're fine-tuning a post-LN model (like original BERT), you need lower learning rates and more warmup steps than pre-LN models. If you see training loss spikes or divergence early in training, check which variant you're using. Most modern checkpoints (Llama, Mistral, Gemma) are pre-LN with RMSNorm (a simplified LayerNorm that skips the re-centering step and is 10–20% faster).
+:::
+
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?
-2. How would you explain context window limitations to a customer who wants to "just feed in the whole database"?
+
+**Q1. A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I'd recommend an encoder-only architecture, specifically a fine-tuned BERT or RoBERTa variant, for this use case — with an important caveat about the 10k label count.
+
+Encoder-only models produce a pooled [CLS] representation of the full input bidirectionally, which is ideal for classification tasks. You fine-tune by adding a linear classification head (hidden_dim × 10k) on top of the pooled output and training with cross-entropy loss. Models like DeBERTa-v3 consistently top classification benchmarks and are well-understood for this use case.
+
+The 10k label challenge is real: with 10k output classes, you need substantial labeled examples per class to train the classification head well. My first questions would be: how many labeled examples exist per label? If under 50 per class, zero-shot or few-shot approaches using a decoder model with structured output might actually outperform a fine-tuned classifier — GPT-4 with the full label taxonomy in the system prompt can classify without per-label training data.
+
+If there are sufficient labels (ideally 200+ per class), fine-tune a RoBERTa-large or DeBERTa-v3-base with the classification head. Inference cost matters at 10k labels — encoder models are significantly cheaper at inference than large decoders, which matters when classifying millions of documents. For the proprietary label concern, on-prem fine-tuning keeps the data local.
+:::
+
+**Q2. How would you explain context window limitations to a customer who wants to "just feed in the whole database"?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I use an analogy first: "Think of the context window like a whiteboard. The model can only reason about what's written on the whiteboard right now. Your database is a library — you can't put the whole library on the whiteboard."
+
+Then I get concrete about costs: a typical enterprise database might have 10 million documents averaging 1,000 tokens each — that's 10 billion tokens. At $3 per million tokens (Claude Sonnet pricing), that's $30,000 per query, with latency measured in hours. Even with 1M-token context windows (Gemini 1.5 Pro), you're still a factor of 10,000 short of "the whole database."
+
+But the more important point is that it doesn't work even if it were free. Research (Liu et al., "Lost in the Middle," 2023) shows model performance degrades badly for information buried in the middle of very long contexts — models effectively use only the beginning and end of their context well. More context doesn't mean better reasoning; it often means worse.
+
+The right solution is RAG: index the database as embeddings, retrieve the 3–5 most relevant chunks at query time, and give the model only the focused context it needs. The model reasons better with 2,000 tokens of relevant content than with 100,000 tokens of mixed relevance. I'd then walk through what an indexing and retrieval pipeline looks like for their specific database type.
+:::
+
 :::
 
 ## Further Reading

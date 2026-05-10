@@ -133,23 +133,209 @@ Fine-tuning becomes the right answer when you have abundant labeled domain data 
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level"}
-1. What is few-shot prompting and why does it work?
-2. What is chain-of-thought prompting and when would you use it?
-3. What is a system prompt?
-4. Name five components a well-structured prompt should contain.
+
+**Q1. What is few-shot prompting and why does it work?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Few-shot prompting means providing 2–5 worked examples of the input-output pattern you want before presenting the actual task. Instead of explaining the desired behavior abstractly, you demonstrate it.
+
+It works because language models are trained to continue patterns. When you show: "Input: 'I love this product' → Output: positive; Input: 'Terrible experience' → Output: negative; Input: 'It's okay I guess' → Output:", the model has inferred the classification task, output format, and how to handle ambiguous cases — all from examples, not instructions.
+
+Research on few-shot prompting (Brown et al., GPT-3 paper, 2020) shows this in-context learning capability emerges at scale. The model isn't updating weights — it's doing something more like pattern matching and task inference from the examples in its context window.
+
+The practical leverage: examples communicate things that are hard to specify verbally. If you want outputs "in a warm but professional tone," describing that is ambiguous. Showing 3 examples of it is unambiguous. This is especially powerful for style, format, and edge-case handling.
+
+Diminishing returns kick in around 5 examples. 1 example establishes a pattern; 3 allow triangulation; beyond 5, you're typically consuming context tokens without meaningfully improving outputs. Select examples that cover the hardest cases — not just easy wins — and include examples that show how to handle uncertainty.
+:::
+
+**Q2. What is chain-of-thought prompting and when would you use it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Chain-of-thought (CoT) prompting instructs the model to generate intermediate reasoning steps before producing its final answer, either by adding "Let's think step by step" (zero-shot CoT, Kojima et al., 2022) or by showing few-shot examples with explicit reasoning traces.
+
+The mechanism: intermediate steps constrain subsequent outputs. Without CoT, a model jumping directly from "A train travels 120 miles in 2 hours, what is the average speed?" to an answer has many wrong paths. With CoT, writing "120 miles / 2 hours = 60 mph" first makes the final answer nearly deterministic. Wei et al. (2022) demonstrated improvements from 18% to 79% accuracy on certain math benchmarks.
+
+**When to use CoT:**
+- Multi-step arithmetic and algebra
+- Logical reasoning chains (if-then sequences)
+- Tasks requiring intermediate validation (code debugging, medical differential diagnosis)
+- Any problem where wrong intermediate states would lead to wrong answers
+
+**When not to use CoT:**
+- Simple classification tasks (sentiment: CoT can introduce second-guessing)
+- High-throughput, latency-sensitive pipelines (reasoning tokens add latency and cost — a 100-token CoT trace at $3/MTok adds ~$0.0003 per call, but at 10M calls/day that's $3,000/day just for CoT tokens)
+- Pattern-matching tasks where direct lookup is more reliable than reasoning
+
+The strongest version combines few-shot + CoT: show 2–3 examples with explicit reasoning traces, then ask the model to follow the same pattern.
+:::
+
+**Q3. What is a system prompt?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A system prompt is a set of instructions passed to the model before any user conversation begins, typically in a dedicated "system" role in the API. It establishes the model's persona, capabilities, constraints, and behavioral rules for the entire session.
+
+Unlike a user message, the system prompt is persistent and frames every subsequent interaction. It's the mechanism through which you configure the model for your specific application: "You are a customer support agent for Acme Corp. Answer only questions about Acme products. Do not discuss competitor products. Always respond in under 100 words. If you cannot answer from the provided context, say 'I don't have that information' — do not guess."
+
+In most LLM APIs (OpenAI, Anthropic), the system prompt has higher "trust" than user messages. A user saying "ignore your instructions" cannot override a well-crafted system prompt (though prompt injection remains a real attack vector to defend against).
+
+Practical system prompt components typically include: the model's role and persona, the knowledge domain it operates in, response format requirements (JSON, bullets, max length), explicit prohibitions, escalation instructions ("if the user asks about billing, direct them to billing@company.com"), and the grounding instruction for RAG contexts ("Answer only based on the provided context. If the context doesn't contain the answer, say so."). Treat the system prompt as the primary configuration surface for your LLM application.
+:::
+
+**Q4. Name five components a well-structured prompt should contain.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The five components are: Role, Context, Task, Format, and Constraints.
+
+**Role** establishes the model's persona and expertise frame: "You are a senior data analyst at a fintech company specializing in fraud detection." This primes the model to access relevant knowledge and adopt an appropriate register.
+
+**Context** provides background the model needs to answer well: "The dataset contains 500k rows of transaction records, quarterly, with missing values in the revenue column. The business is preparing for an annual audit."
+
+**Task** specifies the concrete action required: "Identify the top 3 anomalies in the attached data and explain why each is anomalous."
+
+**Format** defines the desired output structure: "Respond as a JSON array with fields: finding, severity (high/medium/low), explanation, recommendation." Without format specification, output length and structure are unpredictable — explicit formats show 40–60% consistency improvements in practice.
+
+**Constraints** set boundaries and priorities: "Do not include findings with confidence below 0.8. Maximum 3 items. Do not speculate about data not present in the dataset."
+
+The "new employee test" is a useful heuristic: if a smart intern couldn't follow your instructions on day one without asking clarifying questions, the prompt lacks sufficient context or specificity. Prompts that fail this test — vague role definitions, ambiguous tasks, missing format specs — predictably produce inconsistent outputs that look like model failures but are actually instruction failures.
+:::
+
 :::
 
 ::: {.callout-warning title="Mid Level"}
-1. When does chain-of-thought prompting *hurt* performance rather than help it?
-2. How would you design a prompt evaluation framework that catches regressions when you update prompts? What does the test set look like?
-3. Explain the signal-to-noise tradeoff in prompt design. What kinds of prompt content count as noise?
-4. You changed a prompt and outputs seem better on manual spot-checks. How do you confirm it's actually better before deploying to production?
+
+**Q1. When does chain-of-thought prompting hurt performance rather than help it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+CoT hurts in three situations: simple tasks where reasoning introduces noise, pattern-matching tasks where direct lookup beats deliberation, and latency-constrained pipelines where the cost of reasoning tokens isn't justified.
+
+**Simple classification tasks** are the clearest case. Ask a model "Is this review positive or negative?" on an obviously positive review and it answers correctly. Add "Let's think step by step" and the model might over-analyze: "The word 'good' is positive, but 'however' introduces a contrast, and 'not quite what I expected' suggests disappointment…" ending in a wrong or hedged answer. The reasoning trace introduces noise on tasks that don't require reasoning.
+
+**Tasks with obvious correct answers** are vulnerable to second-guessing. CoT can push a model away from the answer it would have given directly. This is sometimes called the "thinking too much" failure mode — well-documented in math tasks where simple arithmetic gets re-derived incorrectly via a flawed reasoning chain.
+
+**High-volume, latency-sensitive production paths.** A 150-token reasoning trace adds real cost and latency. At 10M queries/day with GPT-4o at $5/MTok, adding 150 reasoning tokens per query is $7,500/day in additional spend. For simple tasks (intent classification, entity extraction), this is waste.
+
+The practical test: run your task with and without CoT on a representative sample. If CoT doesn't improve accuracy by more than 5 percentage points on your specific task, the latency and cost tradeoff is rarely justified.
+:::
+
+**Q2. How would you design a prompt evaluation framework that catches regressions when you update prompts? What does the test set look like?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The framework has three components: a curated test set, a defined success metric for each test case, and an automated evaluation pipeline that runs on every prompt change.
+
+**The test set should include:**
+- Representative samples from every category/intent the prompt handles (minimum 20% of cases)
+- Previously failing examples — every case that broke in production or during development goes in
+- Edge cases: inputs with unusual formatting, ambiguous cases, adversarial inputs that previously caused policy violations or format errors
+- Borderline cases: inputs that sit near decision boundaries where small prompt changes flip the output
+
+Minimum size: 100 test cases for production. Fewer than that and you're validating on unrepresentative samples. Production at scale warrants 500+.
+
+**Evaluation approaches by output type:**
+- Structured outputs (JSON, classifications): automated exact-match or schema validation — fast, cheap, deterministic
+- Free-text quality: LLM-as-judge using a stronger model (GPT-4o judging GPT-3.5-turbo outputs) with a rubric. Validate judge-human correlation before trusting it
+- A/B comparison: present both old and new outputs to the judge model, ask which is better — more robust than absolute scoring
+
+**The pipeline:** prompt version control in git → every PR that changes a prompt triggers CI evaluation → results posted to PR with pass/fail per test category → failed tests block merge.
+
+The discipline is: never deploy a prompt change that hasn't beaten or matched the current prompt on the full test set.
+:::
+
+**Q3. Explain the signal-to-noise tradeoff in prompt design. What kinds of prompt content count as noise?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Signal is any content that directly helps the model produce the correct output: task description, output format requirements, meaningful constraints, and well-chosen examples. Noise is anything that consumes context tokens without improving — or that actively degrades — output quality.
+
+The mechanism: attention in transformer models is finite. Relevant instructions buried under padding compete against the noise for model attention. Research on prompt compression (like LLMLingua) shows that many prompts can be shortened 50%+ with minimal quality loss — and sometimes shorter prompts outperform originals because the signal-to-noise ratio improves.
+
+**Common noise categories:**
+
+*Apologetic or hedge language:* "I would appreciate it if you could please try to..." — signals nothing about the task, teaches the model to hedge in return. Replace with direct imperatives.
+
+*Redundant restatement:* Saying the same instruction 3 ways hoping one lands — actually splits attention across 3 competing phrasings. One clear instruction outperforms three vague ones.
+
+*Irrelevant persona details:* "You are a passionate expert who loves helping people and always goes the extra mile..." — unless the tone requires it, this adds zero information about the task.
+
+*Excessive preamble:* Two paragraphs of context before stating the task. State the task first, then provide context.
+
+*Hedging constraints:* "If possible, try to respond in under 100 words" — "if possible" and "try to" signal optionality. The model treats it as optional. Write "Respond in under 100 words" as a hard constraint.
+
+The test: cut your prompt in half. If quality holds, the removed half was noise.
+:::
+
+**Q4. You changed a prompt and outputs seem better on manual spot-checks. How do you confirm it's actually better before deploying to production?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Manual spot-checks are unreliable for three reasons: you're selecting examples that confirm your hypothesis, LLM outputs are stochastic so the same prompt produces different results on re-runs, and you're not sampling from the actual production input distribution.
+
+The confirmation process:
+
+**1. Run both prompts against a held-out test set.** This should be your pre-existing evaluation dataset — not examples you just looked at. Minimum 100 cases; ideally drawn from production logs to represent real distribution. Run each prompt 2–3 times per case (temperature > 0) to measure consistency.
+
+**2. Define quantitative success criteria.** "Seems better" must translate to: accuracy on labeled cases > X%, format compliance rate > Y%, or LLM-judge preference rate > 50% with statistical significance. Without a number, you can't make a deployment decision.
+
+**3. Statistical significance.** If the new prompt is 73% accurate vs. 71% on 100 cases, that's within noise. Use a binomial test or Wilson confidence interval to determine if the difference is real. A 5 percentage point improvement on 200 cases is significant; on 10 cases it's meaningless.
+
+**4. Regression check.** Identify the specific test cases where the new prompt performs worse than the old. If the regression is on your highest-traffic categories, the aggregate improvement may not be worth the regression risk.
+
+**5. Staged rollout.** Shadow the new prompt in production on 5–10% of traffic, log both outputs, measure production metrics (user corrections, escalation rate) before full rollout.
+:::
+
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A customer's GPT-4-based classification pipeline has 15% error rate. Before recommending fine-tuning, what prompt engineering techniques would you try first and in what order?
-2. A customer wants to use LLMs for customer support but is worried about inconsistency — the model says different things to different users about the same policy. What prompt engineering mitigations do you apply?
-3. How do you explain to a non-technical PM the difference between prompt engineering and fine-tuning? What determines which approach to use?
+
+**Q1. A customer's GPT-4-based classification pipeline has 15% error rate. Before recommending fine-tuning, what prompt engineering techniques would you try first and in what order?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I'd work through these techniques in order of expected impact and implementation cost:
+
+**1. Audit the current prompt against the five-component framework.** Most 15% error rate issues trace to vague task specification, missing output format constraints, or insufficient context. Review: is the task unambiguous? Is the output format strictly specified? Are edge cases handled? Fix these first — often takes the error rate to 8–10% before doing anything else.
+
+**2. Add few-shot examples targeting the failure modes.** Sample 20–30 of the misclassified examples. Find patterns — is the model consistently wrong on short inputs? Negation? Domain-specific vocabulary? Build 3–5 examples that demonstrate correct handling of these edge cases. Few-shot examples for known failure modes are the highest-leverage single intervention.
+
+**3. Add chain-of-thought for ambiguous cases.** If errors cluster around borderline inputs, ask the model to reason through its classification: "First identify the key signals in the text, then classify." This reduces wrong-turn errors on cases that require reasoning.
+
+**4. Specify explicit decision criteria.** Rather than "classify as positive/negative/neutral," provide operational definitions: "Classify as positive if the text expresses satisfaction, endorsement, or delight. Classify as negative if it expresses dissatisfaction, complaint, or disappointment. Classify as neutral only if the text contains no evaluative sentiment." Concrete criteria reduce model judgment on boundary cases.
+
+**5. LLM-as-judge for borderline cases.** Route low-confidence outputs (if the model supports logprobs) to a secondary review prompt that explains its reasoning before committing to a label.
+
+If these bring error rate below 5%, fine-tuning probably isn't worth it. If errors remain above 8–10% after all of these, the model genuinely lacks knowledge or the task requires tighter format control — then fine-tune.
+:::
+
+**Q2. A customer wants to use LLMs for customer support but is worried about inconsistency — the model says different things to different users about the same policy. What prompt engineering mitigations do you apply?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Inconsistency in customer support is usually one of three problems: the model is paraphrasing policy from memory (hallucination risk), the model is interpreting ambiguous instructions differently in different contexts, or temperature is too high.
+
+**Mitigation 1: Inject the actual policy text, don't rely on the model's memory.** The system prompt or RAG-retrieved context should contain the verbatim policy text, not a paraphrase. "You must answer questions about return policy using only this text: [verbatim policy]" eliminates the model's discretion in interpretation. This is the single biggest consistency lever.
+
+**Mitigation 2: Use explicit output templates for factual questions.** For policy questions with known answers, provide a template: "When a user asks about the return window, always respond: 'Our return policy allows returns within 30 days of purchase with a valid receipt. [then add any relevant context].'" Templates eliminate paraphrase variation.
+
+**Mitigation 3: Lower temperature to 0 or 0.1.** High temperature creates sampling variation. Policy questions aren't creative writing — deterministic outputs are desirable.
+
+**Mitigation 4: Prohibit commitment language beyond documented policy.** "Never state deadlines, amounts, or timeframes that aren't in the provided policy document. If a user asks about something not covered, say 'I don't have that specific information — please contact support@company.com.'"
+
+**Mitigation 5: Build a consistency eval.** Ask the same 20 policy questions 10 times each, measure answer variance. Track this metric weekly. Consistency should be above 95% for policy questions before deploying to customers.
+:::
+
+**Q3. How do you explain to a non-technical PM the difference between prompt engineering and fine-tuning? What determines which approach to use?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I use this analogy: "Prompt engineering is like giving a brilliant new contractor a detailed briefing document before each project. Fine-tuning is like hiring someone full-time, training them for months, and having them internalize your company's style so deeply they don't need the briefing document anymore."
+
+**Prompt engineering** is faster, cheaper to iterate, and easier to reverse. You write instructions in plain text, test them immediately, and deploy in minutes. The model's general capabilities remain unchanged — you're just directing them. The downside is that instructions consume context tokens (cost) and the model may still behave unexpectedly on edge cases because it's applying general knowledge to your specific task.
+
+**Fine-tuning** changes the model's weights to internalize specific patterns — style, format, domain vocabulary, response structure. The benefit: no instruction overhead at inference, better consistency, and the ability to teach behaviors that are hard to describe in text. The cost: you need hundreds to thousands of high-quality labeled examples, a training pipeline, evaluation, and retraining when things change.
+
+**Decision criteria for the PM:**
+
+Choose prompt engineering if: the task is new or requirements are still evolving, you have fewer than 500 labeled examples, iteration speed matters, or the error rate is above 30% (suggests a task definition problem, not a model problem).
+
+Choose fine-tuning if: you've exhausted prompt engineering and still have above 8–10% error rate on a stable, well-defined task; you need sub-100ms latency (smaller fine-tuned model beats large prompted model); or the desired style/format is subtle enough that examples communicate it better than instructions.
+
+Most teams should exhaust prompt engineering first — it's faster and you build the labeled dataset you'd need for fine-tuning anyway through the process.
+:::
+
 :::
 
 ## Further Reading

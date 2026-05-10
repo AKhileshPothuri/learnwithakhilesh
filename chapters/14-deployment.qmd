@@ -84,19 +84,119 @@ The lesson generalizes beyond code: always ask "what is the minimum context need
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level"}
-1. What is model quantization and why is it used?
-2. What is knowledge distillation?
+
+**Q1. What is model quantization and why is it used?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Model quantization reduces the numerical precision of a model's weights from high-precision floating point to lower-precision formats, decreasing memory footprint and increasing inference speed at the cost of some accuracy.
+
+Standard training uses FP32 (32-bit floats, 4 bytes per parameter) or FP16/BF16 (16-bit, 2 bytes per parameter). Quantization can go further: INT8 (8-bit integers, 1 byte/parameter) or INT4 (4-bit, 0.5 bytes/parameter).
+
+For a 7B parameter model, this translates to: FP16 = ~14 GB GPU memory, INT8 = ~7 GB, INT4 = ~3.5 GB. This matters enormously for deployment costs — a 7B model that requires an A100 80GB at FP16 can run on a single RTX 4090 (24 GB) at INT4, dropping cost by 10x.
+
+The quality tradeoff is real but manageable for most tasks. INT8 introduces minimal quality degradation on most benchmarks. INT4 is noticeable on tasks requiring precise reasoning but often acceptable for summarization, classification, and RAG generation. The key rule is to always benchmark quantized model quality on your specific task — aggregate benchmark numbers may not reflect your use case.
+
+Quantization is primarily used for inference (not training, where precision loss compounds through gradient updates). Post-training quantization (PTQ) applies to already-trained models without retraining, making it practical to quantize open-source models like Llama for custom deployment.
+:::
+
+**Q2. What is knowledge distillation?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Knowledge distillation is a training technique where a smaller "student" model is trained to mimic the behavior of a larger "teacher" model, transferring the teacher's performance to a cheaper, faster model.
+
+The key insight is what the student learns from. Rather than training on hard labels (class 1: yes/no), the student trains on the teacher's full output probability distribution — the soft targets. If a teacher model assigns probabilities [0.7, 0.2, 0.1] to three sentiment classes, that distribution encodes richer information than the hard label "positive." The 0.2 probability on "neutral" tells the student this is somewhat ambiguous — information that a hard label loses entirely.
+
+The training objective combines the standard cross-entropy loss against true labels with a KL-divergence loss against the teacher's soft outputs, weighted by a temperature parameter that controls how "soft" the teacher distribution is.
+
+In practice, distilled models consistently outperform models trained from scratch at the same parameter count. DistilBERT (Sanh et al., 2019) is 40% smaller and 60% faster than BERT while retaining 97% of its performance — the most widely cited example. GPT-3 era distillation showed that specialized student models can match or exceed teacher performance on narrow tasks.
+
+When to use distillation: you have a task-specific use case with abundant unlabeled data, and the teacher model's latency or cost is unacceptable. Distilled models are 3–10x cheaper to serve than teachers on narrow tasks.
+:::
+
 :::
 
 ::: {.callout-warning title="Mid Level"}
-1. Explain PagedAttention: what problem it solves and how it works.
-2. Compare GPTQ and AWQ quantization approaches.
-3. Walk through how you'd estimate the GPU memory required to serve a 70B parameter model at FP16.
+
+**Q1. Explain PagedAttention: what problem it solves and how it works.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+PagedAttention (Kwon et al., vLLM, 2023) solves the KV cache memory fragmentation problem that limits LLM serving throughput.
+
+**The problem:** during autoregressive generation, each token attends to all previous tokens. Those attention key-value pairs must be stored in GPU memory — the KV cache. Traditional serving frameworks allocate the maximum possible KV cache per request upfront (maximum sequence length × layers × attention heads × 2). For a 32k context window at FP16, one request can consume 10–20 GB of GPU memory. Even when the actual generation is short, that memory is reserved and unavailable to other requests. GPU memory utilization was typically 20–40% in practice — most of the allocated space was wasted.
+
+**The solution:** PagedAttention borrows virtual memory concepts from operating system design. Rather than contiguous allocation, the KV cache is divided into fixed-size "pages" (blocks) that are allocated on demand. Non-contiguous physical pages are mapped to a continuous logical address space for each sequence — exactly how OS virtual memory works.
+
+When a new token is generated, only the pages needed for that token are allocated. Pages from completed or terminated requests are immediately freed for reuse. Multiple requests can share the same physical memory pages for common prefixes (prompt caching).
+
+**The result:** 2–4x higher throughput at the same GPU footprint compared to traditional serving. vLLM achieves 3.5x higher throughput than HuggingFace Transformers on the same hardware by eliminating memory fragmentation. This is why vLLM has become the standard for self-hosted LLM serving in production.
+:::
+
+**Q2. Compare GPTQ and AWQ quantization approaches.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Both GPTQ and AWQ are post-training quantization methods targeting INT4 compression of LLMs, but they use fundamentally different strategies to decide which weights to preserve at higher precision.
+
+**GPTQ** (Frantar et al., 2022) quantizes weights layer by layer by minimizing the reconstruction error of each layer's output. For each layer, it finds the set of 4-bit values that best approximates the FP16 weights by solving a second-order optimization problem using the Hessian of the layer's loss. Requires a calibration dataset (typically 128 samples from C4 or Wikipedia) to compute Hessians. The quantization itself is done once and takes several hours for a 70B model.
+
+**AWQ** (Lin et al., 2023 — Activation-aware Weight Quantization) takes a different insight: not all weights are equally important. Weights that multiply large activations contribute more to the output and are more sensitive to quantization error. AWQ identifies important weight channels by observing activation magnitudes over calibration data, then scales those channels to preserve them at effectively higher precision before quantization.
+
+**Quality comparison:** AWQ generally produces better quality than GPTQ at the same compression ratio, especially on reasoning and instruction-following tasks. Benchmarks on Llama-2-7B show AWQ outperforms GPTQ-INT4 by 1–3 perplexity points.
+
+**Practical differences:** AWQ is faster to quantize (minutes vs. hours for large models) and produces smaller model files. GPTQ is more mature with broader tooling support (AutoGPTQ is widely used). For new deployments, AWQ is the current recommendation; for legacy compatibility, GPTQ remains well-supported.
+:::
+
+**Q3. Walk through how you'd estimate the GPU memory required to serve a 70B parameter model at FP16.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+GPU memory for LLM serving has three components: model weights, KV cache, and activation/overhead.
+
+**1. Model weights.** At FP16, each parameter requires 2 bytes. For 70B parameters: 70 × 10⁹ × 2 bytes = 140 GB. This is the baseline — before any inference, you need 140 GB just to load the weights. This immediately requires at least two A100 80GB GPUs (2 × 80 GB = 160 GB) or equivalent.
+
+**2. KV cache.** During generation, key and value tensors for each token must be stored per layer. For a typical 70B model architecture (80 layers, 64 heads per layer, head dimension 128): KV cache per token = 2 (K and V) × 80 layers × 64 heads × 128 head_dim × 2 bytes (FP16) = ~2.6 MB per token. For a 4k context request: 4,096 tokens × 2.6 MB = ~10 GB per concurrent request. With 8 concurrent requests: ~80 GB additional KV cache. This is why high-concurrency serving requires significantly more memory than single-request inference.
+
+**3. Activations and framework overhead.** ~2–5% of total model memory for intermediate activations during the forward pass, plus framework overhead (PyTorch, CUDA) of 1–2 GB.
+
+**Total estimate for a 70B model serving 8 concurrent requests at 4k context:** 140 GB (weights) + 80 GB (KV cache) + 5 GB (overhead) = ~225 GB. Minimum practical setup: 3× A100 80GB or 4× H100 80GB (for headroom), or a single H100 NVL 94GB fails at this concurrency.
+
+Rule of thumb: start with "2 bytes per parameter" for weights, then add 30–50% for KV cache and overhead at typical serving loads.
+:::
+
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A customer needs <100ms p99 latency for their GenAI feature. Walk through the deployment architecture decisions you'd make.
-2. The customer's inference costs are 10x higher than budgeted. What is your optimization playbook?
+
+**Q1. A customer needs <100ms p99 latency for their GenAI feature. Walk through the deployment architecture decisions you'd make.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+100ms p99 is extremely aggressive for LLM generation — most generation responses take 500ms–5s depending on output length. I'd start by clarifying whether this applies to the first token (time-to-first-token, TTFT) or the complete response, because the architecture decisions differ significantly.
+
+**If TTFT must be <100ms:** this is achievable. TTFT depends on the prefill phase (processing the input prompt), not generation. Optimizations: use prefix caching to skip re-processing common prompt prefixes (e.g., system prompt appears in every request — cache it); use speculative decoding with a small draft model; keep the model on GPU with no cold start; and co-locate the serving infrastructure with the user (edge deployment or regional nodes).
+
+**If full response must be <100ms:** this is nearly impossible for generation longer than ~50 tokens at standard model sizes. Solutions require fundamentally different architecture: use a smaller, faster model (7B INT4 with vLLM can generate ~50 tokens in ~100ms on an A100); implement streaming so the user sees tokens as they're generated (perceived latency is TTFT, not total time); or for structured tasks, use a classifier/retrieval approach rather than generation (100ms is very achievable for classification + retrieval without generation).
+
+**Deployment architecture for minimum latency:** self-hosted vLLM with continuous batching on A100/H100; INT8 or INT4 quantization (reduces memory bandwidth per forward pass); tensor parallelism across GPUs to speed individual request processing; keep model in memory (no loading from disk); implement request queuing with max queue time to prevent latency spikes from burst traffic; use warm connections (no HTTP connection establishment overhead per request).
+
+For p99 specifically: identify the tail latency sources — long prompts, cold cache, context window boundary effects — and test under production-realistic load distributions.
+:::
+
+**Q2. The customer's inference costs are 10x higher than budgeted. What is your optimization playbook?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I investigate cost drivers before optimizing, because the fix depends entirely on where the cost is coming from. Costs are tokens × price_per_token, so I start by measuring actual token consumption.
+
+**Step 1: Audit token consumption.** Log input tokens and output tokens separately for a sample of production requests. What's the average input token count? Average output? Compare to what was budgeted. Most surprises are in input tokens — context injection (RAG, conversation history, system prompts) that wasn't accounted for.
+
+**Step 2: Fix context bloat (highest-leverage intervention).** If you're injecting full documents as RAG context when only 3 relevant paragraphs are needed, you're paying 10x for retrieval quality you're not getting anyway. Reduce chunk count from top-10 to top-3 and measure if answer quality holds. Shorten the system prompt — remove redundant instructions. Compress conversation history by summarizing older turns instead of keeping the full transcript.
+
+**Step 3: Right-size the model.** GPT-4o costs ~3x GPT-4o-mini for many tasks where mini is sufficient. Run your eval set on the smaller model — if accuracy drops less than 2%, switch. Many classification and extraction tasks perform equivalently on smaller models.
+
+**Step 4: Implement prompt caching.** If the system prompt and frequently-used context repeat across requests, prompt caching (Anthropic, OpenAI both support this) can cut input token costs by 80–90% for cached prefixes. On Claude, cached tokens cost 10% of uncached price.
+
+**Step 5: Batch non-real-time jobs.** If some requests aren't user-facing (nightly enrichment, classification jobs), use batch APIs at 50% discount.
+
+**Step 6: Consider self-hosted for high-volume use cases.** At >10M tokens/day, self-hosted Llama-3-70B on Modal or a dedicated GPU cluster typically costs 5–10x less than API pricing.
+:::
+
 :::
 
 ## Further Reading

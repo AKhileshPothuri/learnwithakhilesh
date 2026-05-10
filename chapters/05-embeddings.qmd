@@ -129,23 +129,173 @@ for doc, score in sorted(zip(docs, similarities), key=lambda x: -x[1]):
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level"}
-1. What is a word embedding and what does it represent?
-2. What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?
-3. What is a vector database used for?
-4. Explain the "king − man + woman = queen" example. What does it tell you about embeddings?
+
+**Q1. What is a word embedding and what does it represent?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A word embedding is a dense vector of real numbers that represents a word's meaning as a position in a high-dimensional mathematical space. Unlike one-hot encoding where every word gets an arbitrary integer, embeddings place semantically similar words near each other — "dog" and "puppy" end up with similar coordinates, while "dog" and "refrigerator" are far apart.
+
+The vectors are typically 64 to 1,536 dimensions, where each dimension captures some latent aspect of meaning. These aren't human-interpretable — dimension 47 doesn't cleanly mean "formality" — but collectively the dimensions encode semantic relationships that emerge from training.
+
+Embeddings are learned, not designed. Models like Word2Vec train on a prediction task: given a word, predict its neighbors. After millions of gradient updates on a large corpus, words that consistently appear in similar contexts end up with similar vectors. The key insight, from linguist J.R. Firth (1957): "a word is known by the company it keeps."
+
+The result is a geometric space where arithmetic over meaning works: relationships like king-man ≈ queen-woman are encoded in the vector geometry. This is what enables downstream tasks like semantic search, clustering, and classification — instead of comparing strings, you compare positions in meaning space.
+:::
+
+**Q2. What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Cosine similarity measures the angle between two vectors, ignoring their magnitude: cos(θ) = (A·B) / (‖A‖ · ‖B‖). It returns 1.0 for identical direction, 0 for orthogonal vectors, and -1.0 for opposite directions.
+
+The reason it's preferred for text comes down to length invariance. Consider a short paragraph about climate change and a 10,000-word book chapter on the same topic. If both are embedded, the book chapter's vector will have larger magnitude values throughout — simply because it contains more content reinforcing the same themes. Euclidean distance (straight-line distance in vector space) would say these two are "far apart" because of magnitude differences, even though they're semantically near-identical.
+
+Cosine similarity normalizes out this length effect by dividing by the magnitudes. Only the direction in the embedding space matters — and direction encodes meaning. Two documents pointing in the same "direction" are about the same thing, regardless of length.
+
+A practical note: most production systems normalize all embedding vectors to unit length before storing them. When vectors are unit-normalized, cosine similarity and dot product become equivalent (since ‖A‖ = ‖B‖ = 1), and dot product is faster to compute. This is why most vector databases default to inner product search on normalized embeddings.
+:::
+
+**Q3. What is a vector database used for?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A vector database stores embedding vectors and enables fast approximate nearest-neighbor (ANN) search — finding the vectors most similar to a query vector out of potentially billions of stored vectors in milliseconds.
+
+The core problem it solves: naive exhaustive search over 10 million 1,536-dimensional vectors requires computing 10 million dot products per query, which is too slow at scale. Vector databases use indexing structures — HNSW (Hierarchical Navigable Small Worlds) and IVF (Inverted File Index) are the most common — that organize vectors so only a small fraction need to be checked per query. HNSW achieves this by building a multi-layer graph where high layers navigate coarsely and lower layers refine, enabling sub-millisecond search at 99%+ recall.
+
+The primary use cases are: semantic search (find documents similar to a query), RAG retrieval (find relevant chunks to inject into an LLM prompt), recommendation systems (find items similar to what a user has engaged with), and duplicate detection (find near-identical records across large databases).
+
+Popular options include Pinecone (fully managed), Weaviate (open-source with multi-tenancy), Qdrant (Rust-based, high performance, self-hosted), Chroma (lightweight, developer-friendly), and pgvector (PostgreSQL extension — good if you already run Postgres and have under ~1M vectors).
+:::
+
+**Q4. Explain the "king − man + woman = queen" example. What does it tell you about embeddings?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is the most famous demonstration that word embeddings capture semantic relationships as geometric structure. Take the Word2Vec embedding of "king," subtract the embedding of "man," and add the embedding of "woman." The resulting vector lands nearest to "queen" in the embedding space — the model never explicitly learned this; it emerged from training on text.
+
+What this tells us: the embedding space encodes analogical relationships as consistent vector offsets. The vector from "man" to "woman" represents the concept of "feminine gender applied to the same entity." The same offset applied to "king" yields a vector pointing toward "queen," because that relationship was implicitly encoded from seeing how both words appear in similar contexts ("the king ruled" / "the queen ruled," etc.).
+
+More broadly, it demonstrates that embeddings compress human knowledge about relationships into linear geometry. The offset "Paris" to "France" is approximately the same as "Berlin" to "Germany" (capital-to-country). "walk" to "walked" parallels "swim" to "swam" (present-to-past tense).
+
+The important caveat: this works for common, well-represented relationships in training data. It fails for rare concepts, domain-specific vocabulary, and relationships that aren't well represented in the corpus. "LIBOR" minus "interest rate" plus "equity benchmark" won't yield "S&P 500" in a general-purpose embedding model — you'd need a model trained on financial text.
+:::
+
 :::
 
 ::: {.callout-warning title="Mid Level"}
-1. Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?
-2. Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don't.
-3. Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?
-4. A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?
+
+**Q1. Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A bi-encoder encodes the query and each document independently — each gets its own embedding vector, and similarity is measured by dot product or cosine. This means you can pre-compute all document embeddings offline and search at query time with a single vector lookup. Retrieval is O(log n) with ANN indexing.
+
+A cross-encoder takes the query and a candidate document concatenated as a single input, runs full transformer attention over the combined text, and produces a single relevance score. Because it can model interactions between query tokens and document tokens directly (e.g., "renewable energy" in the query attending to "solar" in the document), it produces much more accurate relevance scores. But it can't pre-compute anything — you must run inference for every query-document pair at search time.
+
+The standard production pattern combines both in a two-stage pipeline: bi-encoder retrieves top-100 candidates quickly (milliseconds), cross-encoder re-ranks those 100 to find the top-5. This gives you 95% of cross-encoder accuracy at a fraction of the latency cost.
+
+When to use bi-encoder only: real-time search over millions of documents where latency is critical and an extra 50ms re-rank is unacceptable. When to add cross-encoder re-ranking: any system where result quality matters enough to justify 50–200ms additional latency — legal search, medical Q&A, enterprise knowledge bases where a wrong top result has real consequences.
+:::
+
+**Q2. Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don't.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Word2Vec assigns each word a single static vector, regardless of context. "Bank" gets one embedding whether it appears in "river bank" or "bank account." This is fine for common words with stable meaning, but fails for polysemous words (words with multiple meanings) and for understanding phrases, syntax, and sentence-level meaning.
+
+BERT-style contextual embeddings produce a different vector for each word depending on its surrounding context. The input sequence is processed through multiple transformer layers, and each token's final representation is shaped by attention to every other token in the sentence. "Bank" in a financial context ends up in a completely different part of embedding space than "bank" in a geography context.
+
+The practical gains are significant:
+- **Named entity resolution**: "Apple" the company vs. the fruit are distinguishable
+- **Sentence-level embeddings**: models like Sentence-BERT (SBERT) pool token embeddings into a single sentence vector that captures the full meaning of a clause, not just individual word semantics
+- **Coreference**: understanding that "she" in "the doctor said she would call" refers to the doctor
+- **Domain adaptation**: contextual models fine-tune much more effectively to domain-specific text than static embeddings
+
+The tradeoff is compute: generating BERT embeddings requires a full forward pass, while Word2Vec is just a lookup. For real-time embedding at scale, this cost matters.
+:::
+
+**Q3. Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Dense retrieval (embedding-based) and sparse retrieval (BM25/TF-IDF) each fail in predictable, complementary ways.
+
+**Dense retrieval failure modes:** struggles with exact string matching, rare terms, and out-of-distribution vocabulary. Searching for "EPA Form 7520" will retrieve documents about environmental regulations broadly, not necessarily the specific form. Product codes like "SKU-XJ-4420," medical drug names like "imatinib mesylate," and legal citation strings like "45 CFR 164.514(b)" all fail dense retrieval because the embedding model never saw these strings in training and has no semantic anchor for them.
+
+**Sparse retrieval failure modes:** can't handle paraphrase, synonymy, or conceptual matching. A query about "affordable lodging" won't match documents that say "budget hotels" unless exact vocabulary overlaps. It also fails completely for cross-lingual search and concept-level queries like "emotional distress in children" that should match documents using clinical vocabulary.
+
+Hybrid search, typically implemented via Reciprocal Rank Fusion (RRF), scores and ranks from both systems, then merges the ranked lists. A document ranked 3rd by BM25 and 8th by dense gets a combined score of 1/(3+k) + 1/(8+k), where k is a smoothing constant (typically 60). This is robust: if either system ranks a relevant document highly, it appears in the final results.
+
+Production systems like Elasticsearch, Weaviate, and Qdrant all support hybrid search as their recommended default because the failure modes are so complementary.
+:::
+
+**Q4. A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The most likely root cause is domain mismatch — the embedding model's training data is general web text, which has almost no exposure to legal vocabulary, citation formats, contract boilerplate, or the semantic relationships specific to legal documents.
+
+In practice this means: searching for "indemnification obligations" retrieves documents mentioning "indemnify" only if that exact word appears, while missing "hold harmless" clauses that are legally equivalent. The embedding space doesn't know "force majeure" and "act of God" are near-synonyms in contract law. Abbreviations like "SOW," "MSA," or "NDA" may not map to their legal meanings.
+
+The fix has two components depending on available resources:
+
+**If labeled data exists (query-document relevance pairs):** fine-tune the embedding model with contrastive learning (e.g., using the SBERT framework with triplet loss or MultipleNegativesRankingLoss). Even 1,000–5,000 query-relevant document pairs dramatically improve retrieval for domain-specific vocabulary.
+
+**If no labeled data:** start with a model pre-trained on legal text — LegalBERT (Chalkidis et al., 2020) or a general model fine-tuned on contracts. Alternatively, use hard-negative mining: retrieve top-k results with the current model, have lawyers flag which are irrelevant, use those as negatives in contrastive fine-tuning.
+
+Also add hybrid search with BM25 as an immediate mitigation — exact legal citations and defined terms will surface via keyword matching while the model is improved.
+:::
+
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A customer's semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.
-2. How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?
-3. A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?
+
+**Q1. A customer's semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Short queries are a classic bi-encoder failure mode because brief text doesn't give the embedding model enough context to generate a specific, meaningful vector. A 2-word query like "data breach" embeds to a vague region of the space near all related documents — security incidents, compliance reports, technical vulnerabilities — rather than a precise point.
+
+My diagnosis starts by examining the actual embedding vectors: compute the nearest neighbors of the short query embeddings and check how broadly they cluster versus sentence-length query embeddings. Then I'd sample failed short queries and look at what ranked first — is it semantic irrelevance or domain-specific vocabulary mismatch?
+
+**Fixes, in order of implementation complexity:**
+
+1. **Enable BM25 hybrid search** — short exact queries like "GDPR" or "breach notification" will match via keyword even when the dense vector is underspecified. This is a quick win.
+
+2. **Query expansion** — use an LLM to rewrite the short query into a full sentence before embedding: "data breach" → "documents about data breach incidents, notification requirements, and security vulnerabilities." The expanded query embeds much more specifically.
+
+3. **HyDE (Hypothetical Document Embeddings)** — generate a hypothetical answer document for the short query, embed that instead. "Write a short paragraph about: data breach" produces a document-like embedding that retrieves far better than the query itself.
+
+4. **Asymmetric training** — fine-tune on query-document pairs where queries are short and documents are long. Models like msmarco-distilbert-base-v4 are specifically trained for this asymmetry.
+:::
+
+**Q2. How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I ask five questions before recommending either direction:
+
+**1. Data residency and compliance requirements?** This is often a dealbreaker. If the customer has data that can't leave their AWS VPC or Azure tenant — healthcare (HIPAA), financial services (SOC 2 + data sovereignty), government — Pinecone's managed cloud is off the table unless they offer a private cloud deployment. Qdrant and pgvector deploy inside the customer's own infrastructure.
+
+**2. Vector count and query throughput?** Under 1M vectors with modest query volume: pgvector on Postgres is often sufficient and eliminates a new infrastructure dependency. 1M–100M vectors with real-time search: Qdrant or Weaviate self-hosted. Hundreds of millions of vectors with variable traffic: Pinecone's managed infrastructure handles this with less operational overhead.
+
+**3. Existing infrastructure and team capacity?** If the customer already runs Postgres, pgvector with HNSW indexing requires zero new services to manage. If they have a dedicated MLOps team comfortable with Kubernetes, Qdrant is excellent. If they have no ML infrastructure team and want to move fast, Pinecone's zero-ops managed service may justify the cost.
+
+**4. Budget?** Pinecone costs roughly $70–700/month at typical enterprise scales. Self-hosted shifts cost to EC2/GKE compute — often cheaper at scale but requires engineering time.
+
+**5. Multi-tenancy needs?** If each customer gets isolated search (e.g., a SaaS product), Weaviate's native multi-tenancy or namespaced Qdrant collections are well-suited. Pinecone handles this too but at per-namespace pricing.
+:::
+
+**Q3. A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I explain it this way: "RAG only fixes hallucination for topics that are in your index and that your retrieval system finds. If retrieval fails — either because the document isn't indexed, or because the embedding model doesn't recognize the query as related to the right documents — the LLM falls back to its training data and guesses."
+
+The pattern "works for general topics, fails for proprietary products" is almost always a retrieval problem, not a generation problem. I investigate in this order:
+
+**1. Check the index first.** Are the documents about the failing topics actually ingested? Search the vector DB directly for the failing queries using metadata filters. Missing documents account for 40–60% of this symptom.
+
+**2. Measure retrieval quality independently.** Log retrieved chunks for failing queries. Are the top-3 results actually relevant? If retrieval returns wrong chunks, the LLM will hallucinate coherently using whatever it retrieved. Tools like RAGAS can compute "context relevance" — the fraction of retrieved context that actually answers the question.
+
+**3. Check for domain mismatch in embeddings.** If the failing topics use proprietary terminology (internal product names, custom acronyms), the embedding model may not map queries to the right documents. Embed both the query and the target document independently, compute cosine similarity — if it's below 0.5, you have a domain mismatch problem.
+
+**4. Check chunk boundaries.** If answers span multiple chunks, neither chunk alone is sufficient. Increase chunk overlap or switch to parent-child chunking for these document types.
+
+The fix is almost always either: add missing documents, add hybrid BM25 search for exact term matching, or fine-tune the embedding model on domain-specific query-document pairs.
+:::
+
 :::
 
 ## Further Reading

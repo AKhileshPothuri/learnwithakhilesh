@@ -5,46 +5,170 @@
 **What you'll be able to answer after reading this:**
 
 - What distinguishes an FDE from a traditional software or ML engineer
-- How to scope and scope a GenAI solution engagement
+- How to scope a GenAI solution engagement
 - How to navigate the stakeholder landscape (technical, product, executive)
 - What FDE interviews test that pure engineering interviews don't
 :::
 
 ## What Is a Forward Deployed Engineer?
 
-*The intersection of deep technical skill, customer empathy, and solution architecture. Not a sales engineer. Not a consultant. The person who goes on-site, understands the problem, builds the proof-of-concept, and hands it off.*
+The Forward Deployed Engineer role originated at Palantir, where the premise was radical: rather than selling software and letting customers figure it out, you embed a highly technical engineer at the customer site to build working software against real operational data within days. That premise has since spread to Anthropic, OpenAI, Scale AI, and a growing number of enterprise software companies that are embedding AI into their platforms and need people who can make it real for individual customers. The FDE title signals a specific kind of person — one who can fly somewhere Monday morning, understand a novel domain problem by Tuesday afternoon, have a working prototype by Thursday, and present it credibly to a CFO on Friday.
 
-*Companies that hire FDEs: Palantir, Anthropic, OpenAI, Scale AI, and enterprise software companies embedding AI into their platform.*
+What makes the FDE distinct is precisely what it is not. A sales engineer demonstrates existing products to prospective buyers; they are fundamentally constrained by the product catalog. A management consultant writes analysis and recommendations but rarely builds anything; their deliverable is a PowerPoint, not a Python script. A traditional software engineer ships features for internal roadmaps on multi-month timelines; their accountability is to a product manager, not directly to a paying customer. An FDE does all of the above in compressed form: they build real software (not demos), they deliver it into a customer's hands (not a roadmap backlog), and they are directly accountable to an external stakeholder who paid money and expects results. The role demands breadth that is genuinely unusual: on any given week you might debug a customer's Kafka pipeline in the morning, explain embedding distances to a VP of Operations after lunch, and review a security questionnaire with a CISO before end of day.
 
-## Core Responsibilities
+The technical depth requirement is real and often underestimated by candidates approaching the role from a consulting background. Customers can tell within twenty minutes whether you actually understand the system you are proposing to build. Saying "we'll use RAG" is not enough — you need to know what chunk size you would use, why, what embedding model, how you would handle freshness, and what the latency and cost implications are. At the same time, technical depth alone is not sufficient. An engineer who can design a perfect system but cannot explain it to the person who controls the budget, or who over-engineers the solution because the elegant version is more interesting than the simple version, is not functioning as an FDE. The role fundamentally requires holding technical rigor and customer pragmatism in tension simultaneously.
 
-*Discovery and scoping. Rapid prototyping. Technical architecture. Enablement and handoff.*
+The companies that hire FDEs are typically ones where the product requires significant configuration, integration, or domain knowledge to deliver value — and where that configuration is different enough for each customer that it cannot be productized into a single-click setup. As AI capabilities advance, more companies are reaching for the FDE model because AI solutions require understanding customer-specific data, workflows, and success criteria in ways that generic products cannot accommodate. If you are preparing for an FDE role, you are preparing to be the person who makes the general-purpose capability specific, real, and valuable for a particular customer.
 
-## Solution Scoping Framework
+The career path from FDE is broad and attractive. FDEs develop unusual leverage: they see more customer problems in a year than most product managers see in a career, and they understand the gap between what AI can theoretically do and what it actually does in production under real-world data conditions. Senior FDEs move into solution architecture, product management, founding roles, or customer success leadership. The most experienced FDEs become the people their company calls when a strategically important customer engagement is at risk.
 
-*What problem does the customer have? What data do they have? What does "success" look like? What are the constraints (latency, cost, compliance)?*
+## Core Responsibilities and the Engagement Arc
+
+A typical FDE engagement moves through four distinct phases, and understanding this arc is essential both for doing the job and for answering interview questions about it. The phases are Discovery, Scoping, Build, and Handoff — and the failure modes at each phase are different enough that they require separate mitigation strategies.
+
+Discovery is structured listening and observation. You are not there to propose solutions yet; you are there to understand the problem deeply enough that you can propose the right solution. This means conducting structured interviews with stakeholders at multiple levels, watching how the customer's team actually does their work today (not how they describe doing it), reviewing whatever data artifacts are available (reports, spreadsheets, system exports), and building a mental model of what is painful and what the cost of that pain is. Good discovery surfaces the real problem, which is frequently not what was described in the initial customer brief. Customers often describe a desired solution ("we want a chatbot") rather than the underlying need ("our support queue SLA is being missed and leadership is unhappy"). Your job in discovery is to find the underlying need.
+
+Scoping is the translation from problem to feasible plan. This is where FDEs earn their compensation — the ability to look at a customer's data, constraints, and timeline and produce an honest, specific plan for what can be built and what it will achieve. A good scope document answers four questions: What specifically will be built? What does success look like, measured how? What are the dependencies and risks? What is not in scope? The last item is as important as the first. Scope creep is the primary execution risk on FDE engagements, and it almost always originates in a vague or absent scope document. Scope conversations are sometimes uncomfortable because customers want to hear "yes, we can do everything" — your job is to explain why a smaller, focused solution delivered well is worth more than an ambitious solution delivered partially.
+
+The Build phase is rapid prototyping with daily customer feedback loops. The rhythm should be: build something small that demonstrates the core value, show it to the customer, get feedback, adjust, repeat. The first working demo should exist within the first week, even if it is rough. This is critical because customers' understanding of what they want evolves when they see a working system — requirements that seemed clear in a document become ambiguous or change entirely when there is something real to react to. Daily stand-ups with the customer's technical champion are standard practice. The anti-pattern is going dark for two weeks and revealing a polished solution at the end — by then, course-corrections are expensive.
+
+The Handoff phase is where many engagements fail. A solution that works when you are on-site but stops working six months later has not actually delivered value. Good handoff means: documentation sufficient for the customer's team to understand, maintain, and extend the system; a training session or workshop where you walk the team through how it works and what to do when it breaks; runbooks for common failure scenarios; and a clear escalation path back to your company when things go wrong. The FDE's goal is to make themselves unnecessary as quickly as possible while ensuring the customer can continue extracting value. Customers who feel abandoned after an engagement is over do not renew contracts.
+
+Understanding this engagement arc gives you a framework for almost every FDE interview question. "Tell me about a time when…" questions map directly to phases of the arc. "How would you handle…" scenarios are usually about specific failure modes within a phase. When you can narrate your past experiences through this arc, your answers become coherent and credible rather than a collection of disconnected anecdotes.
+
+## Solution Scoping — The Questions That Matter
+
+Before writing any code, you need answers to a specific set of questions — and asking them in the right order, with the right framing, is a skill that separates experienced FDEs from ones who are learning on the customer's dime. The first and most important question is not technical at all: what is the customer trying to accomplish, stated in business terms? Not "build a document search system" but "reduce the time our analysts spend finding relevant precedents from four hours to under thirty minutes." When you have the business outcome, you can evaluate whether the technical approach will actually achieve it.
+
+The second category of questions is about data: what data does the customer have, where does it live, how is it structured, and what is its quality? These questions often reveal the most important constraints on the engagement. A customer might say "we have all our documents in SharePoint" — but when you dig in, you find that SharePoint contains scanned PDFs with no OCR, documents in three languages, and a folder structure with inconsistent naming conventions accumulated over fifteen years. None of these are insurmountable, but they are significant scope items that must be accounted for. The gap between what customers say they have and what they actually have is one of the most consistent findings in FDE engagements.
+
+The third category is the definition of success. "It works well" is not a success criterion. Push for something measurable: a specific latency target, an accuracy threshold on a defined test set, a reduction in a specific operational metric (support tickets per week, analyst hours per task). Success criteria matter for two reasons: they keep the project focused, and they give you something to point to when the engagement ends. Without measurable success criteria, customers can claim the solution did not work even when it performed exactly as expected, because expectations were never made explicit.
+
+Constraints come next: latency requirements (can you afford a 5-second response time or does the use case need sub-second?), compliance requirements (HIPAA, SOC 2, GDPR — these shape where data can live and how it can be processed), budget, integration requirements (the solution must plug into this existing system, use this authentication provider, output to this database), and infrastructure constraints (cloud-only, on-premise, specific vendor approved by the security team). Constraints are not obstacles to be minimized — they are the parameters of the design space. Every constraint you discover early is a rework-avoided later.
+
+The "five whys" technique deserves special mention as a scoping tool. When a customer states a solution ("we want an AI chatbot"), apply a series of "why" questions to trace back to the root problem. "We want a chatbot" → why? → "to handle customer inquiries" → why is that a priority? → "because our support team is overwhelmed" → why? → "because ticket volume grew 3x after the product launch but headcount didn't." Now you understand the real problem: ticket volume management. The solution space opens up — it might be a chatbot, but it might also be better self-service documentation, smarter ticket routing, or a triage layer that handles the 20% of tickets that account for 80% of volume. The customer who said "chatbot" may actually be better served by something else entirely.
 
 ## Stakeholder Navigation
 
-*Who is the economic buyer vs. technical champion vs. end user? How to run a discovery conversation. How to handle conflicting requirements.*
+Every FDE engagement involves at least three distinct types of stakeholders, and the failure mode of managing them as a homogeneous group is one of the most common reasons technically successful engagements feel like failures to the customer. The three archetypes are the technical champion, the product owner, and the economic buyer — and each requires a fundamentally different communication approach, measures success differently, and has different anxieties about the engagement.
 
-## The FDE Interview Format
+The technical champion is typically the engineer, data scientist, or IT lead who will live with the system after you leave. They care deeply about how it works, whether it is maintainable, whether it follows their team's conventions, and whether you actually understand what you are building. The way to earn their respect is to be technically rigorous in their presence: ask about their existing stack in detail, understand their deployment constraints, acknowledge technical trade-offs honestly, and never oversell what the model can do. Technical champions who do not trust the FDE will quietly undermine the engagement — they will point out every failure in demos, raise concerns to their management, and decline to maintain the system after handoff. Build this relationship first, because everything else depends on it.
 
-*Behavioral (customer scenario) + technical (whiteboard architecture) + live coding or take-home. What interviewers look for: customer empathy + technical depth + communication clarity.*
+The product owner occupies the middle layer: they are accountable for the project outcome and interface between the technical team and leadership. They care about timelines, feature scope, user experience, and whether the engagement is on track. What they need from you is clarity and predictability. Update them proactively — do not make them ask for status. Frame technical decisions in terms of their impact on user experience and timeline. When you hit obstacles (and you will), come to the product owner with a proposed solution, not just a problem. The worst thing you can do is let a timeline slip without warning. A one-week delay that the product owner knew about for three days is manageable; a one-week delay revealed on the delivery date is a trust violation.
+
+The economic buyer is the executive who approved the budget. They have typically not read the technical spec, do not know what RAG means, and are measuring the engagement against the business case that justified the investment. What they need is confirmation that the investment was sound and that the risk is managed. In executive-facing conversations, eliminate jargon entirely, anchor every statement to business impact, and be direct about risks and mitigation. Economic buyers have seen many technology investments that delivered technically while failing to move the business metric they were supposed to move. If you can explain clearly why your solution will move the specific metric they care about, you will differentiate yourself from the pattern they have learned to be skeptical of.
+
+Managing conflicting requirements across these stakeholder types is the hardest soft skill in the FDE toolkit. A common scenario: the technical champion wants to build the "right" solution using the latest model and a custom retrieval pipeline, but the product owner needs to demo something in two weeks. Your job is to find the path that satisfies both — which usually means decoupling: build a simple version first that the product owner can demo, with an architecture that can be upgraded to the "right" version in the next iteration. Make both stakeholders feel heard, and make both feel like the outcome serves their interests.
+
+## The FDE Interview Format and What Interviewers Test
+
+FDE interviews are distinctive from standard software engineering interviews in their emphasis on applied judgment, communication, and customer scenario reasoning. While you will face technical questions covering LLM fundamentals, RAG architecture, and systems design, the questions are almost always embedded in a customer context rather than asked in the abstract. "Design a distributed caching system" becomes "A customer's RAG retrieval is taking 8 seconds per query and they have 200 concurrent users. What do you do?" The technical content is the same; the framing tests whether you can think in customer terms simultaneously.
+
+The customer scenario round is the most FDE-specific component. You will be given a customer brief — two or three sentences describing a company, an industry, and a vague AI objective — and asked to drive a discovery conversation, scope a solution, or design an architecture. Interviewers are looking for several things: Do you ask clarifying questions before jumping to solutions? Do you identify the right constraints and risks? Do you scope to something deliverable rather than theoretically perfect? Do you communicate the trade-offs clearly? The failure modes are rushing to a solution before understanding the problem (shows you listen poorly), proposing a trivial solution without acknowledging complexity (shows shallow technical depth), and proposing a six-month engineering project for a four-week engagement (shows you cannot scope).
+
+The communication round tests your ability to translate between technical and non-technical contexts. Common formats: you are asked to explain a technical concept to an interviewer playing a non-technical executive, or you roleplay a difficult stakeholder conversation (the customer's technical lead disagrees with your architecture choice, or the executive sponsor is asking you to promise something you cannot deliver). These are assessed on clarity, composure, and whether you can maintain technical integrity while being accessible. Jargon is penalized. "The model has high epistemic uncertainty in out-of-distribution queries" does not land; "the AI is most likely to be wrong about topics that are not well-represented in its training data" does.
+
+The technical round at FDE level typically covers: LLM fundamentals (attention mechanisms at a high level, fine-tuning vs. prompting trade-offs), RAG architecture (chunking strategies, embedding models, retrieval mechanisms, re-ranking), agentic systems (tool use, planning, failure modes), and applied systems design (how do you make this production-ready: monitoring, latency, cost, safety). The depth expected is higher than entry-level ML engineer roles but is applied depth — you are expected to know how to build things and why design decisions matter, not to prove theoretical mastery of the math. Knowing that cosine similarity is used instead of dot product for normalized embeddings, and being able to explain why in plain language, is the right level.
+
+Finally, many FDE loops include a live coding or take-home component where you build a working POC. This is usually scoped to a realistic FDE task: build a RAG system over a set of documents, implement a tool-using agent that can answer questions about a dataset, or wire up a streaming API response handler. These assessments test execution speed, code quality, and whether you make pragmatic trade-offs (good enough quickly versus perfect slowly). Bringing your own scaffolding — a working project template you have refined — is entirely acceptable and often expected. The best candidates arrive with a toolkit, not a blank editor.
 
 ---
 
 ## Interview Questions
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. Tell me about a time you had to explain a complex technical concept to a non-technical stakeholder. How did you approach it?
-2. A customer comes to you and says "we want to use AI." How do you turn that into a scoped project?
-3. You're on-site and discover the customer's data quality is much worse than they described. What do you do?
-4. How do you balance building the "ideal" solution vs. what can ship in 4 weeks?
-5. Walk me through how you'd run a discovery session with a new enterprise customer.
+
+**Q1. Tell me about a time you had to explain a complex technical concept to a non-technical stakeholder. How did you approach it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question tests communication range — your ability to translate without condescending and without losing accuracy. Structure your answer around three things: the concept, the audience, and the technique you used.
+
+A strong answer: "I was explaining to a VP of Operations why our RAG system sometimes gave wrong answers even though it had access to the right documents. I knew she needed to make a decision about whether to widen deployment, so technical accuracy mattered but so did actionability. I used an analogy: I told her the system was like a very fast research assistant who could read thousands of documents instantly but sometimes misjudged which paragraph was most relevant to a question. Sometimes it pulled the right document but quoted the wrong section. That framing helped her understand why we needed a human review step for high-stakes outputs without needing her to understand vector similarity scores. She left the meeting with a clear decision framework: 'high-stakes outputs get reviewed, informational queries do not.'"
+
+What interviewers want to hear: a specific situation, a named audience, a specific technique (analogy, visual, worked example), and evidence that your explanation actually worked — the stakeholder made a better decision or understood something they hadn't before. Avoid generic answers about "speaking in plain language" without a concrete example.
+:::
+
+**Q2. A customer says "we want to use AI." How do you turn that into a scoped project by the end of the discovery meeting?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question tests your discovery methodology. "We want to use AI" is a goal without a problem statement, and your job is to rapidly convert it into something buildable.
+
+Walk through your process: "The first thing I do is resist the urge to ask about technology and instead ask about pain. I ask: 'What is the most time-consuming or error-prone part of your team's workflow right now?' and 'If that problem were solved, what would change for the business?' That conversation usually surfaces two or three real operational problems. I then use a simple framework: I ask which of those problems (a) has the highest business impact, (b) has data available to support an AI solution, and (c) has a clear measurable success criterion. The problem that scores well on all three becomes the candidate for a first engagement.
+
+By the end of the meeting I want to have: a one-sentence problem statement, a definition of what 'it works' means numerically, a preliminary answer to 'what data do we have,' and a rough shape of what we'd build. I write that up in a two-page brief before I leave the building and send it to the customer the same day for confirmation. If they confirm, we have a scope. If they push back, we have a conversation."
+
+What interviewers want to hear: a structured discovery process, discipline around not jumping to solutions, and a concrete output (the brief). Extra credit: mentioning the five whys technique or acknowledging that the initial ask is usually not the real problem.
+:::
+
+**Q3. You're on-site and discover the customer's data quality is much worse than they described in the requirements doc. What do you do?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question tests composure, problem-solving, and stakeholder management under unexpected constraints. Bad answers panic, blame the customer, or silently soldier on building something that will not work.
+
+Strong answer: "First, I need to understand the scope of the problem. Is this a data quality issue (inconsistent formatting, missing fields, duplicates) or a data existence issue (the data I need simply does not exist in the form I assumed)? Those are different problems. Data quality issues can often be fixed with cleaning pipelines and are a cost and timeline impact, not a blocker. Data existence issues may require reconsidering the approach.
+
+I bring this finding to the technical champion first — not to alarm them, but to verify my understanding and explore options together. Often they know about quality issues and have workarounds. Then I go to the product owner with a clear options analysis: here is what I found, here are three ways to respond (descope the solution to what the current data supports, invest two weeks in data cleaning before building, or pivot to a different data source), here is my recommendation, here is the revised timeline. I never hide bad news, and I always come with options, not just problems. The customer will remember how you handled the crisis more than the crisis itself."
+
+What interviewers want to hear: methodical diagnosis before action, transparency with stakeholders, options-based communication rather than "here's a problem," and evidence that you have done this before.
+:::
+
+**Q4. How do you balance building the "ideal" solution versus what can ship in 4 weeks?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question tests engineering pragmatism and scope discipline — two of the most important FDE traits. The tension between "what the problem deserves" and "what the timeline permits" is constant in customer deployments.
+
+Strong answer: "My mental model is: what is the minimum viable version of this solution that proves the value hypothesis? If I can prove value in four weeks with a simpler architecture, that is better than proving nothing with a more sophisticated architecture. The risk I am managing against is not 'did I build the perfect system' — it is 'does the customer believe AI will help them.' A working RAG system with basic keyword-assisted retrieval that answers 70% of questions correctly in four weeks is more valuable than a perfectly re-ranked, fine-tuned system that is 40% done.
+
+In practice, I separate what I call 'load-bearing' design decisions — ones that would require a full rewrite to change — from 'iterative' decisions that can be improved later. I will not compromise on load-bearing architecture (data model, API contract, security model) because changing those later is expensive. But I will use a simpler model, smaller test set, and manual evaluation in week one rather than spending the first two weeks building an automated eval pipeline. I'm explicit with the customer about this: 'What we'll ship in four weeks is a strong foundation. What we'll improve in the next iteration is X and Y.'"
+
+What interviewers want to hear: a specific framework (MVC / value hypothesis), distinction between short-cuts that compound and ones that are genuinely reversible, and transparent communication with the customer about what is MVP versus production-ready.
+:::
+
+**Q5. Walk me through how you'd run a discovery session with a new enterprise customer. What are the first five questions you ask?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Discovery sessions are one of the most important skills in the FDE toolkit. The interviewer wants to see that you have a structured, customer-centered methodology — not that you improvise each time.
+
+"Before the session, I review whatever briefing materials exist — the sales call notes, the customer's website, any technical specs they've shared. I want to arrive already understanding their industry and not wasting time on basics they expect me to know.
+
+In the session, my first five questions, in order: One — 'Can you walk me through a specific workflow that you believe AI could improve? I want to understand exactly what a team member does today, step by step.' (This gets me to concrete operational reality, not abstract aspirations.) Two — 'What is the current cost of this problem — in time, money, or error rate?' (This establishes business stakes and helps scope later.) Three — 'What data do you have that relates to this workflow, and who owns it?' (Data availability is usually the binding constraint.) Four — 'What does a successful outcome look like to you six months from now — specifically, what would be different?' (This surfaces success criteria.) Five — 'What have you already tried, and what happened?' (This reveals constraints, political history, and failure modes I need to avoid.)
+
+After these five, I usually have enough to determine whether there is a viable project and roughly what shape it takes."
+
+What interviewers want to hear: a specific, ordered set of questions with rationale for each, evidence that you listen before proposing, and awareness that the answers to these questions drive the scope, not your preconceived solution.
+:::
+
+**Q6. The technical champion loves your solution but the executive sponsor is skeptical about ROI. How do you handle that meeting?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question tests executive communication and the ability to bridge between technical delivery and business value. Having a technical champion on your side is necessary but not sufficient — the economic buyer controls the next phase of investment.
+
+Strong answer: "I prepare for that meeting by translating everything into the executive's language before I walk in. That means: identifying the specific business metric the engagement was supposed to move, quantifying what the solution delivers against that metric, and anchoring it to money or time that has real meaning at the executive level. Not 'the system achieves 84% retrieval accuracy' — instead, 'based on your team's current rate of two hours per analyst per day spent searching documents, and our observed reduction to 25 minutes in the pilot, this translates to 1.75 hours recovered per analyst per day across your 40-person team. At fully loaded cost, that is approximately $X per year.'
+
+In the meeting, I acknowledge the skepticism directly rather than avoiding it: 'I understand ROI on AI projects can be hard to evaluate — I want to show you specifically how we measured impact in the pilot.' I present the data, acknowledge what is and is not proven yet, and propose a clear next step with a defined go/no-go criterion. Executives respond well to hearing that you have thought rigorously about risk and measurement, not just that the technology is impressive."
+
+What interviewers want to hear: translation to business metrics, direct acknowledgment of skepticism, specific quantified framing, and a proposed next step rather than a defensive posture.
+:::
+
+**Q7. You've shipped a POC that works. Now the customer wants to "scale it to production." What do you tell them about what that actually requires?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question tests whether you understand the gap between a POC and production, and whether you can set honest expectations without losing the customer's confidence. It is a question about technical scope and honest communication simultaneously.
+
+Strong answer: "I tell them that a POC proves the approach works, and a production system proves the approach works reliably, at scale, for real users, under conditions you didn't anticipate in the demo. The gap between those two things is real and should not be minimized.
+
+Specifically, I walk them through five categories of work that a POC does not address: First, reliability and error handling — the POC fails gracefully in my demos because I control the inputs; production users will find every edge case. Second, latency and scale — a POC that works for one user on my laptop needs load testing and possibly caching or infrastructure changes for a hundred concurrent users. Third, security and access control — production systems need proper authentication, authorization, and audit logging that a POC skips. Fourth, monitoring and observability — if something goes wrong at 2am, someone needs to be paged and there needs to be enough logging to diagnose it. Fifth, data freshness — the POC used a static dataset; production needs a pipeline that keeps the index current.
+
+I frame this not as 'the POC is not good enough' but as 'the POC validated the approach, and now we have a clear map of what production engineering requires.' Then I scope the production phase with a concrete work estimate."
+
+What interviewers want to hear: specific technical gaps enumerated (not vague "there's a lot more work"), honest framing without undermining confidence in the POC, and a path forward rather than just a list of problems.
+:::
+
 :::
 
 ## Further Reading
 
-- Palantir FDE blog posts
-- *The Trusted Advisor* by Maister, Green, Galford — canonical reading for client-facing technical roles
+- Palantir FDE blog posts and engineering blog
+- *The Trusted Advisor* by Maister, Green, and Galford — canonical reading for client-facing technical roles
+- *Competing Against Luck* by Christensen — jobs-to-be-done framework directly applicable to discovery conversations
+- Anthropic and OpenAI solution engineering job descriptions — excellent signal on what skills are prioritized

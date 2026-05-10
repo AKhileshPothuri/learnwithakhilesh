@@ -214,23 +214,225 @@ result = crew.kickoff()
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level"}
-1. What is an AI agent and how does it differ from a chatbot?
-2. What is function calling and why is it useful?
-3. What is the ReAct pattern?
+
+**Q1. What is an AI agent and how does it differ from a chatbot?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A chatbot receives a message and generates a text response — that's the complete loop. It has no memory beyond the conversation, takes no actions in external systems, and produces no side effects. If you disconnect it, nothing in the world changes.
+
+An AI agent pursues a goal autonomously by perceiving its environment, reasoning about what to do, and taking actions through tools that change real systems. The critical distinction is agency: an agent initiates actions (calling APIs, reading files, sending emails, querying databases) rather than just responding. When you disconnect an agent mid-task, something was left incomplete.
+
+The practical difference: a chatbot answers "What's the weather in Paris?" with text. An agent answers the same question by calling a weather API, interpreting the JSON response, and then deciding what to do with that information — perhaps updating a travel itinerary, sending a notification, and logging the query. Agents loop: they observe results, reason about whether the goal is complete, and act again if not.
+
+This introduces risk that chatbots don't have. An agent with write access to a database can make irreversible changes. An agent that misinterprets a goal can execute the wrong sequence of actions. This is why human-in-the-loop checkpoints, action logging, and reversibility are fundamental agent design requirements — not optional features.
+:::
+
+**Q2. What is function calling and why is it useful?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Function calling (also called tool use) is the mechanism by which an LLM requests execution of an external function. Rather than generating free text, the model outputs structured JSON specifying which function to call and what arguments to pass. Your code executes the function, and the result is fed back to the model to continue reasoning.
+
+Why it's useful: it converts the LLM from a text generator into an orchestrator of real systems. Without function calling, you can ask a model to "search the database" and it will generate text that looks like a database response — hallucinated. With function calling, the model generates `{"function": "search_db", "query": "Q3 revenue"}`, your code executes the actual database query, returns the real result, and the model reasons over actual data.
+
+The power comes from structured outputs. Instead of parsing freeform text to figure out what action the model wants to take, function calling gives you machine-readable intent. The model must specify valid function names and correctly typed arguments matching your defined schema. Invalid calls (wrong argument types, missing required fields) can be caught and fed back as errors for the model to correct.
+
+For production agents, function calling is the foundation of reliability. It replaces brittle regex parsing of model outputs with structured JSON that integrates cleanly with existing codebases and can be validated, logged, and audited.
+:::
+
+**Q3. What is the ReAct pattern?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+ReAct (Reasoning + Acting) is an agent prompting pattern that interleaves reasoning traces with tool calls in a loop (Yao et al., 2022). The model alternates between: Thought (what do I need to do?), Action (tool call), and Observation (tool result) — repeating until it reaches a Final Answer.
+
+A typical trace:
+```
+Thought: I need to check the customer's order status.
+Action: get_order(order_id="ORD-4521")
+Observation: Status: shipped, ETA: tomorrow 3pm
+Thought: I have the information needed to answer.
+Final Answer: Your order ships tomorrow by 3pm.
+```
+
+Why it works: explicit reasoning steps constrain subsequent actions. Without the Thought step, the model might call tools randomly or jump to conclusions. The scratchpad forces deliberation: the model must articulate what it knows, what it needs, and why it's taking the next action. This is the same mechanism that makes chain-of-thought prompting improve accuracy — extended to include real-world actions.
+
+ReAct also makes agents debuggable. Because the full reasoning trace is logged, you can diagnose exactly why an agent made a wrong decision — which observation it misinterpreted, which tool call it got wrong, where the reasoning went off track. This is qualitatively different from a black-box model that just produces a wrong answer.
+
+The pattern is implemented in most agent frameworks (LangChain, LangGraph) and can be replicated in ~50 lines with any LLM that supports function calling.
+:::
+
 :::
 
 ::: {.callout-warning title="Mid Level"}
-1. Explain the three components of an AI agent (perception, reasoning, action). What breaks when each one fails?
-2. Walk through the full function calling loop: how does the model "call" a tool and how does the result flow back?
-3. When would you choose a multi-agent architecture over a single agent with many tools?
-4. What is an agent loop and what safeguards prevent it from running forever?
+
+**Q1. Explain the three components of an AI agent (perception, reasoning, action). What breaks when each one fails?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Every AI agent has three components that must all function correctly for the agent to work end-to-end.
+
+**Perception** is how the agent receives information about its environment — user messages, tool results, database queries, file contents, API responses. When perception fails: the agent reasons from incomplete or incorrect inputs. A tool that returns malformed JSON, a file parser that drops content, or a context window that truncates important history all cause perception failures. The agent's reasoning can be perfect, but it will reach wrong conclusions from bad inputs. Symptoms: inconsistent behavior on identical tasks, correct reasoning traces that reach wrong conclusions.
+
+**Reasoning** is the LLM itself — planning, deciding which tools to call, interpreting observations, and determining when the goal is complete. When reasoning fails: the model selects the wrong tool, passes incorrect arguments, misinterprets observation results, or fails to recognize task completion. Reasoning failures also include hallucinating tool results (fabricating data instead of calling the tool) and infinite planning loops where the model keeps deciding there's "more to do." Symptoms: wrong tool selection, invalid arguments, tasks that never complete.
+
+**Action** is the execution layer — the tools that interact with external systems. When action fails: tool calls time out, APIs return errors, write operations fail silently, or side effects happen in the wrong order. Action failures are particularly dangerous because they're often irreversible — a payment processed twice, an email sent before approval, a record deleted. Symptoms: inconsistent external state, error messages in observations, partial task completion.
+
+The compounding risk: each component's failure can trigger the next. Bad perception leads to wrong reasoning leads to bad actions, with each step amplifying the error.
+:::
+
+**Q2. Walk through the full function calling loop: how does the model "call" a tool and how does the result flow back?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The function calling loop has five steps, and understanding each is essential for debugging agent failures.
+
+**Step 1: Tool schema definition.** You define available tools as JSON schemas describing function name, description, and parameter types. The model sees this list in its context.
+
+**Step 2: Model outputs a tool use block.** Instead of generating text, the model outputs structured JSON: `{"name": "search_documents", "input": {"query": "refund policy", "max_results": 5}}`. This is a request, not execution — the model is not calling the function; it's telling your code what to call.
+
+**Step 3: Your code executes the function.** You inspect the model's response, find the tool_use block, extract the function name and arguments, and call your actual Python/JS function with those arguments. This is where real work happens — database queries, API calls, file reads.
+
+**Step 4: Inject the result back.** You append the tool result to the conversation as a tool_result message: `{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "...", "content": "Returns within 30 days..."}]}`.
+
+**Step 5: Model continues reasoning.** The model now has the tool result in context and can either: call another tool (another loop iteration), or generate a final text response.
+
+The loop terminates when stop_reason is "end_turn" (model decided it's done) or when you hit your max_steps limit. Every iteration adds tokens to the conversation, which means costs grow with loop depth — a 10-step agent loop consumes ~10x the tokens of a single response.
+:::
+
+**Q3. When would you choose a multi-agent architecture over a single agent with many tools?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The honest answer is: multi-agent adds complexity, and you should only add it when you have a concrete problem that single-agent can't solve.
+
+**Valid reasons to use multi-agent:**
+
+*Context window overflow.* A task that requires processing 200 documents, running 50 tool calls, and maintaining a complex reasoning chain will exceed any single model's context window. Decompose into: a researcher agent that processes documents in batches, a synthesis agent that consolidates findings, a writer agent that produces output.
+
+*Parallel execution.* Independent subtasks that can run simultaneously. Researching 5 competitors in parallel with 5 specialized researcher agents is genuinely faster than sequential processing by one agent.
+
+*Specialized models per task.* A code reviewer agent can use a code-specialized model; a customer communication agent can use a different model tuned for tone. Different subtasks may benefit from different models or system prompts.
+
+*Quality through critic patterns.* A generator agent produces output; a critic agent independently evaluates it. This produces better results than self-evaluation within a single context.
+
+**When single-agent is better:**
+
+If your task can be completed in under 20 tool calls with context that fits in 100k tokens, single-agent is simpler to build, debug, and maintain. Multi-agent means: multiple LLM calls (cost), agent-to-agent communication that can fail, debugging across agent boundaries (much harder), and orchestration overhead.
+
+A calendar scheduling agent, a customer support bot, a data extraction pipeline — these are all single-agent problems. Don't reach for CrewAI until you've confirmed a single-agent approach can't handle the task.
+:::
+
+**Q4. What is an agent loop and what safeguards prevent it from running forever?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+An agent loop is the iterative execution cycle where the model reasons, calls a tool, receives the result, reasons again, and repeats until the goal is complete or a termination condition is met. Loops are what make agents capable — they can decompose complex tasks into sequential steps. They're also the main source of runaway cost and infinite execution.
+
+Infinite loops occur when the agent: can't recognize that the task is complete, receives the same error repeatedly without being able to resolve it, enters a reasoning pattern that generates tool calls without converging, or has a goal that's underspecified and keeps finding more work to do.
+
+**Safeguards:**
+
+*Hard step limit.* Every production agent loop must have a maximum iteration count — typically 10–25 for most tasks. When the limit is reached, the agent returns whatever partial result it has and logs a "max steps reached" event for investigation. This is non-negotiable.
+
+*Explicit completion criteria.* The system prompt should specify exactly what "done" looks like: "When you have retrieved the answer and formatted it as a JSON response, stop. Do not call additional tools." Vague completion criteria produce agents that keep doing "one more thing."
+
+*Idempotent tool calls.* If a tool is called with the same arguments twice, it should be safe. Error detection: track which (tool, args) pairs have been called and flag or block repeats.
+
+*Budget limits.* Set hard limits on cost per session (e.g., $0.50 maximum) with automatic termination if exceeded. Log token consumption per loop iteration to detect runaway growth.
+
+*Timeout per step.* Each tool call should have a timeout. An agent waiting indefinitely for a slow API is an invisible failure.
+:::
+
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A customer wants an agent to automate their IT helpdesk — password resets, software requests, access provisioning. What tools does the agent need, and what guardrails would you insist on before deploying?
-2. An agent is making repeated API calls in a loop and burning cost without completing its task. Walk through your debugging process.
-3. A customer asks whether to use LangGraph or CrewAI for their pipeline. What questions do you ask before recommending either?
-4. How do you explain the difference between a copilot and an autonomous agent to a non-technical stakeholder, and what governance implications does each have?
+
+**Q1. A customer wants an agent to automate their IT helpdesk — password resets, software requests, access provisioning. What tools does the agent need, and what guardrails would you insist on before deploying?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Tools needed:**
+- `verify_user_identity(employee_id, verification_method)` — mandatory first step for any privileged action
+- `reset_password(user_id, system)` — scoped to specific systems (Active Directory, SaaS apps)
+- `create_software_request(user_id, software_name, justification)` — creates a ticket, does not approve
+- `check_request_status(ticket_id)` — read-only status lookup
+- `provision_access(user_id, resource, access_level)` — highest-privilege action
+- `lookup_policy(query)` — RAG over IT policies so the agent knows what it can/can't approve
+- `escalate_to_human(ticket_id, reason)` — fallback for anything out of scope
+
+**Guardrails I'd insist on before deploying:**
+
+*Identity verification first.* Every session that involves any write action must begin with verified identity. The agent cannot take privileged actions on an unverified user's behalf. This prevents social engineering attacks ("Hi, I'm the CEO, reset my password").
+
+*Human approval for access provisioning.* Access provisioning (especially admin rights, finance systems, sensitive data) must route to a human approver even if the agent prepares the request. The agent can pre-fill the ticket, check policy compliance, and identify the right approver — but never auto-approve privileged access.
+
+*Audit log for every action.* Every tool call — including read-only lookups — must be logged with timestamp, user_id, action taken, and agent_id. Non-negotiable for SOC 2, HIPAA, or any enterprise compliance.
+
+*Scope boundaries.* The agent's tools must be scoped to IT helpdesk functions only. No access to HR systems, financial systems, or production infrastructure outside the IT helpdesk domain.
+
+*Explicit "I can't do that" handling.* For requests outside scope, the agent must escalate gracefully rather than attempting to improvise with available tools.
+:::
+
+**Q2. An agent is making repeated API calls in a loop and burning cost without completing its task. Walk through your debugging process.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+An agent looping on API calls without progress is almost always one of five failure modes. I debug in this order:
+
+**1. Read the full trace first.** Pull the complete conversation history — every Thought, Action, and Observation. Read it sequentially. The failure pattern is usually visible within 3–5 iterations: the agent is either getting the same error repeatedly, receiving ambiguous results, or can't recognize when to stop.
+
+**2. Check if the tool is returning errors.** The most common cause: the API is returning an error code (rate limit, auth failure, malformed request) and the model is retrying without understanding it's in a failure state. Look at what the Observation step contains. If it's a 429 rate limit response, add retry-with-backoff logic and pass the error message back to the model with "This is a rate limit error. Wait before retrying."
+
+**3. Check if the model recognizes task completion.** If the tool returns successful results but the agent keeps calling the same tool, the completion criterion is unclear. Add explicit instructions: "When you have retrieved [X], you have enough information to answer. Stop calling tools and generate the final response."
+
+**4. Check for ambiguous tool results.** If the tool returns partial data (empty list, null values, pagination tokens), the model may not know how to proceed and defaults to "try again." Improve tool response schema — include explicit `is_complete`, `total_results`, and `error` fields so the model can reason about what it received.
+
+**5. Check for argument drift.** Sometimes the model changes arguments slightly on each iteration (minor query variations) creating an infinite search. Log exact tool arguments per call. If they're drifting, the model is searching for something it won't find — the task specification is unclear.
+
+After identifying the cause: add step limits immediately to stop the bleeding, then fix the root cause.
+:::
+
+**Q3. A customer asks whether to use LangGraph or CrewAI for their pipeline. What questions do you ask before recommending either?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+My first question is always: "Do you actually need a framework at all?" Many pipelines that seem to require LangGraph or CrewAI can be implemented in 50–100 lines with the raw Anthropic or OpenAI SDK. I ask the customer to describe their pipeline before recommending any framework — a single LLM with 5 tools is a raw SDK problem, not a LangGraph problem.
+
+**Questions that push toward LangGraph:**
+- Does your pipeline need to pause mid-execution and wait for human approval before continuing? (LangGraph's persistence layer handles this; CrewAI doesn't)
+- Do you need to branch based on intermediate results — conditional logic where different tool results lead to different next steps?
+- Do you need to resume a failed pipeline from where it stopped, not from scratch?
+- Is debugging transparency critical — do you need to visualize and step through exactly what state the graph is in at each node?
+- Is the workflow deterministic in structure but complex in execution?
+
+**Questions that push toward CrewAI:**
+- Does your task naturally decompose into roles with different expertise and personas (researcher, analyst, writer)?
+- Do you need agents to collaborate asynchronously, where one agent's output feeds another?
+- Is the structure more "team of specialists working on a project" than "workflow graph"?
+
+**Questions that push toward neither (raw SDK or Instructor):**
+- Is this a single agent with under 10 tools?
+- Does the pipeline run in a single pass without pause/resume?
+- Is the team unfamiliar with these frameworks and on a deadline?
+
+Framework overhead — debugging, documentation, version compatibility — is real. Don't introduce it until you've hit a concrete limitation in the simpler approach.
+:::
+
+**Q4. How do you explain the difference between a copilot and an autonomous agent to a non-technical stakeholder, and what governance implications does each have?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I use the driving analogy: "A copilot is GPS — it gives you directions, warns you about traffic, suggests the best route. But you're driving. Your hands are on the wheel, and every decision to turn is yours. An autonomous agent is the self-driving car — you state the destination and it handles everything else. That's powerful, but it also means the car can make decisions you wouldn't have made and take actions you can't override quickly."
+
+**Copilot governance is lighter:**
+- Humans review every suggestion before it takes effect
+- Mistakes are recoverable because no action executes without approval
+- Audit trail shows human decisions, with AI suggestions as context
+- Appropriate for: code review assistance, draft generation, information lookup, recommendation engines
+- Risk level: low — the human filters errors
+
+**Autonomous agent governance is heavier:**
+- Actions execute without per-step approval — the agent decides and acts
+- Mistakes may be irreversible (sent emails, processed payments, deleted records)
+- Audit trail must be comprehensive at the action level, not just the decision level
+- Before deploying: define exactly which actions the agent can take autonomously vs. which require human approval (typically: read = autonomous, write = approval, irreversible write = always human)
+- Implement role-based access: the agent only has credentials for systems it needs
+- Require incident response procedures: if an agent misbehaves, how do you stop it? What do you roll back?
+
+For most enterprise deployments I recommend starting in copilot mode — build user trust, identify failure modes, and only expand to autonomous execution for the specific actions where the copilot approval step adds no value.
+:::
+
 :::
 
 ## Further Reading

@@ -10,52 +10,194 @@
 - The KV cache and why it's critical for inference efficiency
 :::
 
-## Autoregressive Generation
+## Autoregressive Generation Step-by-Step
 
-*Token-by-token prediction loop. The vocabulary distribution at each step.*
+At training time, an LLM processes complete sequences in parallel — the causal masking allows efficient parallel computation of all next-token predictions for every position in the sequence simultaneously. At inference time, this parallelism disappears. The model must generate output tokens one at a time, with each new token depending on all previous tokens, because the output of step $t$ is the input to step $t+1$. This sequential dependency is the defining characteristic of autoregressive generation, and it is why inference latency is fundamentally different from training throughput.
 
-## Greedy Decoding and Its Failures
+The step-by-step process of autoregressive generation is: first, the user's prompt is tokenized into a sequence of integer token IDs. These tokens are embedded into continuous vectors and passed through the transformer's attention layers and feed-forward blocks. At the end of the transformer stack, the hidden state at the last position (the position after the final input token) is projected through a linear layer with weight matrix $W_\text{vocab} \in \mathbb{R}^{d_\text{model} \times |V|}$, producing a vector of logits over the entire vocabulary — one scalar value per token in the vocabulary, typically 32,000 to 100,000 values. These logits are passed through a decoding strategy (described in later sections) to select a single token. That token is appended to the sequence, and the entire process repeats with the extended sequence as input.
 
-*Always picking argmax. Why it leads to repetitive, boring outputs.*
+A critical observation: on the second generation step, the model processes a sequence that is one token longer than on the first step. On the third step, one token longer still. By the hundredth step, the model is processing a sequence that is 99 tokens longer than the original prompt. Because transformer attention computes interactions between all pairs of positions, the computation grows as $O(n)$ per step where $n$ is the total sequence length (with the KV cache, discussed later). Without any optimization, the total computation over $T$ generation steps would be $O(T^2)$ — quadratic in the number of generated tokens. This is the fundamental computational challenge of autoregressive generation, and why every serious inference system implements KV caching.
 
-## Sampling Strategies
+The autoregressive loop also explains why generation has two distinct phases in practice: the prefill phase and the decode phase. In the prefill phase, the entire prompt is processed in one parallel forward pass, producing the initial hidden states and (with KV caching) populating the KV cache for all prompt positions. This is the fast, batch-parallelizable part of inference. In the decode phase, the model generates tokens one at a time, with each step doing a forward pass over just the new token (reusing cached K/V for all previous positions). The prefill-decode split is why metrics like time-to-first-token (TTFT) and tokens-per-second (TPS) measure different things: TTFT is dominated by prompt length and prefill efficiency; TPS is dominated by decode efficiency and batch size.
 
-*Temperature scaling. Top-k sampling. Top-p (nucleus) sampling. Typical sampling.*
+## Greedy Decoding and Its Failure Modes
+
+Greedy decoding is the simplest possible decoding strategy: at each generation step, select the token with the highest probability in the vocabulary distribution — that is, take the $\text{argmax}$ over the logit vector after softmax. The process is deterministic (given the same input, you will always get the same output), requires no additional hyperparameters, and runs at the minimum possible computational overhead. For many constrained generation tasks where there is clearly one best answer, greedy decoding works well.
+
+The failure modes of greedy decoding become apparent quickly in open-ended generation. The most notorious is repetition: once the model has generated a repeated phrase (say, "The meeting is scheduled for" appears twice), the highest-probability continuation of that repeated phrase is often to repeat it again. This is because the training data is full of coherent text where common phrases continue in predictable ways, and the greedy strategy has no mechanism to penalize or detect that it is in a loop. The result is outputs like "The cat sat on the mat. The cat sat on the mat. The cat sat on the mat." — once the loop is entered, there is no escape. This repetition problem is fundamental to argmax decoding, not an artifact of small model size.
+
+The second failure mode is myopia: greedy decoding is locally optimal but globally suboptimal. At step $t$, the highest-probability single token may be part of a sentence that, when completed, is incoherent or low-quality. A high-probability first word might lead into a low-probability continuation, whereas a slightly lower-probability first word might lead into a high-probability, high-quality continuation. Greedy decoding has no lookahead — it commits irrevocably to the locally optimal choice at each step without considering where that choice leads. The third failure mode is boringness: greedy decoding consistently produces the statistical "average" output — the most common, least surprising continuation of any given context. This is fine for factual questions where you want the most likely correct answer, but it produces generic, repetitive, flat text for creative tasks.
+
+## Temperature, Top-k, and Top-p Sampling
+
+Instead of deterministically selecting the argmax, sampling-based decoding strategies treat the model's output distribution as a probability distribution and draw a sample from it. This introduces stochasticity — the same prompt can produce different outputs on different runs — which is often desirable. The challenge is controlling the degree and character of that stochasticity to produce outputs that are diverse and interesting without being incoherent.
+
+Temperature scaling is the most fundamental control. Before sampling, the logits vector $\mathbf{l}$ is divided by a temperature parameter $T$: the softmax is computed as $\text{softmax}(\mathbf{l}/T)$. When $T < 1$, the division amplifies the differences between logits: high-probability tokens become even higher probability relative to low-probability tokens, and the distribution sharpens (concentrates mass on the top tokens). At $T \to 0$, the distribution collapses to a point mass on the argmax — equivalent to greedy decoding. When $T > 1$, division compresses differences between logits: the distribution flattens, giving lower-probability tokens a higher chance of being selected, making outputs more random and creative. At $T = 1$, the model samples from its original unmodified distribution. At $T = 2$, the distribution is significantly flattened and outputs become noticeably more erratic and unpredictable.
+
+Top-k sampling addresses one weakness of pure temperature sampling: the long tail of the vocabulary. Even with temperature, there may be thousands of tokens with non-negligible probability in the distribution — including tokens that are grammatically wrong, factually absurd, or contextually impossible. Top-k sampling restricts the sampling distribution to only the $k$ highest-probability tokens, setting all others to zero and renormalizing. $k = 50$ is a common default. The problem with top-k is that $k$ is a fixed number that does not adapt to the shape of the distribution. When the model is highly confident (the distribution is sharply peaked, say 80% probability on the top token), $k = 50$ is overly permissive, allowing sampling from the long tail of implausible tokens. When the model is genuinely uncertain across many plausible continuations (a flat distribution), $k = 50$ might be too restrictive, artificially limiting creativity.
+
+Top-p (nucleus) sampling, introduced by Holtzman et al. (2019) in "The Curious Case of Neural Text Degeneration," solves this adaptive shortcoming. Instead of fixing the number of tokens to sample from, top-p fixes the cumulative probability mass. Sort tokens by probability (highest first) and include tokens until their cumulative probability reaches $p$ (e.g., $p = 0.9$). This "nucleus" of tokens is then used as the sampling distribution. When the model is confident, the nucleus may contain only 5-10 tokens (most probability is concentrated on a few choices). When the model is uncertain, the nucleus expands to contain 100+ tokens. The sampling distribution adapts dynamically to the model's confidence, which is precisely the behavior you want: be selective when the model knows the answer, permissive when it doesn't. Top-p sampling is the default recommendation for most creative generation tasks and is used internally by most major LLM providers.
+
+In production, temperature and top-p are typically combined. A common configuration for conversational generation is `temperature=0.7, top_p=0.9`: temperature reduces the probability mass on the very long tail before top-p selects the nucleus, and nucleus sampling prevents the occasional sampling from very low probability tokens that temperature alone would allow. For factual and deterministic tasks — answering a specific question, generating structured data, deterministic code generation — `temperature=0, top_p=1.0` (greedy) is often appropriate. For creative writing, `temperature=1.0-1.2, top_p=0.95` produces more surprising and varied output. The key insight: there is no universally optimal setting. The right temperature and top-p depend on the task, the desired level of diversity, and the tolerance for occasional incoherence.
 
 ## Beam Search
 
-*Keeping k candidate sequences in parallel. When it helps (translation) vs. hurts (open-ended generation).*
+Beam search was the dominant decoding strategy for sequence-to-sequence models (neural machine translation, abstractive summarization) before sampling-based methods became standard for generative LLMs. Understanding beam search — what it does, why it works for some tasks, and why it fails for others — is essential for understanding the space of decoding strategies.
+
+Beam search maintains $k$ candidate sequences (beams) in parallel throughout generation. At each step, each of the $k$ current beams is expanded by computing its probability-weighted continuations across the vocabulary, generating $k \times |V|$ possible next sequences. From all of these candidates, the $k$ highest-scoring sequences (by accumulated log-probability) are kept as the new set of beams. This continues until each beam hits an end-of-sequence token or the maximum length. The final output is the beam with the highest total score, optionally with a length normalization penalty to prevent the model from preferring shorter sequences just because they have fewer terms in the product.
+
+Beam search is superior to greedy decoding at finding high-probability sequences because it avoids committing to the locally optimal token at each step. If the greedy choice at step 1 leads to a low-probability completion overall, beam search will retain other beams that start differently and may score higher globally. This lookahead is why beam search significantly outperforms greedy decoding on machine translation, where there is a correct target sequence and the objective is to find the most probable one.
+
+The failure of beam search for open-ended generation is well-documented empirically and has a compelling theoretical explanation. Beam search maximizes $\log P(\text{sequence})$ — it finds the sequence the model considers most probable. For open-ended tasks like creative writing and conversation, the most probable sequence is also the most generic, safest, and least interesting sequence. Probability mass in language models is concentrated on predictable, clichéd text because clichés appear frequently in training data. The highest-probability essay about climate change will be full of common phrases and will avoid all distinctive or creative choices. Additionally, beam search suffers from "anti-diversity": the $k$ beams tend to converge toward near-identical sequences that differ only in minor details, because they are all competing for high probability mass, which is concentrated in the same high-frequency regions. Finally, beam search is $k$ times more expensive than greedy decoding in computation and memory, making it impractical for interactive applications without a meaningful quality benefit. For these reasons, production chat and code generation models universally use sampling-based decoding, not beam search.
 
 ## The KV Cache
 
-*Avoiding recomputation of key-value pairs across timesteps. Memory vs. speed tradeoff. How it affects batch size.*
+The KV cache is the most important inference optimization for autoregressive generation, and understanding it is essential for reasoning about the cost, throughput, and memory requirements of LLM serving systems. Every serious LLM deployment uses KV caching; its absence would make interactive generation orders of magnitude slower.
 
-## Structured Outputs and Constrained Decoding
+To understand why the KV cache exists, recall how transformer attention works. At each attention layer, every token position computes three vectors: a query $\mathbf{q}$, a key $\mathbf{k}$, and a value $\mathbf{v}$. The output at each position is a weighted sum of all value vectors, where the weights are computed as scaled dot products between the query at that position and the keys at all positions: $\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right)\mathbf{V}$. In causal generation, position $t$ attends only to positions $1$ through $t$, and its query is $\mathbf{q}_t$. The keys and values it attends over are $\mathbf{k}_1, \ldots, \mathbf{k}_t$ and $\mathbf{v}_1, \ldots, \mathbf{v}_t$.
 
-*JSON mode. Grammar-constrained decoding (llama.cpp, outlines). Why this matters for agentic systems.*
+Without caching, when generating token $t+1$, you would need to recompute $\mathbf{k}_i$ and $\mathbf{v}_i$ for all positions $i \leq t$. But these vectors depend only on the tokens at those positions and the attention weight matrices $W_K$ and $W_V$ — neither of which has changed since the last step. This is pure redundant computation. The KV cache stores the key and value matrices for all previously processed positions, so that on each new generation step, you only need to compute $\mathbf{k}_{t+1}$ and $\mathbf{v}_{t+1}$ for the new token, then concatenate these with the cached $\mathbf{k}_{1:t}$ and $\mathbf{v}_{1:t}$ to compute attention. The total computation per generation step drops from $O(n \cdot d)$ without caching to $O(d)$ for the new token (plus $O(n)$ for the attention dot product with the full cache), where $n$ is the sequence length and $d$ is the model dimension.
+
+The memory cost of the KV cache is substantial. For a model with $L$ attention layers, $H$ attention heads, head dimension $d_h$, and a context window of $n$ tokens, the KV cache requires $2 \cdot L \cdot H \cdot d_h \cdot n$ elements per sequence (the factor of 2 is for keys and values). For a Llama 2 7B model (32 layers, 32 heads, head dimension 128) with a 4,096-token context in float16, this is $2 \times 32 \times 32 \times 128 \times 4096 \times 2 \text{ bytes} \approx 2$ GB per sequence. For a 70B model with a 128k context window, the KV cache can exceed the model weights themselves in memory. This is why context window length is not "free": doubling the context window roughly doubles the KV cache memory requirement, which reduces the batch size you can serve simultaneously on a given GPU, which reduces throughput. KV cache memory management — including techniques like paged attention (vLLM), quantized KV caches, and sliding window attention (Mistral) — is an active area of inference systems research precisely because the memory-throughput tradeoff is one of the central constraints in production LLM serving.
+
+## Structured Output and Constrained Decoding
+
+Production AI systems frequently need outputs in specific structured formats — JSON, SQL, XML, code in a particular language — rather than free-form text. Ensuring that an LLM produces valid structured output is a surprisingly nuanced engineering challenge with multiple solution layers of increasing reliability.
+
+The naive approach is prompt engineering: instruct the model to respond only in valid JSON, provide a schema in the prompt, and include examples. This works most of the time with capable models. But "most of the time" is not acceptable for a production system that sends structured outputs to a downstream API or database — a single malformed JSON response breaks the parsing pipeline. Models occasionally forget to close a brace, include a comment in otherwise valid JSON, use a string where an integer is expected, or add a polite preamble before the JSON starts. Handling all these failure modes with retry logic and error handling is possible but fragile and adds latency.
+
+Most major LLM API providers now offer a "JSON mode" or "structured outputs" mode. In this mode, the provider guarantees that the output is valid JSON (or matches a provided JSON Schema), even if this requires constraining the decoding process. OpenAI's Structured Outputs (released 2024) and Anthropic's tool use with forced tool choice both implement this guarantee. At a high level, the provider intercepts the decoding step and restricts the sampling distribution to only tokens that produce a valid continuation of the current partial JSON string. This is grammar-constrained decoding applied to the JSON grammar.
+
+Grammar-constrained decoding works by maintaining a parser state that tracks which characters or tokens are valid continuations of the current partial output according to the target grammar (JSON, SQL, a regular expression, a specific schema). At each decoding step, only tokens that transition the parser to a valid state are included in the sampling distribution — all other tokens receive zero probability. Libraries like Outlines (Willard and Louf, 2023), guidance (Microsoft), and llama.cpp's grammar sampling implement this approach for open-source models. The key property: grammar-constrained decoding guarantees structural validity without compromising the model's content quality, because within the constraints of the grammar, the model still chooses the highest-probability (or best-sampled) content. A model constrained to produce valid JSON will still pick the most likely field values — it just can't accidentally omit a closing brace.
+
+For agentic systems where an LLM must call functions with specific argument structures, constrained decoding is particularly valuable. Tool calling in the OpenAI and Anthropic APIs works by defining function schemas and having the model produce structured tool calls that are guaranteed to parse correctly. This reliability is what makes agentic workflows practical: without guaranteed structured outputs, every tool call step would require validation, retry logic, and error handling, multiplying latency and complexity.
 
 ---
 
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level"}
-1. What is temperature in text generation and what happens at temperature=0 vs temperature=1?
-2. What is the difference between top-k and top-p sampling?
-3. What is greedy decoding?
+
+**Q1. What is temperature in text generation and what happens at temperature=0 vs temperature=1 vs temperature=2?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Temperature is a parameter that controls the randomness of the model's sampling by scaling the logits before computing the softmax probability distribution. Logits are divided by the temperature value $T$, so the softmax becomes $\text{softmax}(\mathbf{l}/T)$.
+
+At temperature=0 (or approaching 0), dividing by a very small number amplifies the differences between logits enormously. The token with the highest logit dominates the distribution entirely and gets selected with probability essentially 1. This is equivalent to greedy decoding: deterministic, always picks the most likely token.
+
+At temperature=1, the logits are unchanged and softmax is applied directly. The model samples from its unmodified probability distribution, the one learned during training. Outputs reflect the genuine diversity of the model's uncertainty.
+
+At temperature=2, dividing by 2 compresses the differences between logits (a logit of 10 becomes 5, a logit of 4 becomes 2 — the relative gap shrinks). The softmax distribution flattens: previously high-probability tokens lose some of their dominance, and previously low-probability tokens get a higher chance of being selected. Outputs become more varied and creative but also more unpredictable and prone to errors or incoherence.
+
+In practice: temperature=0 for deterministic factual answers, temperature=0.5-0.8 for chat and assistant tasks, temperature=1.0-1.2 for creative writing, and temperature above 1.5 is rarely useful because the incoherence becomes too high.
+:::
+
+**Q2. What is the difference between top-k and top-p (nucleus) sampling?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Both top-k and top-p restrict the set of tokens that can be sampled at each decoding step, filtering out very low-probability tokens to prevent sampling from the incoherent tail of the distribution. They differ in how they define the restricted set.
+
+Top-k sampling keeps the $k$ highest-probability tokens and sets all others to zero probability (before renormalizing). For example, with $k=50$, only the 50 most likely tokens are candidates. The size of the candidate set is fixed at $k$ regardless of the shape of the probability distribution.
+
+Top-p (nucleus) sampling keeps the smallest set of tokens whose cumulative probability exceeds $p$. Sort tokens from highest to lowest probability; include tokens until their running sum reaches $p$ (e.g., 0.9). The size of this nucleus adapts to the distribution: when the model is very confident (one token has 80% probability), the nucleus might contain only 3-5 tokens. When the model is uncertain across many plausible continuations, the nucleus might include 50-200 tokens.
+
+The adaptive behavior of top-p is why it is generally preferred. A fixed $k$ can be too restrictive when the distribution is genuinely flat and many continuations are plausible, and too permissive when the distribution is peaked and only a few continuations make sense. Top-p naturally handles both cases. In practice, top-p with $p=0.9$ to $p=0.95$ combined with temperature slightly below 1.0 (e.g., 0.7) is the standard recommendation for balanced creative generation.
+:::
+
+**Q3. What is greedy decoding and what is its main failure mode?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Greedy decoding is the simplest decoding strategy: at each generation step, select the single token with the highest probability from the model's output distribution (take the $\text{argmax}$ over the vocabulary). It requires no additional hyperparameters, is deterministic, and is computationally the cheapest decoding strategy.
+
+The main failure mode is repetition. Once a model generates a repeated phrase, the most probable continuation of that phrase in the model's distribution is often to repeat it again — because in training data, predictable phrases are completed predictably. Greedy decoding has no mechanism to detect or break out of this loop. The classic example: prompt a model with "The meeting is at" and the greedy output might lock onto "The meeting is at 3pm. The meeting is at 3pm. The meeting is at 3pm." once any repetition starts.
+
+The second failure mode is myopia: greedy decoding commits to the locally optimal token at each step without considering where that choice leads. A slightly lower-probability word might lead to a much higher-quality full sentence, but greedy decoding never considers this. Third, greedy decoding produces boring outputs — always picking the statistically "average" continuation means the output is generic, clichéd, and lacks the diversity that makes language interesting. For factual QA where there is one correct answer, greedy decoding is often fine. For anything creative or conversational, sampling with temperature and top-p produces substantially better results.
+:::
+
 :::
 
 ::: {.callout-warning title="Mid Level"}
-1. When would you use beam search over sampling, and why is beam search rarely used in chat models?
-2. Explain the KV cache: what it stores, why it exists, and what tradeoff it makes.
-3. How does structured output / constrained decoding work under the hood?
+
+**Q4. When would you use beam search over sampling, and why is beam search rarely used in chat/assistant models?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Beam search is appropriate when the task has a "best single answer" structure and quality is measured by how closely the output matches a target distribution. The canonical example is machine translation: given a source sentence, there is a ground truth translation, and beam search consistently outperforms greedy decoding by finding higher-probability sequences that avoid locally optimal but globally suboptimal token choices. Other good candidates: constrained text generation tasks with strong structural requirements, formal paraphrase generation, and certain summarization tasks where faithfulness to a reference summary is the evaluation criterion.
+
+Beam search is rarely used in chat and assistant models for several interconnected reasons. First, it maximizes the probability of the output sequence, and in open-ended generation, the highest-probability sequence is the most generic, predictable, and clichéd possible output. Probability mass in language models concentrates on common, safe phrasing — beam search finds the safest phrasing, which is rarely the most useful or interesting. Empirically, beam search outputs score worse on human preference ratings for conversational and creative tasks despite scoring higher by automated metrics like BLEU.
+
+Second, beam search produces anti-diverse outputs: the $k$ beams tend to converge to near-identical sequences, because they are all competing for probability mass concentrated in the same regions. Running $k=5$ beams gives you 5 nearly identical candidates, not 5 diverse alternatives. Third, beam search is $k$-times more expensive in compute and memory. For a $k=5$ beam, you do 5× the work of greedy decoding with no benefit for open-ended tasks. Fourth, the repetition and myopia problems of greedy decoding affect beam search too, just to a lesser degree. Sampling with temperature and top-p avoids all of these issues and produces outputs with the diversity and naturalness that users prefer in conversational systems.
+:::
+
+**Q5. Explain the KV cache: what it stores, why it exists, what memory tradeoff it makes, and how it affects serving throughput.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The KV cache stores the key and value matrices computed at each attention layer for all tokens that have already been processed. In a transformer attention layer, each token computes a query $\mathbf{q}$, key $\mathbf{k}$, and value $\mathbf{v}$ vector. When generating token $t+1$, its query must attend over the keys and values of all previous tokens $1$ through $t$. Without caching, those keys and values would be recomputed from scratch at every step — pure redundant computation, since the tokens they were computed from have not changed.
+
+The KV cache eliminates this redundancy by storing $\mathbf{k}_i$ and $\mathbf{v}_i$ for all positions $i \leq t$ across all attention layers. On each new generation step, only the new token's $\mathbf{k}$ and $\mathbf{v}$ are computed and appended to the cache; the full set of cached $\mathbf{k}$ and $\mathbf{v}$ vectors are used for the attention dot product without recomputation. This reduces per-step computation from roughly $O(n)$ matrix operations down to $O(1)$ new computations plus $O(n)$ for the attention dot product.
+
+The memory cost is real. For a Llama 2 7B model (32 layers, 32 heads, 128-dimensional heads) with a 4,096-token sequence in float16, the KV cache requires approximately $2 \times 32 \times 32 \times 128 \times 4096 \times 2 \approx 2$ GB per sequence. On a GPU with 40GB of HBM, this limits you to roughly 20 concurrent sequences at full context length. Since serving throughput is directly proportional to batch size (more concurrent requests per GPU = more tokens per second per dollar), the KV cache creates a direct memory-throughput tradeoff: longer context windows reduce batch size and thus reduce throughput. This is why techniques like paged attention (vLLM), quantized KV caches, and multi-query attention (reducing the number of KV heads) are important inference engineering optimizations.
+:::
+
+**Q6. A model is producing highly repetitive output. What decoding parameters would you adjust and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Repetitive output is the classic failure mode of low-temperature or greedy decoding. I would diagnose and adjust in this order.
+
+First, check if temperature is at or near zero. If `temperature=0` is set (greedy decoding), the model deterministically picks the most probable token at each step. Once it generates a repeated phrase, the most probable continuation is to repeat it again. Raising temperature to 0.7-0.9 introduces sampling that breaks repetitive loops by probabilistically selecting from multiple plausible continuations.
+
+Second, add or increase repetition penalty. Many APIs and sampling implementations offer a `repetition_penalty` parameter (also called `frequency_penalty` or `presence_penalty`) that applies an exponential discount to the logits of tokens that have already appeared in the output. OpenAI's `frequency_penalty` reduces the logit of each token proportionally to how many times it has appeared; `presence_penalty` applies a fixed reduction regardless of count. Setting these to 0.1-0.3 significantly reduces repetition.
+
+Third, ensure top-p sampling is enabled with a value like 0.9. Without top-p, even moderate temperature can still over-sample from a peaked distribution that includes the repeated token at the top. Top-p ensures the model's sampling is drawn from a diverse enough nucleus.
+
+Fourth, check for prompt-level causes: if the prompt itself contains highly repetitive text (e.g., a long list of similar examples), the model may learn to continue that pattern. Reducing repetition in the prompt or reformatting it can help. Finally, for severe cases in longer outputs, reducing max_tokens to force shorter responses and including explicit instructions like "do not repeat information" can provide a prompt-level backstop while the decoding parameters are tuned.
+:::
+
+**Q7. How does constrained decoding (e.g., forcing JSON output) work under the hood?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Constrained decoding works by maintaining a parser state that tracks which tokens are valid continuations of the current partial output according to a target grammar or schema, and masking all other tokens to zero probability at each decoding step.
+
+The concrete implementation: before each sampling step, the decoding algorithm consults a finite automaton or pushdown parser built from the target grammar (e.g., the JSON grammar, or a specific JSON Schema). The parser is in some state $s_t$ representing how much of a valid structure has been produced so far. For each token $w$ in the vocabulary, the algorithm asks: "does appending $w$ to the current partial output produce a valid prefix according to the grammar?" Tokens that produce valid prefixes are kept in the sampling distribution; tokens that produce invalid sequences (e.g., a second decimal point in a JSON number, or a key name without a colon) are masked to $-\infty$ logits (effectively zero probability after softmax).
+
+The key insight is that this does not change what content the model generates — it only prevents structural violations. Within the set of valid tokens at each position, the model still applies temperature, top-p, and its learned language model probabilities to choose the best continuation. A model constrained to produce valid JSON with a `name` (string) and `age` (integer) field will still produce the most contextually appropriate name and age — it just cannot accidentally omit the comma between fields or use a string where an integer is required.
+
+Libraries like Outlines (Willard and Louf, 2023) implement this by pre-compiling the grammar into an index that maps each partial output state to the set of valid next tokens, making the per-step lookup efficient. The `guidance` library from Microsoft and grammar sampling in llama.cpp use similar approaches. The API-level "JSON mode" from OpenAI and "tool use with required fields" from Anthropic implement equivalent guarantees, likely through constrained decoding or post-generation validation with retry.
+:::
+
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A customer reports that their chatbot gives different answers to the same question on repeated runs. How do you explain this and what do you recommend?
-2. How would you tune decoding parameters for a customer whose use case is document summarization vs. creative writing?
+
+**Q8. A customer reports their chatbot gives different answers to the same question on repeated runs. They want it to be "consistent." How do you explain the tradeoff and what do you recommend?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I start by validating the concern, then explaining the root cause, and finally proposing a solution that depends on what "consistent" actually means for their use case.
+
+The explanation for the non-technical version: "The model doesn't look up answers from a database — it generates them by sampling from a probability distribution over possible words. By design, this introduces randomness so that responses are varied and natural rather than robotic. That's the same mechanism that makes it good at creative and nuanced responses, but it means identical prompts don't always produce identical outputs."
+
+Then I probe what kind of consistency they actually need. There are two very different cases. Case 1: they want exact determinism — every user asking the same question gets the exact same words. Solution: set `temperature=0` (greedy decoding). The model will always pick the highest-probability token at each step, producing the same output for the same input given the same model version. I warn them that this makes outputs less natural and more prone to repetition, and that model updates by the API provider may still change outputs between versions.
+
+Case 2: they want factual consistency — the model should always say the same thing about key facts (product pricing, return policy, company name), even if the phrasing varies. This is architecturally different from just lowering temperature. The solution is RAG or system prompt grounding: provide the authoritative facts in the system prompt or retrieve them from a database at query time. The model then generates varied prose but is anchored to consistent facts. This is usually the right architecture for enterprise chatbots, and it handles the underlying problem (factual variability) rather than just suppressing surface-level randomness. I would recommend this approach combined with temperature=0.3-0.5 for a balance of consistency and naturalness.
+:::
+
+**Q9. A customer's summarization pipeline needs to be fast and deterministic for a production legal workflow. What decoding settings do you recommend and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+For a production legal workflow with speed and determinism requirements, my recommendation is: `temperature=0`, `top_p=1.0` (which with temperature=0 is equivalent to greedy), and no repetition penalty. Here is the reasoning for each choice.
+
+Temperature=0 (greedy decoding) gives full determinism: the same document will always produce the same summary. This is critical for legal workflows where two different users summarizing the same filing must get the same output, and where audit trails require reproducible results. It is also marginally faster than sampling because there is no sampling step — just an argmax.
+
+Top_p=1.0 is correct here because top-p filtering is irrelevant at temperature=0: when you are taking the argmax, the sampling distribution shape doesn't matter. Setting top_p=1.0 ensures no tokens are filtered before the argmax. I would not apply repetition penalty for legal summarization because the factual terminology in legal documents intentionally repeats — "the plaintiff," "the defendant," "breach of contract" will and should appear multiple times, and a repetition penalty might cause the model to avoid using precise legal terms after they have appeared once, which would degrade summary quality.
+
+For speed, I would also recommend using the model's streaming API to begin displaying the summary as tokens are generated rather than waiting for the full output, which significantly improves perceived latency. I would also recommend caching responses: if the same filing is summarized multiple times (which happens in legal workflows when multiple reviewers access the same document), caching the deterministic output at the application layer eliminates redundant model calls entirely. Finally, I would ensure they are using prompt caching if the provider supports it — if the system prompt contains a lengthy instruction or reference document that is constant across requests, caching it can reduce costs and latency by 80-90% for the cached portion.
+:::
+
 :::
 
 ## Further Reading
 
 - [The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)](https://arxiv.org/abs/1904.09751)
-- [Outlines: Structured Text Generation](https://github.com/outlines-dev/outlines)
+- [Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)](https://arxiv.org/abs/2309.06180)
+- [Outlines: Structured Text Generation (Willard and Louf, 2023)](https://arxiv.org/abs/2307.09702)
+- [Scaling Laws for Neural Language Models (Kaplan et al., 2020)](https://arxiv.org/abs/2001.08361)
+- [vLLM: Easy, Fast, and Cheap LLM Serving (vLLM project)](https://github.com/vllm-project/vllm)

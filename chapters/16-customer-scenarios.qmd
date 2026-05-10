@@ -138,8 +138,78 @@ The pattern: give the LLM an unstructured document and a JSON schema, ask it to 
 ## Interview Questions
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-1. A legal firm wants to use GenAI to answer questions about their contract database. Design the solution.
-2. A customer wants to replace their internal search tool with an AI-powered alternative. What questions do you ask before writing any code?
-3. A software company wants to build a code review copilot. What are the top 3 risks you'd want to mitigate before shipping?
-4. Walk me through how you'd de-risk a document Q&A POC in a two-week sprint.
+
+**Q1. A legal firm wants to use GenAI to answer questions about their contract database. Design the solution.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a RAG use case with elevated requirements around accuracy, access control, and citation — legal users need to trust the answer and verify the source.
+
+**Architecture:**
+
+*Ingestion pipeline:* extract text from contract PDFs (legal documents often have complex layouts — evaluate Azure Document Intelligence or AWS Textract against the actual document set, not generic benchmarks). Preserve document metadata: contract ID, counterparty, execution date, contract type, and access-control group. Chunk at paragraph boundaries with 10–15% overlap (legal text is dense; sentence-level chunks lose too much context). Embed with a legal-domain model (LegalBERT or a general model fine-tuned on contracts).
+
+*Retrieval:* hybrid search — BM25 handles exact legal citations ("Section 8.2(a)," specific clause references) while dense search handles conceptual queries ("what's our indemnification exposure with Acme?"). Apply document-level ACL filtering before returning results — users should only retrieve contracts they're authorized to see.
+
+*Generation:* instruct the LLM to answer only from retrieved context and cite specific clause locations: "Based on Section 4.1 of the Master Services Agreement with Acme Corp (executed 2023-01-15)..." Explicit grounding instruction: "Do not infer or extrapolate beyond the provided contract text. If the answer is not in the retrieved context, say so."
+
+*Evaluation:* build a test set of 50–100 known query-answer pairs from existing contracts before deploying. Measure faithfulness (is every claim in the answer sourced from retrieved text?) and retrieval recall (are the right clauses retrieved?). Legal hallucination is a liability risk — quality gates are non-negotiable.
+
+*Security:* on-premise or VPC-deployed to prevent contract text from leaving the firm's infrastructure.
+:::
+
+**Q2. A customer wants to replace their internal search tool with an AI-powered alternative. What questions do you ask before writing any code?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Before writing code, I need to understand the existing system's failure modes, the data landscape, and what success looks like. My questions:
+
+**About the current search:**
+- What does the current tool do well and poorly? (If keyword search is failing for conceptual queries, semantic search helps. If it's failing because the index is stale, the problem is a data pipeline problem, not a semantic search problem.)
+- What does "a good result" look like to users? Can they articulate it? This determines how you'll evaluate the new system.
+
+**About the data:**
+- What document types and formats are in the corpus? (PDFs, Word docs, Confluence pages, Salesforce records — each requires different parsing and has different update patterns.)
+- How many documents and how often do they change? (10,000 static PDFs vs. 1 million records updated hourly have completely different infrastructure requirements.)
+- Is there any access control — documents that only certain users/roles should see? (Mandatory question — access control must be built into retrieval, not bolted on after.)
+
+**About the query distribution:**
+- What are the top 20 queries users actually run? (Exact keyword lookups need BM25; conceptual queries need dense search; most real-world distributions need both.)
+- Do users search for exact strings (product codes, document IDs) or concepts?
+
+**About success criteria:**
+- How will you measure if the new system is better? Do you have historical click-through data from the current system as a baseline?
+- What's the acceptable latency for a search result?
+
+**About organizational constraints:**
+- Where does the data live and can it leave those systems? (Data residency requirements often constrain vector DB choice.)
+- Who will maintain the ingestion pipeline when it breaks?
+
+These questions take 30 minutes in a discovery call and prevent weeks of rework.
+:::
+
+**Q3. A software company wants to build a code review copilot. What are the top 3 risks you'd want to mitigate before shipping?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Risk 1: False confidence in generated suggestions.** Developers will trust a code review copilot — it looks authoritative and is always grammatically confident. If the model suggests a fix that introduces a security vulnerability, breaks an API contract, or silently changes behavior, developers may accept it without deep scrutiny. The mitigation: make uncertainty explicit in the UI ("High confidence," "Verify before applying"), require the model to explain its reasoning rather than just stating a fix, and never have the copilot auto-apply changes without human confirmation. Build an eval that tests suggestions against unit tests the model doesn't see — if suggestions cause test failures at >5%, don't ship.
+
+**Risk 2: Proprietary code exposure.** Every code snippet the model sees is sent to an API — potentially the entire codebase over time. For a software company with proprietary algorithms, this is an IP and competitive risk. Questions to answer before shipping: which API are you using, where is data processed and stored, does the provider's data usage policy allow training on customer inputs, and does the customer's legal team require a DPA? Mitigation options: on-premise model deployment, API providers with contractual no-training commitments (Anthropic and OpenAI both offer this), or restricting the copilot to non-sensitive file types.
+
+**Risk 3: Degraded code quality from automation bias.** When developers use the copilot, review depth may decrease — if a suggestion passes the copilot, reviewers may assume it's fine. This can mask bugs the model confidently missed. The mitigation is not to disable the copilot but to track: are post-copilot PRs passing unit tests at the same rate? Is production incident rate stable? Instrument these metrics from launch so you can detect degradation before it compounds.
+:::
+
+**Q4. Walk me through how you'd de-risk a document Q&A POC in a two-week sprint.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A two-week POC has one goal: determine whether this use case is technically viable for this customer's documents and queries — before committing to full build. Risk-reduction is the output, not a polished product.
+
+**Days 1–2: Scope and data access.** Get 50–100 representative documents from the actual corpus — not a cleaned demo set, the messy real ones. Get 20–30 representative questions from real users (email the people who will use this system, not the project sponsor). Identify access control requirements. Everything else depends on these inputs.
+
+**Days 3–5: Baseline pipeline.** Build the minimal viable RAG pipeline: parse documents → fixed-size chunking (256 tokens, 20% overlap) → embed with all-MiniLM-L6-v2 → store in Chroma (local, no infrastructure setup) → retrieval → generate with GPT-4o or Claude Sonnet. The specific choices don't matter yet — you want a working baseline to measure from.
+
+**Days 6–8: Measure retrieval and generation quality.** For each of the 20–30 questions, manually evaluate: (a) are the retrieved chunks relevant? (b) is the generated answer correct and sourced from the retrieved chunks? Build a simple scorecard. This tells you exactly where the system fails — retrieval quality, parsing quality, or generation quality — and whether the failures are fixable.
+
+**Days 9–11: Address top failure modes.** If retrieval is poor: add BM25 hybrid search, try a better embedding model, fix chunk size. If parsing is dropping content: try a better PDF parser on the failing document types. Don't fix everything — fix the failure modes that affect the most questions.
+
+**Days 12–14: Demo and recommendation.** Demo on real questions. Present: accuracy on the 30-question eval set, the 3–5 remaining failure modes and their root causes, a rough infrastructure estimate for production, and a recommendation: go/no-go with specific conditions. The POC's value is the recommendation, not the demo.
+:::
+
 :::

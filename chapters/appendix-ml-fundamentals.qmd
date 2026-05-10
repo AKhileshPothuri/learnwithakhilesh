@@ -43,9 +43,100 @@ This appendix covers classical ML concepts that frequently appear in entry-level
 ## Interview Questions
 
 ::: {.callout-tip title="Entry Level — ML Screening"}
-1. What is the bias-variance tradeoff? Give an example of a high-bias and high-variance model.
-2. When would you use L1 vs. L2 regularization?
-3. You have a dataset with 95% class A and 5% class B. Your model predicts class A 100% of the time. What is the accuracy, and why is it misleading?
-4. What is cross-validation and why is it better than a single train/test split?
-5. How does gradient descent work at a high level?
+
+**Q1. What is the bias-variance tradeoff? Give an example of a high-bias and high-variance model.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Bias and variance are two sources of prediction error that trade off against each other as you change model complexity.
+
+**Bias** is systematic error — the model's assumption structure causes it to consistently miss the true pattern. A high-bias model underfits: it can't capture the complexity of the data even with unlimited training examples.
+
+**Variance** is sensitivity error — the model fits the training data too closely, including noise, and fails to generalize to new data. A high-variance model overfits: it memorizes the training set rather than learning the underlying pattern.
+
+**High-bias example:** a linear regression model trained to predict house prices using only square footage, on a dataset where price depends on neighborhood, age, and school district in complex nonlinear ways. The model is too simple to capture the true relationship — it will consistently underpredict expensive houses in good neighborhoods and overpredict cheap houses in poor ones.
+
+**High-variance example:** a decision tree with no depth limit trained on 1,000 samples. It will achieve near-zero training error by creating a unique leaf for every training example. On new data, it performs poorly because it learned the noise in the training set rather than the underlying patterns.
+
+The tradeoff: as you increase model complexity (more parameters, deeper trees, smaller regularization), bias decreases but variance increases. The optimal model sits at the minimum of total error (bias² + variance + irreducible noise). In practice, regularization, cross-validation, and ensemble methods (bagging reduces variance, boosting reduces bias) are the tools for navigating this tradeoff.
+:::
+
+**Q2. When would you use L1 vs. L2 regularization?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Both L1 and L2 regularization add a penalty term to the loss function to discourage large weights and reduce overfitting, but they have different mathematical properties that make each useful in different situations.
+
+**L2 regularization (Ridge)** adds the sum of squared weights: λΣwᵢ². This shrinks all weights proportionally toward zero but rarely to exactly zero. L2 is the default choice when you believe all features are potentially relevant and you want to reduce their individual influence without eliminating any. It also has a closed-form solution for linear models (unlike L1) and is numerically stable.
+
+**L1 regularization (Lasso)** adds the sum of absolute weights: λΣ|wᵢ|. The absolute value geometry creates corner solutions — many weights get driven to exactly zero, producing sparse models. Use L1 when you suspect many features are irrelevant and want the model to perform automatic feature selection. A model with 500 features where only 20 truly matter will benefit from L1 producing a 20-feature model rather than a 500-feature model with small weights.
+
+**Practical decision criteria:**
+- High-dimensional data with expected feature sparsity (NLP bag-of-words, genomics): L1
+- Dense feature sets where most features are predictive (tabular data with curated features): L2
+- Uncertainty about which: Elastic Net, which combines both (α·L1 + (1-α)·L2)
+- Neural networks: almost always L2 (weight decay), as L1 is harder to optimize with gradient descent
+
+One important note: in deep learning, L2 regularization applied to weights is mathematically equivalent to "weight decay" in Adam optimization, and the two terms are often used interchangeably.
+:::
+
+**Q3. You have a dataset with 95% class A and 5% class B. Your model predicts class A 100% of the time. What is the accuracy, and why is it misleading?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The accuracy is 95%. If the test set reflects the same 95/5 distribution and the model always predicts class A, it's correct on all class A examples and wrong on all class B examples: (0.95 × 1.0 + 0.05 × 0.0) = 0.95 = 95% accuracy.
+
+This is misleading because it creates the illusion of a performing model where there is none. The model has learned nothing — it's equivalent to a hardcoded "always predict A" rule. It will be completely useless in any application that cares about class B.
+
+Why this matters: in most imbalanced classification problems, the minority class is the reason the model exists. Fraud detection: 99% of transactions are legitimate, but you're building the system to catch the 1% that are fraudulent. Cancer screening: most patients are healthy, but the value is detecting the rare positive. A 99% accurate "predict healthy always" model for cancer detection is catastrophically wrong.
+
+**Better metrics for imbalanced classification:**
+- **Precision** (of the class B predictions the model makes, what fraction are actually class B) — irrelevant here since no class B predictions exist
+- **Recall** (of all actual class B cases, what fraction does the model catch) — 0% for this model, which immediately exposes the failure
+- **F1 score** (harmonic mean of precision and recall) — 0 for this model
+- **AUC-ROC** (area under the ROC curve) — measures ranking quality across all thresholds, insensitive to class imbalance
+
+The general lesson: always look at per-class metrics for imbalanced data, and validate that your baseline metric isn't trivially achievable by predicting the majority class.
+:::
+
+**Q4. What is cross-validation and why is it better than a single train/test split?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Cross-validation is a model evaluation technique that partitions data into k folds and performs k training runs, each time using k-1 folds for training and 1 fold for validation. The final performance estimate is the average across all k held-out folds.
+
+The standard variant is k-fold CV, typically with k=5 or k=10. For each fold, the model trains on 80% (for k=5) of the data and evaluates on the remaining 20%. After 5 runs, every example has served as a validation example exactly once.
+
+**Why it's better than a single train/test split:**
+
+*High variance in small datasets.* With a small dataset, a single train/test split can yield wildly different performance estimates depending on which examples land in the test set. If your 20% test set happens to contain mostly easy examples, you overestimate performance. Cross-validation averages this variance over multiple splits, giving a more reliable estimate.
+
+*Better use of data.* A single 80/20 split means 20% of your data is never used for training. Cross-validation trains on 100% of the data (across different folds), which produces better models and better estimates, especially critical when data is limited.
+
+*Honest hyperparameter tuning.* If you tune hyperparameters to maximize performance on a single test set, you're effectively training on that test set and the reported performance is optimistic. Cross-validation on the training data for hyperparameter tuning keeps the test set truly held-out.
+
+*Confidence intervals.* k-fold gives you k performance estimates, from which you can compute mean and standard deviation — quantifying how stable the performance is, not just its point estimate.
+
+Leave-one-out cross-validation (LOOCV) is the extreme case: k=n, maximum data usage but computationally expensive. For most use cases, k=5 or k=10 is the practical standard.
+:::
+
+**Q5. How does gradient descent work at a high level?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Gradient descent is an iterative optimization algorithm that minimizes a loss function by repeatedly moving model parameters in the direction that most steeply decreases the loss.
+
+The core intuition: imagine you're blindfolded on a hilly landscape and want to reach the lowest valley. You feel the slope of the ground under your feet (the gradient) and take a step in the downhill direction. Repeat until you're no longer going downhill.
+
+Mathematically: at each iteration, compute the gradient of the loss with respect to every parameter — ∂L/∂θ. This vector points in the direction of steepest ascent. Update parameters by stepping in the opposite direction: θ ← θ - α · ∂L/∂θ, where α (the learning rate) controls step size.
+
+**Three variants differ in how many examples compute each gradient update:**
+
+*Batch gradient descent* computes the gradient over the entire dataset before each update. Accurate gradient estimate, but slow and memory-intensive for large datasets.
+
+*Stochastic gradient descent (SGD)* computes the gradient from a single training example per update. Fast iterations, noisy gradient estimates. The noise can actually help escape shallow local minima.
+
+*Mini-batch gradient descent* (what nearly everyone uses) computes gradients from a batch of 32–256 examples. Balances accuracy and speed, vectorizes well on GPUs.
+
+**Key challenges in practice:**
+- *Learning rate:* too high → oscillates and diverges; too low → converges slowly or gets stuck. Learning rate schedules (warmup + decay) and adaptive optimizers (Adam, which maintains per-parameter learning rates) address this.
+- *Local minima:* in high-dimensional spaces, most critical points are saddle points, not local minima — less of a problem in practice than theoretical concerns suggest.
+- *Gradient vanishing/exploding:* gradients become near-zero (vanish) or very large (explode) in deep networks — addressed by careful initialization, gradient clipping, and architectural choices like residual connections.
+:::
+
 :::
