@@ -209,7 +209,7 @@ window.Quarto = {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></span></a>
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -569,12 +569,86 @@ Entry Level
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>What is a word embedding and what does it represent?</li>
-<li>What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?</li>
-<li>What is a vector database used for?</li>
-<li>Explain the “king − man + woman = queen” example. What does it tell you about embeddings?</li>
-</ol>
+<p><strong>Q1. What is a word embedding and what does it represent?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>A word embedding is a dense vector of real numbers that represents a word’s meaning as a position in a high-dimensional mathematical space. Unlike one-hot encoding where every word gets an arbitrary integer, embeddings place semantically similar words near each other — “dog” and “puppy” end up with similar coordinates, while “dog” and “refrigerator” are far apart.</p>
+<p>The vectors are typically 64 to 1,536 dimensions, where each dimension captures some latent aspect of meaning. These aren’t human-interpretable — dimension 47 doesn’t cleanly mean “formality” — but collectively the dimensions encode semantic relationships that emerge from training.</p>
+<p>Embeddings are learned, not designed. Models like Word2Vec train on a prediction task: given a word, predict its neighbors. After millions of gradient updates on a large corpus, words that consistently appear in similar contexts end up with similar vectors. The key insight, from linguist J.R. Firth (1957): “a word is known by the company it keeps.”</p>
+<p>The result is a geometric space where arithmetic over meaning works: relationships like king-man ≈ queen-woman are encoded in the vector geometry. This is what enables downstream tasks like semantic search, clustering, and classification — instead of comparing strings, you compare positions in meaning space.</p>
+</div>
+</div>
+</div>
+<p><strong>Q2. What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Cosine similarity measures the angle between two vectors, ignoring their magnitude: cos(θ) = (A·B) / (‖A‖ · ‖B‖). It returns 1.0 for identical direction, 0 for orthogonal vectors, and -1.0 for opposite directions.</p>
+<p>The reason it’s preferred for text comes down to length invariance. Consider a short paragraph about climate change and a 10,000-word book chapter on the same topic. If both are embedded, the book chapter’s vector will have larger magnitude values throughout — simply because it contains more content reinforcing the same themes. Euclidean distance (straight-line distance in vector space) would say these two are “far apart” because of magnitude differences, even though they’re semantically near-identical.</p>
+<p>Cosine similarity normalizes out this length effect by dividing by the magnitudes. Only the direction in the embedding space matters — and direction encodes meaning. Two documents pointing in the same “direction” are about the same thing, regardless of length.</p>
+<p>A practical note: most production systems normalize all embedding vectors to unit length before storing them. When vectors are unit-normalized, cosine similarity and dot product become equivalent (since ‖A‖ = ‖B‖ = 1), and dot product is faster to compute. This is why most vector databases default to inner product search on normalized embeddings.</p>
+</div>
+</div>
+</div>
+<p><strong>Q3. What is a vector database used for?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>A vector database stores embedding vectors and enables fast approximate nearest-neighbor (ANN) search — finding the vectors most similar to a query vector out of potentially billions of stored vectors in milliseconds.</p>
+<p>The core problem it solves: naive exhaustive search over 10 million 1,536-dimensional vectors requires computing 10 million dot products per query, which is too slow at scale. Vector databases use indexing structures — HNSW (Hierarchical Navigable Small Worlds) and IVF (Inverted File Index) are the most common — that organize vectors so only a small fraction need to be checked per query. HNSW achieves this by building a multi-layer graph where high layers navigate coarsely and lower layers refine, enabling sub-millisecond search at 99%+ recall.</p>
+<p>The primary use cases are: semantic search (find documents similar to a query), RAG retrieval (find relevant chunks to inject into an LLM prompt), recommendation systems (find items similar to what a user has engaged with), and duplicate detection (find near-identical records across large databases).</p>
+<p>Popular options include Pinecone (fully managed), Weaviate (open-source with multi-tenancy), Qdrant (Rust-based, high performance, self-hosted), Chroma (lightweight, developer-friendly), and pgvector (PostgreSQL extension — good if you already run Postgres and have under ~1M vectors).</p>
+</div>
+</div>
+</div>
+<p><strong>Q4. Explain the “king − man + woman = queen” example. What does it tell you about embeddings?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-5" class="callout-5-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>This is the most famous demonstration that word embeddings capture semantic relationships as geometric structure. Take the Word2Vec embedding of “king,” subtract the embedding of “man,” and add the embedding of “woman.” The resulting vector lands nearest to “queen” in the embedding space — the model never explicitly learned this; it emerged from training on text.</p>
+<p>What this tells us: the embedding space encodes analogical relationships as consistent vector offsets. The vector from “man” to “woman” represents the concept of “feminine gender applied to the same entity.” The same offset applied to “king” yields a vector pointing toward “queen,” because that relationship was implicitly encoded from seeing how both words appear in similar contexts (“the king ruled” / “the queen ruled,” etc.).</p>
+<p>More broadly, it demonstrates that embeddings compress human knowledge about relationships into linear geometry. The offset “Paris” to “France” is approximately the same as “Berlin” to “Germany” (capital-to-country). “walk” to “walked” parallels “swim” to “swam” (present-to-past tense).</p>
+<p>The important caveat: this works for common, well-represented relationships in training data. It fails for rare concepts, domain-specific vocabulary, and relationships that aren’t well represented in the corpus. “LIBOR” minus “interest rate” plus “equity benchmark” won’t yield “S&amp;P 500” in a general-purpose embedding model — you’d need a model trained on financial text.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
@@ -587,12 +661,89 @@ Mid Level
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?</li>
-<li>Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don’t.</li>
-<li>Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?</li>
-<li>A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?</li>
-</ol>
+<p><strong>Q1. Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>A bi-encoder encodes the query and each document independently — each gets its own embedding vector, and similarity is measured by dot product or cosine. This means you can pre-compute all document embeddings offline and search at query time with a single vector lookup. Retrieval is O(log n) with ANN indexing.</p>
+<p>A cross-encoder takes the query and a candidate document concatenated as a single input, runs full transformer attention over the combined text, and produces a single relevance score. Because it can model interactions between query tokens and document tokens directly (e.g., “renewable energy” in the query attending to “solar” in the document), it produces much more accurate relevance scores. But it can’t pre-compute anything — you must run inference for every query-document pair at search time.</p>
+<p>The standard production pattern combines both in a two-stage pipeline: bi-encoder retrieves top-100 candidates quickly (milliseconds), cross-encoder re-ranks those 100 to find the top-5. This gives you 95% of cross-encoder accuracy at a fraction of the latency cost.</p>
+<p>When to use bi-encoder only: real-time search over millions of documents where latency is critical and an extra 50ms re-rank is unacceptable. When to add cross-encoder re-ranking: any system where result quality matters enough to justify 50–200ms additional latency — legal search, medical Q&amp;A, enterprise knowledge bases where a wrong top result has real consequences.</p>
+</div>
+</div>
+</div>
+<p><strong>Q2. Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don’t.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Word2Vec assigns each word a single static vector, regardless of context. “Bank” gets one embedding whether it appears in “river bank” or “bank account.” This is fine for common words with stable meaning, but fails for polysemous words (words with multiple meanings) and for understanding phrases, syntax, and sentence-level meaning.</p>
+<p>BERT-style contextual embeddings produce a different vector for each word depending on its surrounding context. The input sequence is processed through multiple transformer layers, and each token’s final representation is shaped by attention to every other token in the sentence. “Bank” in a financial context ends up in a completely different part of embedding space than “bank” in a geography context.</p>
+<p>The practical gains are significant: - <strong>Named entity resolution</strong>: “Apple” the company vs.&nbsp;the fruit are distinguishable - <strong>Sentence-level embeddings</strong>: models like Sentence-BERT (SBERT) pool token embeddings into a single sentence vector that captures the full meaning of a clause, not just individual word semantics - <strong>Coreference</strong>: understanding that “she” in “the doctor said she would call” refers to the doctor - <strong>Domain adaptation</strong>: contextual models fine-tune much more effectively to domain-specific text than static embeddings</p>
+<p>The tradeoff is compute: generating BERT embeddings requires a full forward pass, while Word2Vec is just a lookup. For real-time embedding at scale, this cost matters.</p>
+</div>
+</div>
+</div>
+<p><strong>Q3. Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-9-contents" aria-controls="callout-9" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-9" class="callout-9-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Dense retrieval (embedding-based) and sparse retrieval (BM25/TF-IDF) each fail in predictable, complementary ways.</p>
+<p><strong>Dense retrieval failure modes:</strong> struggles with exact string matching, rare terms, and out-of-distribution vocabulary. Searching for “EPA Form 7520” will retrieve documents about environmental regulations broadly, not necessarily the specific form. Product codes like “SKU-XJ-4420,” medical drug names like “imatinib mesylate,” and legal citation strings like “45 CFR 164.514(b)” all fail dense retrieval because the embedding model never saw these strings in training and has no semantic anchor for them.</p>
+<p><strong>Sparse retrieval failure modes:</strong> can’t handle paraphrase, synonymy, or conceptual matching. A query about “affordable lodging” won’t match documents that say “budget hotels” unless exact vocabulary overlaps. It also fails completely for cross-lingual search and concept-level queries like “emotional distress in children” that should match documents using clinical vocabulary.</p>
+<p>Hybrid search, typically implemented via Reciprocal Rank Fusion (RRF), scores and ranks from both systems, then merges the ranked lists. A document ranked 3rd by BM25 and 8th by dense gets a combined score of 1/(3+k) + 1/(8+k), where k is a smoothing constant (typically 60). This is robust: if either system ranks a relevant document highly, it appears in the final results.</p>
+<p>Production systems like Elasticsearch, Weaviate, and Qdrant all support hybrid search as their recommended default because the failure modes are so complementary.</p>
+</div>
+</div>
+</div>
+<p><strong>Q4. A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-10-contents" aria-controls="callout-10" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-10" class="callout-10-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The most likely root cause is domain mismatch — the embedding model’s training data is general web text, which has almost no exposure to legal vocabulary, citation formats, contract boilerplate, or the semantic relationships specific to legal documents.</p>
+<p>In practice this means: searching for “indemnification obligations” retrieves documents mentioning “indemnify” only if that exact word appears, while missing “hold harmless” clauses that are legally equivalent. The embedding space doesn’t know “force majeure” and “act of God” are near-synonyms in contract law. Abbreviations like “SOW,” “MSA,” or “NDA” may not map to their legal meanings.</p>
+<p>The fix has two components depending on available resources:</p>
+<p><strong>If labeled data exists (query-document relevance pairs):</strong> fine-tune the embedding model with contrastive learning (e.g., using the SBERT framework with triplet loss or MultipleNegativesRankingLoss). Even 1,000–5,000 query-relevant document pairs dramatically improve retrieval for domain-specific vocabulary.</p>
+<p><strong>If no labeled data:</strong> start with a model pre-trained on legal text — LegalBERT (Chalkidis et al., 2020) or a general model fine-tuned on contracts. Alternatively, use hard-negative mining: retrieve top-k results with the current model, have lawyers flag which are irrelevant, use those as negatives in contrastive fine-tuning.</p>
+<p>Also add hybrid search with BM25 as an immediate mitigation — exact legal citations and defined terms will surface via keyword matching while the model is improved.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
@@ -605,11 +756,76 @@ Forward Deployed Engineer
 </div>
 </div>
 <div class="callout-body-container callout-body">
+<p><strong>Q1. A customer’s semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-12-contents" aria-controls="callout-12" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-12" class="callout-12-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Short queries are a classic bi-encoder failure mode because brief text doesn’t give the embedding model enough context to generate a specific, meaningful vector. A 2-word query like “data breach” embeds to a vague region of the space near all related documents — security incidents, compliance reports, technical vulnerabilities — rather than a precise point.</p>
+<p>My diagnosis starts by examining the actual embedding vectors: compute the nearest neighbors of the short query embeddings and check how broadly they cluster versus sentence-length query embeddings. Then I’d sample failed short queries and look at what ranked first — is it semantic irrelevance or domain-specific vocabulary mismatch?</p>
+<p><strong>Fixes, in order of implementation complexity:</strong></p>
 <ol type="1">
-<li>A customer’s semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.</li>
-<li>How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?</li>
-<li>A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?</li>
+<li><p><strong>Enable BM25 hybrid search</strong> — short exact queries like “GDPR” or “breach notification” will match via keyword even when the dense vector is underspecified. This is a quick win.</p></li>
+<li><p><strong>Query expansion</strong> — use an LLM to rewrite the short query into a full sentence before embedding: “data breach” → “documents about data breach incidents, notification requirements, and security vulnerabilities.” The expanded query embeds much more specifically.</p></li>
+<li><p><strong>HyDE (Hypothetical Document Embeddings)</strong> — generate a hypothetical answer document for the short query, embed that instead. “Write a short paragraph about: data breach” produces a document-like embedding that retrieves far better than the query itself.</p></li>
+<li><p><strong>Asymmetric training</strong> — fine-tune on query-document pairs where queries are short and documents are long. Models like msmarco-distilbert-base-v4 are specifically trained for this asymmetry.</p></li>
 </ol>
+</div>
+</div>
+</div>
+<p><strong>Q2. How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-13-contents" aria-controls="callout-13" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-13" class="callout-13-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>I ask five questions before recommending either direction:</p>
+<p><strong>1. Data residency and compliance requirements?</strong> This is often a dealbreaker. If the customer has data that can’t leave their AWS VPC or Azure tenant — healthcare (HIPAA), financial services (SOC 2 + data sovereignty), government — Pinecone’s managed cloud is off the table unless they offer a private cloud deployment. Qdrant and pgvector deploy inside the customer’s own infrastructure.</p>
+<p><strong>2. Vector count and query throughput?</strong> Under 1M vectors with modest query volume: pgvector on Postgres is often sufficient and eliminates a new infrastructure dependency. 1M–100M vectors with real-time search: Qdrant or Weaviate self-hosted. Hundreds of millions of vectors with variable traffic: Pinecone’s managed infrastructure handles this with less operational overhead.</p>
+<p><strong>3. Existing infrastructure and team capacity?</strong> If the customer already runs Postgres, pgvector with HNSW indexing requires zero new services to manage. If they have a dedicated MLOps team comfortable with Kubernetes, Qdrant is excellent. If they have no ML infrastructure team and want to move fast, Pinecone’s zero-ops managed service may justify the cost.</p>
+<p><strong>4. Budget?</strong> Pinecone costs roughly $70–700/month at typical enterprise scales. Self-hosted shifts cost to EC2/GKE compute — often cheaper at scale but requires engineering time.</p>
+<p><strong>5. Multi-tenancy needs?</strong> If each customer gets isolated search (e.g., a SaaS product), Weaviate’s native multi-tenancy or namespaced Qdrant collections are well-suited. Pinecone handles this too but at per-namespace pricing.</p>
+</div>
+</div>
+</div>
+<p><strong>Q3. A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-14-contents" aria-controls="callout-14" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-14" class="callout-14-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>I explain it this way: “RAG only fixes hallucination for topics that are in your index and that your retrieval system finds. If retrieval fails — either because the document isn’t indexed, or because the embedding model doesn’t recognize the query as related to the right documents — the LLM falls back to its training data and guesses.”</p>
+<p>The pattern “works for general topics, fails for proprietary products” is almost always a retrieval problem, not a generation problem. I investigate in this order:</p>
+<p><strong>1. Check the index first.</strong> Are the documents about the failing topics actually ingested? Search the vector DB directly for the failing queries using metadata filters. Missing documents account for 40–60% of this symptom.</p>
+<p><strong>2. Measure retrieval quality independently.</strong> Log retrieved chunks for failing queries. Are the top-3 results actually relevant? If retrieval returns wrong chunks, the LLM will hallucinate coherently using whatever it retrieved. Tools like RAGAS can compute “context relevance” — the fraction of retrieved context that actually answers the question.</p>
+<p><strong>3. Check for domain mismatch in embeddings.</strong> If the failing topics use proprietary terminology (internal product names, custom acronyms), the embedding model may not map queries to the right documents. Embed both the query and the target document independently, compute cosine similarity — if it’s below 0.5, you have a domain mismatch problem.</p>
+<p><strong>4. Check chunk boundaries.</strong> If answers span multiple chunks, neither chunk alone is sufficient. Increase chunk overlap or switch to parent-child chunking for these document types.</p>
+<p>The fix is almost always either: add missing documents, add hybrid BM25 search for exact term matching, or fine-tune the embedding model on domain-specific query-document pairs.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 </section>
@@ -1382,30 +1598,180 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 <span id="cb2-131"><a href="#cb2-131" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
 <span id="cb2-132"><a href="#cb2-132" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-133"><a href="#cb2-133" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
-<span id="cb2-134"><a href="#cb2-134" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>What is a word embedding and what does it represent?</span>
-<span id="cb2-135"><a href="#cb2-135" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?</span>
-<span id="cb2-136"><a href="#cb2-136" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>What is a vector database used for?</span>
-<span id="cb2-137"><a href="#cb2-137" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>Explain the "king − man + woman = queen" example. What does it tell you about embeddings?</span>
-<span id="cb2-138"><a href="#cb2-138" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-134"><a href="#cb2-134" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-135"><a href="#cb2-135" aria-hidden="true" tabindex="-1"></a>**Q1. What is a word embedding and what does it represent?**</span>
+<span id="cb2-136"><a href="#cb2-136" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-137"><a href="#cb2-137" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-138"><a href="#cb2-138" aria-hidden="true" tabindex="-1"></a>A word embedding is a dense vector of real numbers that represents a word's meaning as a position in a high-dimensional mathematical space. Unlike one-hot encoding where every word gets an arbitrary integer, embeddings place semantically similar words near each other — "dog" and "puppy" end up with similar coordinates, while "dog" and "refrigerator" are far apart.</span>
 <span id="cb2-139"><a href="#cb2-139" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-140"><a href="#cb2-140" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
-<span id="cb2-141"><a href="#cb2-141" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?</span>
-<span id="cb2-142"><a href="#cb2-142" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don't.</span>
-<span id="cb2-143"><a href="#cb2-143" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?</span>
-<span id="cb2-144"><a href="#cb2-144" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?</span>
+<span id="cb2-140"><a href="#cb2-140" aria-hidden="true" tabindex="-1"></a>The vectors are typically 64 to 1,536 dimensions, where each dimension captures some latent aspect of meaning. These aren't human-interpretable — dimension 47 doesn't cleanly mean "formality" — but collectively the dimensions encode semantic relationships that emerge from training.</span>
+<span id="cb2-141"><a href="#cb2-141" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-142"><a href="#cb2-142" aria-hidden="true" tabindex="-1"></a>Embeddings are learned, not designed. Models like Word2Vec train on a prediction task: given a word, predict its neighbors. After millions of gradient updates on a large corpus, words that consistently appear in similar contexts end up with similar vectors. The key insight, from linguist J.R. Firth (1957): "a word is known by the company it keeps."</span>
+<span id="cb2-143"><a href="#cb2-143" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-144"><a href="#cb2-144" aria-hidden="true" tabindex="-1"></a>The result is a geometric space where arithmetic over meaning works: relationships like king-man ≈ queen-woman are encoded in the vector geometry. This is what enables downstream tasks like semantic search, clustering, and classification — instead of comparing strings, you compare positions in meaning space.</span>
 <span id="cb2-145"><a href="#cb2-145" aria-hidden="true" tabindex="-1"></a>:::</span>
 <span id="cb2-146"><a href="#cb2-146" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-147"><a href="#cb2-147" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
-<span id="cb2-148"><a href="#cb2-148" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>A customer's semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.</span>
-<span id="cb2-149"><a href="#cb2-149" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?</span>
-<span id="cb2-150"><a href="#cb2-150" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?</span>
-<span id="cb2-151"><a href="#cb2-151" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb2-152"><a href="#cb2-152" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-153"><a href="#cb2-153" aria-hidden="true" tabindex="-1"></a><span class="fu">## Further Reading</span></span>
-<span id="cb2-154"><a href="#cb2-154" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-155"><a href="#cb2-155" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks (Reimers &amp; Gurevych, 2019)</span><span class="co">](https://arxiv.org/abs/1908.10084)</span></span>
-<span id="cb2-156"><a href="#cb2-156" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">FAISS: A Library for Efficient Similarity Search</span><span class="co">](https://faiss.ai/)</span></span>
-<span id="cb2-157"><a href="#cb2-157" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Matryoshka Representation Learning (Kusupati et al., 2022)</span><span class="co">](https://arxiv.org/abs/2205.13147)</span> — flexible-length embeddings</span>
+<span id="cb2-147"><a href="#cb2-147" aria-hidden="true" tabindex="-1"></a>**Q2. What is cosine similarity and why is it preferred over Euclidean distance for comparing text embeddings?**</span>
+<span id="cb2-148"><a href="#cb2-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-149"><a href="#cb2-149" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-150"><a href="#cb2-150" aria-hidden="true" tabindex="-1"></a>Cosine similarity measures the angle between two vectors, ignoring their magnitude: cos(θ) = (A·B) / (‖A‖ · ‖B‖). It returns 1.0 for identical direction, 0 for orthogonal vectors, and -1.0 for opposite directions.</span>
+<span id="cb2-151"><a href="#cb2-151" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-152"><a href="#cb2-152" aria-hidden="true" tabindex="-1"></a>The reason it's preferred for text comes down to length invariance. Consider a short paragraph about climate change and a 10,000-word book chapter on the same topic. If both are embedded, the book chapter's vector will have larger magnitude values throughout — simply because it contains more content reinforcing the same themes. Euclidean distance (straight-line distance in vector space) would say these two are "far apart" because of magnitude differences, even though they're semantically near-identical.</span>
+<span id="cb2-153"><a href="#cb2-153" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-154"><a href="#cb2-154" aria-hidden="true" tabindex="-1"></a>Cosine similarity normalizes out this length effect by dividing by the magnitudes. Only the direction in the embedding space matters — and direction encodes meaning. Two documents pointing in the same "direction" are about the same thing, regardless of length.</span>
+<span id="cb2-155"><a href="#cb2-155" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-156"><a href="#cb2-156" aria-hidden="true" tabindex="-1"></a>A practical note: most production systems normalize all embedding vectors to unit length before storing them. When vectors are unit-normalized, cosine similarity and dot product become equivalent (since ‖A‖ = ‖B‖ = 1), and dot product is faster to compute. This is why most vector databases default to inner product search on normalized embeddings.</span>
+<span id="cb2-157"><a href="#cb2-157" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-158"><a href="#cb2-158" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-159"><a href="#cb2-159" aria-hidden="true" tabindex="-1"></a>**Q3. What is a vector database used for?**</span>
+<span id="cb2-160"><a href="#cb2-160" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-161"><a href="#cb2-161" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-162"><a href="#cb2-162" aria-hidden="true" tabindex="-1"></a>A vector database stores embedding vectors and enables fast approximate nearest-neighbor (ANN) search — finding the vectors most similar to a query vector out of potentially billions of stored vectors in milliseconds.</span>
+<span id="cb2-163"><a href="#cb2-163" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-164"><a href="#cb2-164" aria-hidden="true" tabindex="-1"></a>The core problem it solves: naive exhaustive search over 10 million 1,536-dimensional vectors requires computing 10 million dot products per query, which is too slow at scale. Vector databases use indexing structures — HNSW (Hierarchical Navigable Small Worlds) and IVF (Inverted File Index) are the most common — that organize vectors so only a small fraction need to be checked per query. HNSW achieves this by building a multi-layer graph where high layers navigate coarsely and lower layers refine, enabling sub-millisecond search at 99%+ recall.</span>
+<span id="cb2-165"><a href="#cb2-165" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-166"><a href="#cb2-166" aria-hidden="true" tabindex="-1"></a>The primary use cases are: semantic search (find documents similar to a query), RAG retrieval (find relevant chunks to inject into an LLM prompt), recommendation systems (find items similar to what a user has engaged with), and duplicate detection (find near-identical records across large databases).</span>
+<span id="cb2-167"><a href="#cb2-167" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-168"><a href="#cb2-168" aria-hidden="true" tabindex="-1"></a>Popular options include Pinecone (fully managed), Weaviate (open-source with multi-tenancy), Qdrant (Rust-based, high performance, self-hosted), Chroma (lightweight, developer-friendly), and pgvector (PostgreSQL extension — good if you already run Postgres and have under ~1M vectors).</span>
+<span id="cb2-169"><a href="#cb2-169" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-170"><a href="#cb2-170" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-171"><a href="#cb2-171" aria-hidden="true" tabindex="-1"></a>**Q4. Explain the "king − man + woman = queen" example. What does it tell you about embeddings?**</span>
+<span id="cb2-172"><a href="#cb2-172" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-173"><a href="#cb2-173" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-174"><a href="#cb2-174" aria-hidden="true" tabindex="-1"></a>This is the most famous demonstration that word embeddings capture semantic relationships as geometric structure. Take the Word2Vec embedding of "king," subtract the embedding of "man," and add the embedding of "woman." The resulting vector lands nearest to "queen" in the embedding space — the model never explicitly learned this; it emerged from training on text.</span>
+<span id="cb2-175"><a href="#cb2-175" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-176"><a href="#cb2-176" aria-hidden="true" tabindex="-1"></a>What this tells us: the embedding space encodes analogical relationships as consistent vector offsets. The vector from "man" to "woman" represents the concept of "feminine gender applied to the same entity." The same offset applied to "king" yields a vector pointing toward "queen," because that relationship was implicitly encoded from seeing how both words appear in similar contexts ("the king ruled" / "the queen ruled," etc.).</span>
+<span id="cb2-177"><a href="#cb2-177" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-178"><a href="#cb2-178" aria-hidden="true" tabindex="-1"></a>More broadly, it demonstrates that embeddings compress human knowledge about relationships into linear geometry. The offset "Paris" to "France" is approximately the same as "Berlin" to "Germany" (capital-to-country). "walk" to "walked" parallels "swim" to "swam" (present-to-past tense).</span>
+<span id="cb2-179"><a href="#cb2-179" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-180"><a href="#cb2-180" aria-hidden="true" tabindex="-1"></a>The important caveat: this works for common, well-represented relationships in training data. It fails for rare concepts, domain-specific vocabulary, and relationships that aren't well represented in the corpus. "LIBOR" minus "interest rate" plus "equity benchmark" won't yield "S&amp;P 500" in a general-purpose embedding model — you'd need a model trained on financial text.</span>
+<span id="cb2-181"><a href="#cb2-181" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-182"><a href="#cb2-182" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-183"><a href="#cb2-183" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-184"><a href="#cb2-184" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-185"><a href="#cb2-185" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb2-186"><a href="#cb2-186" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-187"><a href="#cb2-187" aria-hidden="true" tabindex="-1"></a>**Q1. Compare bi-encoder and cross-encoder architectures for semantic search — when would you use each, and why does cross-encoding give better rankings at higher cost?**</span>
+<span id="cb2-188"><a href="#cb2-188" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-189"><a href="#cb2-189" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-190"><a href="#cb2-190" aria-hidden="true" tabindex="-1"></a>A bi-encoder encodes the query and each document independently — each gets its own embedding vector, and similarity is measured by dot product or cosine. This means you can pre-compute all document embeddings offline and search at query time with a single vector lookup. Retrieval is O(log n) with ANN indexing.</span>
+<span id="cb2-191"><a href="#cb2-191" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-192"><a href="#cb2-192" aria-hidden="true" tabindex="-1"></a>A cross-encoder takes the query and a candidate document concatenated as a single input, runs full transformer attention over the combined text, and produces a single relevance score. Because it can model interactions between query tokens and document tokens directly (e.g., "renewable energy" in the query attending to "solar" in the document), it produces much more accurate relevance scores. But it can't pre-compute anything — you must run inference for every query-document pair at search time.</span>
+<span id="cb2-193"><a href="#cb2-193" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-194"><a href="#cb2-194" aria-hidden="true" tabindex="-1"></a>The standard production pattern combines both in a two-stage pipeline: bi-encoder retrieves top-100 candidates quickly (milliseconds), cross-encoder re-ranks those 100 to find the top-5. This gives you 95% of cross-encoder accuracy at a fraction of the latency cost.</span>
+<span id="cb2-195"><a href="#cb2-195" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-196"><a href="#cb2-196" aria-hidden="true" tabindex="-1"></a>When to use bi-encoder only: real-time search over millions of documents where latency is critical and an extra 50ms re-rank is unacceptable. When to add cross-encoder re-ranking: any system where result quality matters enough to justify 50–200ms additional latency — legal search, medical Q&amp;A, enterprise knowledge bases where a wrong top result has real consequences.</span>
+<span id="cb2-197"><a href="#cb2-197" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-198"><a href="#cb2-198" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-199"><a href="#cb2-199" aria-hidden="true" tabindex="-1"></a>**Q2. Explain what contextual embeddings (BERT-style) give you that Word2Vec-style embeddings don't.**</span>
+<span id="cb2-200"><a href="#cb2-200" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-201"><a href="#cb2-201" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-202"><a href="#cb2-202" aria-hidden="true" tabindex="-1"></a>Word2Vec assigns each word a single static vector, regardless of context. "Bank" gets one embedding whether it appears in "river bank" or "bank account." This is fine for common words with stable meaning, but fails for polysemous words (words with multiple meanings) and for understanding phrases, syntax, and sentence-level meaning.</span>
+<span id="cb2-203"><a href="#cb2-203" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-204"><a href="#cb2-204" aria-hidden="true" tabindex="-1"></a>BERT-style contextual embeddings produce a different vector for each word depending on its surrounding context. The input sequence is processed through multiple transformer layers, and each token's final representation is shaped by attention to every other token in the sentence. "Bank" in a financial context ends up in a completely different part of embedding space than "bank" in a geography context.</span>
+<span id="cb2-205"><a href="#cb2-205" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-206"><a href="#cb2-206" aria-hidden="true" tabindex="-1"></a>The practical gains are significant:</span>
+<span id="cb2-207"><a href="#cb2-207" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Named entity resolution**: "Apple" the company vs. the fruit are distinguishable</span>
+<span id="cb2-208"><a href="#cb2-208" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Sentence-level embeddings**: models like Sentence-BERT (SBERT) pool token embeddings into a single sentence vector that captures the full meaning of a clause, not just individual word semantics</span>
+<span id="cb2-209"><a href="#cb2-209" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Coreference**: understanding that "she" in "the doctor said she would call" refers to the doctor</span>
+<span id="cb2-210"><a href="#cb2-210" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Domain adaptation**: contextual models fine-tune much more effectively to domain-specific text than static embeddings</span>
+<span id="cb2-211"><a href="#cb2-211" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-212"><a href="#cb2-212" aria-hidden="true" tabindex="-1"></a>The tradeoff is compute: generating BERT embeddings requires a full forward pass, while Word2Vec is just a lookup. For real-time embedding at scale, this cost matters.</span>
+<span id="cb2-213"><a href="#cb2-213" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-214"><a href="#cb2-214" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-215"><a href="#cb2-215" aria-hidden="true" tabindex="-1"></a>**Q3. Why does hybrid search (dense + sparse) often outperform either alone? What are the failure modes of each in isolation?**</span>
+<span id="cb2-216"><a href="#cb2-216" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-217"><a href="#cb2-217" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-218"><a href="#cb2-218" aria-hidden="true" tabindex="-1"></a>Dense retrieval (embedding-based) and sparse retrieval (BM25/TF-IDF) each fail in predictable, complementary ways.</span>
+<span id="cb2-219"><a href="#cb2-219" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-220"><a href="#cb2-220" aria-hidden="true" tabindex="-1"></a>**Dense retrieval failure modes:** struggles with exact string matching, rare terms, and out-of-distribution vocabulary. Searching for "EPA Form 7520" will retrieve documents about environmental regulations broadly, not necessarily the specific form. Product codes like "SKU-XJ-4420," medical drug names like "imatinib mesylate," and legal citation strings like "45 CFR 164.514(b)" all fail dense retrieval because the embedding model never saw these strings in training and has no semantic anchor for them.</span>
+<span id="cb2-221"><a href="#cb2-221" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-222"><a href="#cb2-222" aria-hidden="true" tabindex="-1"></a>**Sparse retrieval failure modes:** can't handle paraphrase, synonymy, or conceptual matching. A query about "affordable lodging" won't match documents that say "budget hotels" unless exact vocabulary overlaps. It also fails completely for cross-lingual search and concept-level queries like "emotional distress in children" that should match documents using clinical vocabulary.</span>
+<span id="cb2-223"><a href="#cb2-223" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-224"><a href="#cb2-224" aria-hidden="true" tabindex="-1"></a>Hybrid search, typically implemented via Reciprocal Rank Fusion (RRF), scores and ranks from both systems, then merges the ranked lists. A document ranked 3rd by BM25 and 8th by dense gets a combined score of 1/(3+k) + 1/(8+k), where k is a smoothing constant (typically 60). This is robust: if either system ranks a relevant document highly, it appears in the final results.</span>
+<span id="cb2-225"><a href="#cb2-225" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-226"><a href="#cb2-226" aria-hidden="true" tabindex="-1"></a>Production systems like Elasticsearch, Weaviate, and Qdrant all support hybrid search as their recommended default because the failure modes are so complementary.</span>
+<span id="cb2-227"><a href="#cb2-227" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-228"><a href="#cb2-228" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-229"><a href="#cb2-229" aria-hidden="true" tabindex="-1"></a>**Q4. A company fine-tuned an embedding model on general text, then deployed it for legal document retrieval. Retrieval quality is poor. What is the most likely root cause and how do you fix it?**</span>
+<span id="cb2-230"><a href="#cb2-230" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-231"><a href="#cb2-231" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-232"><a href="#cb2-232" aria-hidden="true" tabindex="-1"></a>The most likely root cause is domain mismatch — the embedding model's training data is general web text, which has almost no exposure to legal vocabulary, citation formats, contract boilerplate, or the semantic relationships specific to legal documents.</span>
+<span id="cb2-233"><a href="#cb2-233" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-234"><a href="#cb2-234" aria-hidden="true" tabindex="-1"></a>In practice this means: searching for "indemnification obligations" retrieves documents mentioning "indemnify" only if that exact word appears, while missing "hold harmless" clauses that are legally equivalent. The embedding space doesn't know "force majeure" and "act of God" are near-synonyms in contract law. Abbreviations like "SOW," "MSA," or "NDA" may not map to their legal meanings.</span>
+<span id="cb2-235"><a href="#cb2-235" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-236"><a href="#cb2-236" aria-hidden="true" tabindex="-1"></a>The fix has two components depending on available resources:</span>
+<span id="cb2-237"><a href="#cb2-237" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-238"><a href="#cb2-238" aria-hidden="true" tabindex="-1"></a>**If labeled data exists (query-document relevance pairs):** fine-tune the embedding model with contrastive learning (e.g., using the SBERT framework with triplet loss or MultipleNegativesRankingLoss). Even 1,000–5,000 query-relevant document pairs dramatically improve retrieval for domain-specific vocabulary.</span>
+<span id="cb2-239"><a href="#cb2-239" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-240"><a href="#cb2-240" aria-hidden="true" tabindex="-1"></a>**If no labeled data:** start with a model pre-trained on legal text — LegalBERT (Chalkidis et al., 2020) or a general model fine-tuned on contracts. Alternatively, use hard-negative mining: retrieve top-k results with the current model, have lawyers flag which are irrelevant, use those as negatives in contrastive fine-tuning.</span>
+<span id="cb2-241"><a href="#cb2-241" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-242"><a href="#cb2-242" aria-hidden="true" tabindex="-1"></a>Also add hybrid search with BM25 as an immediate mitigation — exact legal citations and defined terms will surface via keyword matching while the model is improved.</span>
+<span id="cb2-243"><a href="#cb2-243" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-244"><a href="#cb2-244" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-245"><a href="#cb2-245" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-246"><a href="#cb2-246" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-247"><a href="#cb2-247" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb2-248"><a href="#cb2-248" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-249"><a href="#cb2-249" aria-hidden="true" tabindex="-1"></a>**Q1. A customer's semantic search returns irrelevant results for short queries (1–3 words) but works well for full sentences. Walk through your diagnosis and fix.**</span>
+<span id="cb2-250"><a href="#cb2-250" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-251"><a href="#cb2-251" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-252"><a href="#cb2-252" aria-hidden="true" tabindex="-1"></a>Short queries are a classic bi-encoder failure mode because brief text doesn't give the embedding model enough context to generate a specific, meaningful vector. A 2-word query like "data breach" embeds to a vague region of the space near all related documents — security incidents, compliance reports, technical vulnerabilities — rather than a precise point.</span>
+<span id="cb2-253"><a href="#cb2-253" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-254"><a href="#cb2-254" aria-hidden="true" tabindex="-1"></a>My diagnosis starts by examining the actual embedding vectors: compute the nearest neighbors of the short query embeddings and check how broadly they cluster versus sentence-length query embeddings. Then I'd sample failed short queries and look at what ranked first — is it semantic irrelevance or domain-specific vocabulary mismatch?</span>
+<span id="cb2-255"><a href="#cb2-255" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-256"><a href="#cb2-256" aria-hidden="true" tabindex="-1"></a>**Fixes, in order of implementation complexity:**</span>
+<span id="cb2-257"><a href="#cb2-257" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-258"><a href="#cb2-258" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>**Enable BM25 hybrid search** — short exact queries like "GDPR" or "breach notification" will match via keyword even when the dense vector is underspecified. This is a quick win.</span>
+<span id="cb2-259"><a href="#cb2-259" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-260"><a href="#cb2-260" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>**Query expansion** — use an LLM to rewrite the short query into a full sentence before embedding: "data breach" → "documents about data breach incidents, notification requirements, and security vulnerabilities." The expanded query embeds much more specifically.</span>
+<span id="cb2-261"><a href="#cb2-261" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-262"><a href="#cb2-262" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>**HyDE (Hypothetical Document Embeddings)** — generate a hypothetical answer document for the short query, embed that instead. "Write a short paragraph about: data breach" produces a document-like embedding that retrieves far better than the query itself.</span>
+<span id="cb2-263"><a href="#cb2-263" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-264"><a href="#cb2-264" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>**Asymmetric training** — fine-tune on query-document pairs where queries are short and documents are long. Models like msmarco-distilbert-base-v4 are specifically trained for this asymmetry.</span>
+<span id="cb2-265"><a href="#cb2-265" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-266"><a href="#cb2-266" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-267"><a href="#cb2-267" aria-hidden="true" tabindex="-1"></a>**Q2. How would you choose between a hosted vector DB (Pinecone) and a self-hosted solution (Qdrant, pgvector) for an enterprise customer? What questions drive the decision?**</span>
+<span id="cb2-268"><a href="#cb2-268" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-269"><a href="#cb2-269" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-270"><a href="#cb2-270" aria-hidden="true" tabindex="-1"></a>I ask five questions before recommending either direction:</span>
+<span id="cb2-271"><a href="#cb2-271" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-272"><a href="#cb2-272" aria-hidden="true" tabindex="-1"></a>**1. Data residency and compliance requirements?** This is often a dealbreaker. If the customer has data that can't leave their AWS VPC or Azure tenant — healthcare (HIPAA), financial services (SOC 2 + data sovereignty), government — Pinecone's managed cloud is off the table unless they offer a private cloud deployment. Qdrant and pgvector deploy inside the customer's own infrastructure.</span>
+<span id="cb2-273"><a href="#cb2-273" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-274"><a href="#cb2-274" aria-hidden="true" tabindex="-1"></a>**2. Vector count and query throughput?** Under 1M vectors with modest query volume: pgvector on Postgres is often sufficient and eliminates a new infrastructure dependency. 1M–100M vectors with real-time search: Qdrant or Weaviate self-hosted. Hundreds of millions of vectors with variable traffic: Pinecone's managed infrastructure handles this with less operational overhead.</span>
+<span id="cb2-275"><a href="#cb2-275" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-276"><a href="#cb2-276" aria-hidden="true" tabindex="-1"></a>**3. Existing infrastructure and team capacity?** If the customer already runs Postgres, pgvector with HNSW indexing requires zero new services to manage. If they have a dedicated MLOps team comfortable with Kubernetes, Qdrant is excellent. If they have no ML infrastructure team and want to move fast, Pinecone's zero-ops managed service may justify the cost.</span>
+<span id="cb2-277"><a href="#cb2-277" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-278"><a href="#cb2-278" aria-hidden="true" tabindex="-1"></a>**4. Budget?** Pinecone costs roughly $70–700/month at typical enterprise scales. Self-hosted shifts cost to EC2/GKE compute — often cheaper at scale but requires engineering time.</span>
+<span id="cb2-279"><a href="#cb2-279" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-280"><a href="#cb2-280" aria-hidden="true" tabindex="-1"></a>**5. Multi-tenancy needs?** If each customer gets isolated search (e.g., a SaaS product), Weaviate's native multi-tenancy or namespaced Qdrant collections are well-suited. Pinecone handles this too but at per-namespace pricing.</span>
+<span id="cb2-281"><a href="#cb2-281" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-282"><a href="#cb2-282" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-283"><a href="#cb2-283" aria-hidden="true" tabindex="-1"></a>**Q3. A customer asks why their RAG system returns accurate information for some topics but hallucinates for others. How do you explain this and what do you investigate first?**</span>
+<span id="cb2-284"><a href="#cb2-284" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-285"><a href="#cb2-285" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-286"><a href="#cb2-286" aria-hidden="true" tabindex="-1"></a>I explain it this way: "RAG only fixes hallucination for topics that are in your index and that your retrieval system finds. If retrieval fails — either because the document isn't indexed, or because the embedding model doesn't recognize the query as related to the right documents — the LLM falls back to its training data and guesses."</span>
+<span id="cb2-287"><a href="#cb2-287" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-288"><a href="#cb2-288" aria-hidden="true" tabindex="-1"></a>The pattern "works for general topics, fails for proprietary products" is almost always a retrieval problem, not a generation problem. I investigate in this order:</span>
+<span id="cb2-289"><a href="#cb2-289" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-290"><a href="#cb2-290" aria-hidden="true" tabindex="-1"></a>**1. Check the index first.** Are the documents about the failing topics actually ingested? Search the vector DB directly for the failing queries using metadata filters. Missing documents account for 40–60% of this symptom.</span>
+<span id="cb2-291"><a href="#cb2-291" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-292"><a href="#cb2-292" aria-hidden="true" tabindex="-1"></a>**2. Measure retrieval quality independently.** Log retrieved chunks for failing queries. Are the top-3 results actually relevant? If retrieval returns wrong chunks, the LLM will hallucinate coherently using whatever it retrieved. Tools like RAGAS can compute "context relevance" — the fraction of retrieved context that actually answers the question.</span>
+<span id="cb2-293"><a href="#cb2-293" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-294"><a href="#cb2-294" aria-hidden="true" tabindex="-1"></a>**3. Check for domain mismatch in embeddings.** If the failing topics use proprietary terminology (internal product names, custom acronyms), the embedding model may not map queries to the right documents. Embed both the query and the target document independently, compute cosine similarity — if it's below 0.5, you have a domain mismatch problem.</span>
+<span id="cb2-295"><a href="#cb2-295" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-296"><a href="#cb2-296" aria-hidden="true" tabindex="-1"></a>**4. Check chunk boundaries.** If answers span multiple chunks, neither chunk alone is sufficient. Increase chunk overlap or switch to parent-child chunking for these document types.</span>
+<span id="cb2-297"><a href="#cb2-297" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-298"><a href="#cb2-298" aria-hidden="true" tabindex="-1"></a>The fix is almost always either: add missing documents, add hybrid BM25 search for exact term matching, or fine-tune the embedding model on domain-specific query-document pairs.</span>
+<span id="cb2-299"><a href="#cb2-299" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-300"><a href="#cb2-300" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-301"><a href="#cb2-301" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-302"><a href="#cb2-302" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-303"><a href="#cb2-303" aria-hidden="true" tabindex="-1"></a><span class="fu">## Further Reading</span></span>
+<span id="cb2-304"><a href="#cb2-304" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-305"><a href="#cb2-305" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks (Reimers &amp; Gurevych, 2019)</span><span class="co">](https://arxiv.org/abs/1908.10084)</span></span>
+<span id="cb2-306"><a href="#cb2-306" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">FAISS: A Library for Efficient Similarity Search</span><span class="co">](https://faiss.ai/)</span></span>
+<span id="cb2-307"><a href="#cb2-307" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Matryoshka Representation Learning (Kusupati et al., 2022)</span><span class="co">](https://arxiv.org/abs/2205.13147)</span> — flexible-length embeddings</span>
 </code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->

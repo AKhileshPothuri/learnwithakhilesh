@@ -8,7 +8,7 @@
 
 <meta name="description" content="A depth-first interview preparation guide covering Generative AI foundations, large language models, fine-tuning, GenAI systems architecture, and a dedicated track for Forward Deployed Engineers.">
 
-<title>2&nbsp; Neural Networks — Intuition to Backprop – GenAI Interview Prep</title>
+<title>2&nbsp; Neural Networks — From Perceptrons to Backprop – GenAI Interview Prep</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -106,6 +106,35 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   }
 }</script>
 
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
 
 </head>
 
@@ -144,7 +173,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
         <i class="bi bi-layout-text-sidebar-reverse"></i>
       </button>
-        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/01-intro.html">Part I — Foundations</a></li><li class="breadcrumb-item"><a href="../chapters/02-neural-networks.html"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></a></li></ol></nav>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/01-intro.html">Part I — Foundations</a></li><li class="breadcrumb-item"><a href="../chapters/02-neural-networks.html"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></a></li></ol></nav>
         <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
         </a>
     </div>
@@ -180,7 +209,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></span></a>
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -357,7 +386,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#loss-functions" id="toc-loss-functions" class="nav-link" data-scroll-target="#loss-functions"><span class="header-section-number">2.3</span> Loss Functions</a></li>
   <li><a href="#backpropagation" id="toc-backpropagation" class="nav-link" data-scroll-target="#backpropagation"><span class="header-section-number">2.4</span> Backpropagation</a></li>
   <li><a href="#gradient-descent-and-optimizers" id="toc-gradient-descent-and-optimizers" class="nav-link" data-scroll-target="#gradient-descent-and-optimizers"><span class="header-section-number">2.5</span> Gradient Descent and Optimizers</a></li>
-  <li><a href="#vanishing-exploding-gradients" id="toc-vanishing-exploding-gradients" class="nav-link" data-scroll-target="#vanishing-exploding-gradients"><span class="header-section-number">2.6</span> Vanishing &amp; Exploding Gradients</a></li>
+  <li><a href="#vanishing-and-exploding-gradients" id="toc-vanishing-and-exploding-gradients" class="nav-link" data-scroll-target="#vanishing-and-exploding-gradients"><span class="header-section-number">2.6</span> Vanishing and Exploding Gradients</a></li>
   <li><a href="#interview-questions" id="toc-interview-questions" class="nav-link" data-scroll-target="#interview-questions"><span class="header-section-number">2.7</span> Interview Questions</a></li>
   <li><a href="#further-reading" id="toc-further-reading" class="nav-link" data-scroll-target="#further-reading"><span class="header-section-number">2.8</span> Further Reading</a></li>
   </ul>
@@ -366,9 +395,9 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <!-- main -->
 <main class="content" id="quarto-document-content">
 
-<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/01-intro.html">Part I — Foundations</a></li><li class="breadcrumb-item"><a href="../chapters/02-neural-networks.html"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></a></li></ol></nav>
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/01-intro.html">Part I — Foundations</a></li><li class="breadcrumb-item"><a href="../chapters/02-neural-networks.html"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></a></li></ol></nav>
 <div class="quarto-title">
-<div class="quarto-title-block"><div><h1 class="title"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></h1><button type="button" class="btn code-tools-button dropdown-toggle" id="quarto-code-tools-menu" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi"></i> Code</button><ul class="dropdown-menu dropdown-menu-end" aria-labelelledby="quarto-code-tools-menu"><li><a id="quarto-show-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Show All Code</a></li><li><a id="quarto-hide-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Hide All Code</a></li><li><hr class="dropdown-divider"></li><li><a id="quarto-view-source" class="dropdown-item" href="javascript:void(0)" role="button">View Source</a></li></ul></div></div>
+<div class="quarto-title-block"><div><h1 class="title"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></h1><button type="button" class="btn code-tools-button dropdown-toggle" id="quarto-code-tools-menu" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi"></i> Code</button><ul class="dropdown-menu dropdown-menu-end" aria-labelelledby="quarto-code-tools-menu"><li><a id="quarto-show-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Show All Code</a></li><li><a id="quarto-hide-all-code" class="dropdown-item" href="javascript:void(0)" role="button">Hide All Code</a></li><li><hr class="dropdown-divider"></li><li><a id="quarto-view-source" class="dropdown-item" href="javascript:void(0)" role="button">View Source</a></li></ul></div></div>
 </div>
 
 
@@ -406,36 +435,123 @@ Note
 </div>
 <section id="the-perceptron" class="level2" data-number="2.1">
 <h2 data-number="2.1" class="anchored" data-anchor-id="the-perceptron"><span class="header-section-number">2.1</span> The Perceptron</h2>
-<p><em>[Draft content here]</em></p>
+<p>The perceptron is the fundamental building block of every neural network, from the simplest logistic regression model to a 400-billion-parameter language model. Its design was inspired loosely by the biological neuron: a cell that receives signals from many inputs, integrates them, and fires an output signal if the integrated input exceeds a threshold. The artificial perceptron formalizes this idea mathematically. Given an input vector <span class="math inline">\(\mathbf{x} = [x_1, x_2, \ldots, x_n]\)</span>, each input is multiplied by a corresponding weight <span class="math inline">\(w_i\)</span>, the products are summed together, and a bias term <span class="math inline">\(b\)</span> is added: <span class="math inline">\(z = \mathbf{w} \cdot \mathbf{x} + b = \sum_i w_i x_i + b\)</span>. This quantity <span class="math inline">\(z\)</span> is called the pre-activation or logit. The final output is produced by passing <span class="math inline">\(z\)</span> through an activation function <span class="math inline">\(\sigma\)</span>: <span class="math inline">\(a = \sigma(z)\)</span>.</p>
+<p>The weights and bias are the learnable parameters of the perceptron. Conceptually, each weight <span class="math inline">\(w_i\)</span> encodes how much the corresponding feature <span class="math inline">\(x_i\)</span> contributes to the output. A large positive weight means “when this input is high, the output should be high.” A large negative weight means “when this input is high, the output should be low.” The bias <span class="math inline">\(b\)</span> shifts the entire activation threshold — it determines how easy or hard it is to activate the neuron independent of the input values. Without bias, the activation function is always centered at zero, which artificially constrains where the decision boundary can lie in input space.</p>
+<p>A single perceptron is a linear classifier. The decision boundary it draws in input space is a hyperplane — a straight line in 2D, a flat plane in 3D, and so on. This is both its strength and its critical limitation. Linear classification works perfectly well for linearly separable problems, but it fundamentally cannot learn non-linear relationships. The canonical example is the XOR (exclusive-or) problem: given two binary inputs <span class="math inline">\(x_1\)</span> and <span class="math inline">\(x_2\)</span>, output 1 if exactly one of them is 1, otherwise output 0. The four input-output pairs <span class="math inline">\((0,0) \to 0\)</span>, <span class="math inline">\((1,0) \to 1\)</span>, <span class="math inline">\((0,1) \to 1\)</span>, <span class="math inline">\((1,1) \to 0\)</span> cannot be separated by any single straight line. This was proven by Minsky and Papert in their 1969 book “Perceptrons,” and it led to a temporary stagnation of neural network research — known as the first “AI winter.”</p>
+<p>The solution to the XOR problem, and to non-linear classification in general, is to stack perceptrons in multiple layers — the multilayer perceptron (MLP). The first layer learns representations of the input; subsequent layers learn representations of representations. As long as activation functions are non-linear, stacked layers can represent arbitrarily complex functions. The Universal Approximation Theorem (Hornik, 1989) formalizes this: a feedforward network with at least one hidden layer and a non-linear activation function can approximate any continuous function to arbitrary precision, given enough hidden units. This theorem established the theoretical basis for the expressive power of neural networks, and it explains why a perceptron with the right activation function is the correct building block for systems that can learn any mapping.</p>
 </section>
 <section id="activation-functions" class="level2" data-number="2.2">
 <h2 data-number="2.2" class="anchored" data-anchor-id="activation-functions"><span class="header-section-number">2.2</span> Activation Functions</h2>
-<p><em>ReLU, Sigmoid, Tanh, Softmax — when to use each and why ReLU dominates.</em></p>
+<p>Activation functions are not a minor implementation detail — they are what give neural networks their expressive power. To understand why, consider what happens if you remove activation functions from a deep network entirely. The first layer computes <span class="math inline">\(\mathbf{h}_1 = W_1 \mathbf{x} + \mathbf{b}_1\)</span>. The second layer computes <span class="math inline">\(\mathbf{h}_2 = W_2 \mathbf{h}_1 + \mathbf{b}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2 = (W_2 W_1)\mathbf{x} + (W_2\mathbf{b}_1 + \mathbf{b}_2)\)</span>. The product <span class="math inline">\(W_2 W_1\)</span> is itself a matrix, and the combined bias term is a vector — so a two-layer linear network is mathematically equivalent to a single linear layer. No matter how many linear layers you stack, the result is always a single linear transformation. A 100-layer network without activation functions is equivalent to one layer with different weights. Non-linear activation functions break this collapse: <span class="math inline">\(\sigma(W_2 \sigma(W_1 \mathbf{x}))\)</span> cannot be simplified to a single linear transformation, so the network genuinely gains expressive power with depth.</p>
+<p>The sigmoid function <span class="math inline">\(\sigma(x) = \frac{1}{1 + e^{-x}}\)</span> maps any real number to the range <span class="math inline">\((0, 1)\)</span>, which makes it a natural choice for outputting probabilities. It was the dominant activation function in the early neural network era. Its critical weakness is the vanishing gradient problem: in the saturated regions (<span class="math inline">\(x \ll 0\)</span> or <span class="math inline">\(x \gg 0\)</span>), the derivative <span class="math inline">\(\sigma'(x) = \sigma(x)(1 - \sigma(x))\)</span> is very close to zero. When gradients flow backward through many sigmoid layers, each multiplication by a near-zero derivative shrinks the gradient exponentially. By the time the gradient reaches the first layers of a deep network, it is so small as to be meaningless — those layers cannot learn. Sigmoid also outputs values in <span class="math inline">\((0, 1)\)</span> rather than <span class="math inline">\((-1, 1)\)</span>, meaning the average output is positive, which causes gradients to be consistently positive or consistently negative during updates — the “zig-zagging” problem in gradient descent.</p>
+<p>Tanh, defined as <span class="math inline">\(\tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}\)</span>, maps to <span class="math inline">\((-1, 1)\)</span> and is zero-centered, addressing the zig-zagging problem. Its gradient <span class="math inline">\(1 - \tanh^2(x)\)</span> is larger than sigmoid’s in the active region, but it still saturates and produces vanishing gradients in the extremes. For shallow networks, tanh often outperforms sigmoid in hidden layers; for deep networks, both suffer.</p>
+<p>ReLU (Rectified Linear Unit), <span class="math inline">\(\text{ReLU}(x) = \max(0, x)\)</span>, became the dominant activation function in deep learning around 2010-2012, when Nair and Hinton (2010) and other groups demonstrated its empirical advantages. Its properties are elegantly simple: for positive inputs, the gradient is exactly 1 — no vanishing. For negative inputs, the output is zero. This means gradients flow without decay through the positive units, allowing training of much deeper networks. ReLU is also computationally trivial: one comparison operation, versus the exponentiation in sigmoid or tanh. The failure mode is the “dying ReLU” problem: if a neuron’s pre-activation becomes negative for all training examples (which can happen when a large gradient update pushes the weights such that <span class="math inline">\(\mathbf{w} \cdot \mathbf{x} + b &lt; 0\)</span> for all <span class="math inline">\(\mathbf{x}\)</span>), the gradient is zero for all inputs and the neuron produces no learning signal. It is permanently stuck at zero output — effectively dead. In large networks, a non-trivial fraction of neurons can die, especially with high learning rates.</p>
+<p>Leaky ReLU addresses dying neurons by allowing a small negative slope <span class="math inline">\(\alpha\)</span> (typically 0.01) for negative inputs: <span class="math inline">\(\text{LeakyReLU}(x) = \max(\alpha x, x)\)</span>. The gradient is <span class="math inline">\(\alpha\)</span> for negative inputs rather than zero, keeping a small but non-zero learning signal alive. ELU (Exponential Linear Unit) uses an exponential curve for negative inputs, producing outputs that average closer to zero and reducing bias shifts in batch statistics. GELU (Gaussian Error Linear Unit), used in BERT, GPT-2, and most modern transformers, is a smooth approximation of ReLU that weights inputs by their probability under a standard Gaussian — providing slightly better empirical performance at the cost of a more expensive computation.</p>
+<p>For output layers, the activation function choice is determined by the task structure. Sigmoid is used for binary classification outputs (single probability). Softmax normalizes a vector of logits to a probability distribution over classes: <span class="math inline">\(\text{softmax}(z_i) = \frac{e^{z_i}}{\sum_j e^{z_j}}\)</span>. Softmax ensures all output probabilities are positive and sum to 1, which is exactly what multiclass classification requires. For regression, no activation function is applied at the output — the raw linear output is the prediction. The practical rule: ReLU (or GELU for transformers) for hidden layers; sigmoid or softmax for output layers depending on the classification task; no activation for regression.</p>
 </section>
 <section id="loss-functions" class="level2" data-number="2.3">
 <h2 data-number="2.3" class="anchored" data-anchor-id="loss-functions"><span class="header-section-number">2.3</span> Loss Functions</h2>
-<p><em>Cross-entropy for classification, MSE for regression. What the loss surface looks like.</em></p>
+<p>A loss function is a scalar measure of how wrong the model’s predictions are on the training data. Training is the process of adjusting model parameters to minimize this scalar. Choosing the wrong loss function is one of the most consequential and underappreciated mistakes in applied ML — it directly shapes what the model optimizes for, which may or may not align with the actual business objective.</p>
+<p>For regression tasks, Mean Squared Error (MSE) is the standard choice: <span class="math inline">\(\mathcal{L}_\text{MSE} = \frac{1}{n}\sum_{i=1}^n (y_i - \hat{y}_i)^2\)</span>. MSE penalizes large errors much more heavily than small errors because errors are squared — an error of 10 contributes 100 to the loss, while an error of 1 contributes only 1. This makes MSE appropriate when large errors are disproportionately costly, but sensitive to outliers: a single extreme prediction will dominate the loss and pull training toward fitting that outlier. Mean Absolute Error (MAE), <span class="math inline">\(\mathcal{L}_\text{MAE} = \frac{1}{n}\sum_i |y_i - \hat{y}_i|\)</span>, treats all errors proportionally and is more robust to outliers, but its gradient is constant in magnitude, which can make optimization less stable near the minimum (the gradient doesn’t naturally shrink as you approach the optimal solution). Huber loss combines both: quadratic for small errors, linear for large errors — often the best of both worlds for real-world regression.</p>
+<p>For classification tasks, cross-entropy is the standard loss function. For binary classification with a sigmoid output: <span class="math inline">\(\mathcal{L}_\text{BCE} = -\frac{1}{n}\sum_i [y_i \log \hat{y}_i + (1-y_i)\log(1-\hat{y}_i)]\)</span>. For multiclass with a softmax output: <span class="math inline">\(\mathcal{L}_\text{CE} = -\frac{1}{n}\sum_i \sum_k y_{ik} \log \hat{y}_{ik}\)</span>, where <span class="math inline">\(y_{ik}\)</span> is 1 if example <span class="math inline">\(i\)</span> belongs to class <span class="math inline">\(k\)</span> and 0 otherwise. The justification for cross-entropy is probabilistic: minimizing cross-entropy is equivalent to maximizing the log-likelihood of the correct class labels under the model’s predicted probability distribution. It is derived directly from the maximum likelihood estimation principle.</p>
+<p>Why not use accuracy as the loss function for classification? Accuracy is the metric we ultimately care about, but it is not differentiable — it is a step function that changes in discrete jumps when predictions flip from one class to another. Gradient descent requires a smooth, differentiable loss surface to compute meaningful gradients. A 1% improvement in the model’s confidence on a correctly classified example produces zero improvement in accuracy but does produce a gradient in cross-entropy loss. Cross-entropy is thus a smooth, differentiable surrogate for accuracy that is tightly coupled to it: a model that minimizes cross-entropy loss will generally maximize classification accuracy, and it also provides well-calibrated probability estimates.</p>
 </section>
 <section id="backpropagation" class="level2" data-number="2.4">
 <h2 data-number="2.4" class="anchored" data-anchor-id="backpropagation"><span class="header-section-number">2.4</span> Backpropagation</h2>
-<p><em>The chain rule applied to computation graphs. Intuitive walkthrough + a worked NumPy example.</em></p>
+<p>Backpropagation is the algorithm that makes training deep neural networks practical. At its core, it is an efficient application of the chain rule of calculus to a computation graph. Understanding backpropagation requires understanding both the chain rule and the structure of neural network computation.</p>
+<p>The forward pass proceeds layer by layer: given an input <span class="math inline">\(\mathbf{x}\)</span>, compute <span class="math inline">\(\mathbf{z}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}\)</span>, then <span class="math inline">\(\mathbf{a}^{(1)} = \sigma(\mathbf{z}^{(1)})\)</span>, then <span class="math inline">\(\mathbf{z}^{(2)} = W^{(2)}\mathbf{a}^{(1)} + \mathbf{b}^{(2)}\)</span>, and so on until you compute the loss <span class="math inline">\(\mathcal{L}\)</span>. During this pass, every intermediate value — every <span class="math inline">\(\mathbf{z}^{(l)}\)</span> and <span class="math inline">\(\mathbf{a}^{(l)}\)</span> — is stored in memory, because the backward pass will need them.</p>
+<p>The backward pass begins at the loss <span class="math inline">\(\mathcal{L}\)</span> and propagates gradient signals backward through the network. We want to compute <span class="math inline">\(\partial \mathcal{L} / \partial W^{(l)}\)</span> and <span class="math inline">\(\partial \mathcal{L} / \partial \mathbf{b}^{(l)}\)</span> for every layer <span class="math inline">\(l\)</span>, because these are the gradients that tell us how to update the weights to reduce the loss. The chain rule is the tool: if <span class="math inline">\(\mathcal{L}\)</span> depends on <span class="math inline">\(\mathbf{a}^{(2)}\)</span>, which depends on <span class="math inline">\(\mathbf{z}^{(2)}\)</span>, which depends on <span class="math inline">\(W^{(2)}\)</span>, then <span class="math inline">\(\frac{\partial \mathcal{L}}{\partial W^{(2)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(2)}} \cdot \frac{\partial \mathbf{a}^{(2)}}{\partial \mathbf{z}^{(2)}} \cdot \frac{\partial \mathbf{z}^{(2)}}{\partial W^{(2)}}\)</span>. Each factor in this product has a simple analytical form: the loss gradient with respect to activations, the activation function derivative (the diagonal of the Jacobian), and the input to that layer (a simple matrix). The key insight is that by storing intermediate activations during the forward pass and propagating the error signal backward using the chain rule, you can compute the gradient of the loss with respect to every parameter in the network in exactly two passes through the network — one forward, one backward — rather than one pass per parameter.</p>
+<p>The computational cost matters: a naive finite-difference approach to computing gradients would require a separate forward pass for each parameter, which for a model with billions of parameters is completely infeasible. Backpropagation reduces gradient computation to approximately the same cost as two forward passes, regardless of the number of parameters. This is why deep learning is tractable at scale. The implementation in modern frameworks (PyTorch, JAX, TensorFlow) is handled by automatic differentiation engines that build a dynamic computation graph during the forward pass and execute the backward pass automatically — engineers write forward pass code and get gradients for free.</p>
+<p>A critical practical implication of backpropagation through many layers is gradient scaling. Each layer in the backward pass multiplies the incoming gradient by the Jacobian of that layer’s operation. If the Jacobians have values less than 1 (common when activation functions saturate), the gradient shrinks at each layer. After 50 layers, a gradient that starts at 1.0 multiplied by 0.9 at each layer becomes <span class="math inline">\(0.9^{50} \approx 0.005\)</span> — essentially zero. If the Jacobians have values greater than 1, the gradient grows — potentially to infinity over many layers. These are the vanishing and exploding gradient problems, which are discussed in detail in the final section of this chapter.</p>
 <div id="backprop-numpy" class="cell">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Minimal two-layer network with manual backprop in NumPy</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co">: implement forward + backward pass</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="co"># -------------------------------------------------------</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Minimal two-layer network with manual backprop in NumPy</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Input: X (N, D_in), Labels: y (N, 1)</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Architecture: Linear -&gt; ReLU -&gt; Linear -&gt; Sigmoid -&gt; BCE Loss</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="co"># -------------------------------------------------------</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>np.random.seed(<span class="dv">42</span>)</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>N, D_in, H, D_out <span class="op">=</span> <span class="dv">100</span>, <span class="dv">4</span>, <span class="dv">8</span>, <span class="dv">1</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> np.random.randn(N, D_in)</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>y <span class="op">=</span> (np.random.randn(N, <span class="dv">1</span>) <span class="op">&gt;</span> <span class="dv">0</span>).astype(<span class="bu">float</span>)</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="co"># Initialize weights (He initialization for ReLU layers)</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>W1 <span class="op">=</span> np.random.randn(D_in, H) <span class="op">*</span> np.sqrt(<span class="fl">2.0</span> <span class="op">/</span> D_in)</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>b1 <span class="op">=</span> np.zeros((<span class="dv">1</span>, H))</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>W2 <span class="op">=</span> np.random.randn(H, D_out) <span class="op">*</span> np.sqrt(<span class="fl">2.0</span> <span class="op">/</span> H)</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>b2 <span class="op">=</span> np.zeros((<span class="dv">1</span>, D_out))</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sigmoid(z):</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="fl">1.0</span> <span class="op">/</span> (<span class="fl">1.0</span> <span class="op">+</span> np.exp(<span class="op">-</span>z))</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> relu(z):</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.maximum(<span class="dv">0</span>, z)</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bce_loss(y_hat, y):</span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>    eps <span class="op">=</span> <span class="fl">1e-9</span></span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="op">-</span>np.mean(y <span class="op">*</span> np.log(y_hat <span class="op">+</span> eps) <span class="op">+</span> (<span class="dv">1</span> <span class="op">-</span> y) <span class="op">*</span> np.log(<span class="dv">1</span> <span class="op">-</span> y_hat <span class="op">+</span> eps))</span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>lr <span class="op">=</span> <span class="fl">0.01</span></span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> epoch <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">500</span>):</span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ---- Forward pass ----</span></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>    z1 <span class="op">=</span> X <span class="op">@</span> W1 <span class="op">+</span> b1          <span class="co"># (N, H)</span></span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>    a1 <span class="op">=</span> relu(z1)              <span class="co"># (N, H)</span></span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>    z2 <span class="op">=</span> a1 <span class="op">@</span> W2 <span class="op">+</span> b2          <span class="co"># (N, 1)</span></span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>    y_hat <span class="op">=</span> sigmoid(z2)        <span class="co"># (N, 1)</span></span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>    loss <span class="op">=</span> bce_loss(y_hat, y)</span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ---- Backward pass (chain rule by hand) ----</span></span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/d(y_hat): derivative of BCE w.r.t. sigmoid output</span></span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a>    dL_dyhat <span class="op">=</span> (y_hat <span class="op">-</span> y) <span class="op">/</span> (y_hat <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> y_hat) <span class="op">+</span> <span class="fl">1e-9</span>) <span class="op">/</span> N</span>
+<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dz2: sigmoid derivative = y_hat * (1 - y_hat)</span></span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a>    dL_dz2 <span class="op">=</span> dL_dyhat <span class="op">*</span> y_hat <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> y_hat)     <span class="co"># (N, 1)</span></span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dW2 and dL/db2</span></span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>    dW2 <span class="op">=</span> a1.T <span class="op">@</span> dL_dz2                          <span class="co"># (H, 1)</span></span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a>    db2 <span class="op">=</span> dL_dz2.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">0</span>, keepdims<span class="op">=</span><span class="va">True</span>)      <span class="co"># (1, 1)</span></span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/da1: propagate through W2</span></span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a>    dL_da1 <span class="op">=</span> dL_dz2 <span class="op">@</span> W2.T                       <span class="co"># (N, H)</span></span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dz1: ReLU derivative is 1 where z1 &gt; 0, else 0</span></span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>    dL_dz1 <span class="op">=</span> dL_da1 <span class="op">*</span> (z1 <span class="op">&gt;</span> <span class="dv">0</span>).astype(<span class="bu">float</span>)    <span class="co"># (N, H)</span></span>
+<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dW1 and dL/db1</span></span>
+<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a>    dW1 <span class="op">=</span> X.T <span class="op">@</span> dL_dz1                           <span class="co"># (D_in, H)</span></span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a>    db1 <span class="op">=</span> dL_dz1.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">0</span>, keepdims<span class="op">=</span><span class="va">True</span>)      <span class="co"># (1, H)</span></span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ---- Parameter update (vanilla SGD) ----</span></span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a>    W2 <span class="op">-=</span> lr <span class="op">*</span> dW2</span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a>    b2 <span class="op">-=</span> lr <span class="op">*</span> db2</span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a>    W1 <span class="op">-=</span> lr <span class="op">*</span> dW1</span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a>    b1 <span class="op">-=</span> lr <span class="op">*</span> db1</span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> epoch <span class="op">%</span> <span class="dv">100</span> <span class="op">==</span> <span class="dv">0</span>:</span>
+<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(<span class="ss">f"Epoch </span><span class="sc">{</span>epoch<span class="sc">:4d}</span><span class="ss"> | Loss: </span><span class="sc">{</span>loss<span class="sc">:.4f}</span><span class="ss">"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 </div>
 </section>
 <section id="gradient-descent-and-optimizers" class="level2" data-number="2.5">
 <h2 data-number="2.5" class="anchored" data-anchor-id="gradient-descent-and-optimizers"><span class="header-section-number">2.5</span> Gradient Descent and Optimizers</h2>
-<p><em>SGD, momentum, Adam. Why Adam is the default and when SGD generalizes better.</em></p>
+<p>Gradient descent is the core optimization algorithm that drives learning in neural networks. Given the loss <span class="math inline">\(\mathcal{L}(\theta)\)</span> as a function of the model parameters <span class="math inline">\(\theta\)</span>, we want to find <span class="math inline">\(\theta^*\)</span> that minimizes <span class="math inline">\(\mathcal{L}\)</span>. The gradient <span class="math inline">\(\nabla_\theta \mathcal{L}\)</span> points in the direction of steepest increase of the loss. To decrease the loss, we update parameters in the opposite direction: <span class="math inline">\(\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}\)</span>, where <span class="math inline">\(\eta\)</span> is the learning rate — the step size along the gradient direction. This update rule is gradient descent, and it is the foundation of every modern deep learning optimizer.</p>
+<p>The choice of how many examples to compute the gradient over on each step defines three variants. Batch gradient descent computes the gradient over the entire training dataset before each update. This gives an accurate estimate of the true gradient (low variance) but requires processing the full dataset before any parameter update — computationally expensive and impractical for datasets larger than memory. Stochastic gradient descent (SGD) computes the gradient from a single randomly chosen training example per step, enabling very frequent updates but with very noisy gradient estimates (high variance). The noise in stochastic gradient descent can actually be beneficial in some settings because it acts as a regularizer, preventing the optimizer from settling into sharp minima, but it makes convergence erratic and slow to reach high precision. Mini-batch gradient descent — the default in practice — computes gradients over a small random batch of 32 to 256 examples. This provides a reasonable tradeoff: gradients are smoother than pure stochastic updates, updates are frequent, and batches can be efficiently parallelized across GPU cores using matrix operations.</p>
+<p>The learning rate is the most important hyperparameter in gradient descent. Too large a learning rate and the parameter updates overshoot the minimum, causing the loss to oscillate or diverge. Too small a learning rate and convergence is glacially slow, and the optimizer may get trapped in shallow local minima. A learning rate schedule that starts large and decays over training — either step decay, cosine annealing, or linear warmup followed by decay — typically outperforms any fixed learning rate.</p>
+<p>Standard SGD with momentum addresses one of SGD’s key weaknesses: oscillation in directions of high curvature. Imagine a narrow valley in the loss landscape, where the gradient alternates in direction across the valley but consistently points along it. SGD oscillates back and forth across the valley rather than traveling efficiently along it. Momentum accumulates a velocity vector in the direction of persistent gradients: <span class="math inline">\(v \leftarrow \beta v - \eta \nabla_\theta \mathcal{L}\)</span>, <span class="math inline">\(\theta \leftarrow \theta + v\)</span>, where <span class="math inline">\(\beta \approx 0.9\)</span> is the momentum coefficient. Velocity builds up in consistent gradient directions and dampens oscillations. The physical analogy: a ball rolling down a hilly landscape builds up speed on gentle consistent slopes and decelerates when the gradient reverses.</p>
+<p>Adam (Adaptive Moment Estimation, Kingma and Ba, 2014) is the dominant optimizer for deep learning and the default for virtually all LLM training. Adam maintains per-parameter adaptive learning rates by tracking both the first moment (mean of gradients, like momentum) and the second moment (uncentered variance of gradients): <span class="math inline">\(m_t \leftarrow \beta_1 m_{t-1} + (1-\beta_1)g_t\)</span>, <span class="math inline">\(v_t \leftarrow \beta_2 v_{t-1} + (1-\beta_2)g_t^2\)</span>. Bias-corrected estimates <span class="math inline">\(\hat{m}_t = m_t/(1-\beta_1^t)\)</span> and <span class="math inline">\(\hat{v}_t = v_t/(1-\beta_2^t)\)</span> account for the cold-start at <span class="math inline">\(t=0\)</span> when the moment estimates are initialized to zero. The update rule is: <span class="math inline">\(\theta_t \leftarrow \theta_{t-1} - \eta \hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)\)</span>. The intuition: parameters that receive large, consistent gradients get smaller effective learning rates (because <span class="math inline">\(\sqrt{\hat{v}_t}\)</span> is large), while parameters that receive small or inconsistent gradients get larger effective learning rates. This adapts to the curvature of the loss landscape per parameter. Default hyperparameters <span class="math inline">\(\beta_1=0.9\)</span>, <span class="math inline">\(\beta_2=0.999\)</span>, <span class="math inline">\(\epsilon=10^{-8}\)</span> work well across a wide range of tasks. AdamW modifies Adam by decoupling the weight decay regularization from the gradient update, which prevents the adaptive learning rate from diminishing the effect of weight decay — AdamW is the standard optimizer for LLM training (Loshchilov and Hutter, 2017).</p>
 </section>
-<section id="vanishing-exploding-gradients" class="level2" data-number="2.6">
-<h2 data-number="2.6" class="anchored" data-anchor-id="vanishing-exploding-gradients"><span class="header-section-number">2.6</span> Vanishing &amp; Exploding Gradients</h2>
-<p><em>Why deep networks struggled before residual connections and normalization.</em></p>
+<section id="vanishing-and-exploding-gradients" class="level2" data-number="2.6">
+<h2 data-number="2.6" class="anchored" data-anchor-id="vanishing-and-exploding-gradients"><span class="header-section-number">2.6</span> Vanishing and Exploding Gradients</h2>
+<p>The vanishing and exploding gradient problems are among the most important phenomena in deep learning, and understanding them explains many architectural choices in modern neural networks that might otherwise seem arbitrary.</p>
+<p>In a deep network with <span class="math inline">\(L\)</span> layers, the gradient of the loss with respect to the parameters in layer <span class="math inline">\(l\)</span> involves a product of <span class="math inline">\(L - l\)</span> Jacobian matrices — one for each layer between <span class="math inline">\(l\)</span> and the output. This is a direct consequence of the chain rule: <span class="math inline">\(\frac{\partial \mathcal{L}}{\partial W^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(L)}} \cdot \prod_{k=l}^{L-1} \frac{\partial \mathbf{a}^{(k+1)}}{\partial \mathbf{a}^{(k)}} \cdot \frac{\partial \mathbf{a}^{(l)}}{\partial W^{(l)}}\)</span>. If the elements of these Jacobians are consistently less than 1 — which happens when activation functions are in their saturated regions, as with sigmoid or tanh — then this product of many sub-unity values shrinks exponentially toward zero. By layer 1 of a 100-layer network, the gradient may be so small (<span class="math inline">\(&lt; 10^{-10}\)</span>) that floating-point arithmetic cannot represent it meaningfully, and the parameters in early layers never update. This is the vanishing gradient problem, and it was the primary reason deep networks with more than a few layers were difficult to train before 2010.</p>
+<p>Exploding gradients are the mirror problem: if Jacobian elements are consistently greater than 1 (which can happen with poorly initialized weights), the product grows exponentially, leading to parameter updates so large that training diverges entirely. Exploding gradients are often more visible than vanishing ones because loss divergence is obvious; vanishing gradients can silently prevent learning in early layers without any obvious signal. Exploding gradients are addressed by gradient clipping: before the optimizer step, if the norm of the gradient vector exceeds a threshold (typically 1.0 in LLM training), rescale it to that norm. This prevents a single catastrophic update without affecting the gradient direction.</p>
+<p>The modern solutions to vanishing gradients are primarily architectural. ReLU activations have a gradient of exactly 1 for positive inputs — no saturation, no shrinkage. Batch normalization (Ioffe and Szegedy, 2015) normalizes layer inputs to zero mean and unit variance before each layer, keeping activations in the non-saturating regime and providing additional gradient signal through the normalization parameters. Residual connections — the key innovation in ResNets (He et al., 2016) and adopted by every subsequent transformer — provide a direct “gradient highway”: instead of <span class="math inline">\(\mathbf{a}^{(l+1)} = \sigma(W^{(l)}\mathbf{a}^{(l)})\)</span>, a residual block computes <span class="math inline">\(\mathbf{a}^{(l+1)} = \mathbf{a}^{(l)} + \sigma(W^{(l)}\mathbf{a}^{(l)})\)</span>. The gradient of the loss with respect to <span class="math inline">\(\mathbf{a}^{(l)}\)</span> now includes a direct path: <span class="math inline">\(\frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l+1)}} \cdot (1 + \frac{\partial F}{\partial \mathbf{a}^{(l)}})\)</span>. The <span class="math inline">\(+1\)</span> term means the gradient is always at least as large as <span class="math inline">\(\frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l+1)}}\)</span>, regardless of what the learned function <span class="math inline">\(F\)</span> does. This is why ResNets could be trained at depths of 100-1000 layers, and why every modern transformer architecture uses residual connections around every attention block and feed-forward block.</p>
 <hr>
 </section>
 <section id="interview-questions" class="level2" data-number="2.7">
@@ -450,11 +566,83 @@ Entry Level
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>What does an activation function do, and why do we need non-linearity?</li>
-<li>Explain backpropagation in plain English.</li>
-<li>What is the difference between batch gradient descent and stochastic gradient descent?</li>
-</ol>
+<p><strong>Q1. What does an activation function do, and why is non-linearity necessary in a neural network?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>An activation function transforms the weighted sum of a neuron’s inputs (the pre-activation <span class="math inline">\(z = \mathbf{w} \cdot \mathbf{x} + b\)</span>) into the neuron’s output activation. It introduces non-linearity into the network’s computations. Without activation functions, or with purely linear activation functions like <span class="math inline">\(f(x) = x\)</span>, every layer is just a linear transformation. Composing linear transformations always produces another linear transformation — so a 100-layer linear network is mathematically equivalent to a single linear layer with different weights. You gain depth but not expressive power.</p>
+<p>Non-linearity is what allows stacked layers to represent complex, curved decision boundaries rather than just hyperplanes. The Universal Approximation Theorem states that a network with even one hidden layer and a non-linear activation can approximate any continuous function — but in practice, depth with non-linearity is what makes modern deep networks so powerful. Each layer learns a non-linear transformation of the previous layer’s representation, building increasingly abstract features. Without non-linearity, a network distinguishing cats from dogs can only draw straight-line boundaries; with non-linearity, it can learn complex curved boundaries that capture the actual structure of visual categories.</p>
+<p>In practice, ReLU (<span class="math inline">\(\max(0, x)\)</span>) is the standard choice for hidden layers in most architectures because it is computationally cheap, does not saturate for positive inputs (avoiding vanishing gradients), and empirically trains well across a wide range of tasks.</p>
+</div>
+</div>
+</div>
+<p><strong>Q2. Explain backpropagation in plain English.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Backpropagation is the algorithm neural networks use to learn from their mistakes. Here is the intuition: when you make a prediction that is wrong, you want to figure out which parameters in the network were responsible for that mistake, and by how much. Backpropagation answers that question efficiently by working backward from the error.</p>
+<p>First, a forward pass runs the input through the network layer by layer, producing a prediction. A loss function measures how wrong that prediction is — this is a single number. Then, the backward pass asks at each layer: “How much did the parameters in this layer contribute to the total error?” Using the chain rule of calculus, the error signal is propagated backward from the output to the input, through every layer in reverse order. Each parameter gets a gradient — a number that says “if you increase this parameter slightly, the loss goes up by this much.” Parameters whose gradient is large contributed more to the error; parameters with small gradients contributed less.</p>
+<p>The chain rule is the mathematical engine that makes this efficient: <span class="math inline">\(\frac{\partial \mathcal{L}}{\partial W} = \frac{\partial \mathcal{L}}{\partial a} \cdot \frac{\partial a}{\partial z} \cdot \frac{\partial z}{\partial W}\)</span>. You chain together local gradients that each layer can compute cheaply. The result is that you get gradients for every parameter in the network in two passes — one forward, one backward — rather than one expensive pass per parameter.</p>
+</div>
+</div>
+</div>
+<p><strong>Q3. What is the difference between batch gradient descent, mini-batch gradient descent, and stochastic gradient descent?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The difference lies in how many training examples are used to compute the gradient before each parameter update.</p>
+<p>Batch gradient descent uses all <span class="math inline">\(N\)</span> training examples to compute a single gradient estimate and performs one update. This gives an accurate, low-variance estimate of the true gradient but requires processing the entire dataset before any learning happens. For large datasets (millions of examples), one update may take minutes, making this impractical.</p>
+<p>Stochastic gradient descent (SGD) uses a single randomly selected training example per update. Updates are extremely frequent — one per example — but each gradient estimate is very noisy (high variance). The noise can help escape local minima and has a regularizing effect, but convergence is erratic and it struggles to reach high-precision solutions.</p>
+<p>Mini-batch gradient descent — the standard in all modern deep learning — uses a small random subset (typically 32 to 256 examples, called a “batch”) per update. This balances the tradeoffs: gradient estimates are smooth enough for stable convergence, updates are frequent enough for fast learning, and batches can be efficiently parallelized across GPU matrix operations. When practitioners say “SGD” in the context of PyTorch or modern frameworks, they almost always mean mini-batch SGD. The batch size is itself a hyperparameter: larger batches give more accurate gradients but generalize slightly worse (sharp minima); smaller batches introduce noise that acts as regularization.</p>
+</div>
+</div>
+</div>
+<p><strong>Q4. Why is cross-entropy loss used for classification instead of mean squared error?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-5" class="callout-5-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>There are two complementary reasons: probabilistic justification and gradient behavior.</p>
+<p>The probabilistic justification: a classification model with a softmax output produces a probability distribution over classes. The natural way to measure how well a probability distribution fits observed data is likelihood — specifically, the log-likelihood of the correct class labels under the model’s predicted distribution. Cross-entropy loss is exactly the negative log-likelihood of the correct classes: <span class="math inline">\(\mathcal{L} = -\sum_i \log P(\text{correct class}_i)\)</span>. Minimizing cross-entropy is therefore equivalent to maximum likelihood estimation of the model parameters — a principled statistical objective.</p>
+<p>The gradient behavior reason: consider a sigmoid output neuron. With MSE loss on a sigmoid, the gradient is <span class="math inline">\(\frac{\partial \mathcal{L}}{\partial z} = (\hat{y} - y) \cdot \sigma'(z)\)</span>. When the prediction is confidently wrong (say, <span class="math inline">\(\hat{y} = 0.99\)</span> but <span class="math inline">\(y = 0\)</span>), <span class="math inline">\(\sigma'(z)\)</span> is nearly zero because the sigmoid is saturated. The gradient is tiny, so the network learns very slowly from its most egregious mistakes. With cross-entropy, the gradient simplifies beautifully to <span class="math inline">\((\hat{y} - y)\)</span> — it is large when the prediction is confidently wrong, regardless of saturation. This is the cross-entropy gradient’s famous property: it provides strong learning signal for confident errors, which is exactly where learning should be fastest. Using MSE for classification is not catastrophically wrong, but it produces slower and less stable training than cross-entropy.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
@@ -467,11 +655,83 @@ Mid Level
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>Why does ReLU suffer from “dying neurons” and how do variants like Leaky ReLU address it?</li>
-<li>Compare Adam and SGD with momentum — in what regimes does each perform better?</li>
-<li>What is the vanishing gradient problem and how did ResNets address it architecturally?</li>
-</ol>
+<p><strong>Q5. Why does ReLU suffer from “dying neurons” and how do variants like Leaky ReLU address it?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>ReLU computes <span class="math inline">\(\max(0, x)\)</span>. For inputs <span class="math inline">\(x &gt; 0\)</span>, the output is <span class="math inline">\(x\)</span> and the gradient is 1. For inputs <span class="math inline">\(x \leq 0\)</span>, the output is 0 and the gradient is 0. The dying neuron problem occurs when a neuron’s pre-activation <span class="math inline">\(z = \mathbf{w} \cdot \mathbf{x} + b\)</span> becomes negative for every example in the training set. Once this happens, the gradient for that neuron is zero for every forward and backward pass — the optimizer receives no signal and cannot update the neuron’s weights to bring them out of the dead zone. The neuron is permanently stuck outputting zero.</p>
+<p>This can happen when a large gradient update pushes the weights or bias such that <span class="math inline">\(z &lt; 0\)</span> for all inputs, or when learning rates are too high and produce large weight updates early in training. In practice, 10-50% of neurons in a ReLU network can die in poorly tuned training runs, which effectively reduces network capacity.</p>
+<p>Leaky ReLU (<span class="math inline">\(\max(\alpha x, x)\)</span> with <span class="math inline">\(\alpha \approx 0.01\)</span>) addresses this by allowing a small but non-zero gradient for negative inputs. The dying neuron problem cannot occur because the gradient is always at least <span class="math inline">\(\alpha\)</span>, no matter how negative the pre-activation. Parametric ReLU (PReLU) learns <span class="math inline">\(\alpha\)</span> as a parameter rather than fixing it. ELU uses <span class="math inline">\(\alpha(e^x - 1)\)</span> for <span class="math inline">\(x &lt; 0\)</span>, producing negative outputs that push the mean activation closer to zero, reducing bias shift. In practice, GELU (used in all modern transformers) provides further improvements by weighting inputs by their cumulative Gaussian probability, producing smooth gradients throughout. For most modern work, GELU or SiLU has replaced ReLU in large models.</p>
+</div>
+</div>
+</div>
+<p><strong>Q6. Compare Adam and SGD with momentum — when does each perform better and why?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Adam and SGD with momentum implement fundamentally different update strategies. SGD with momentum accumulates a velocity vector in the direction of persistent gradients, providing a global learning rate with a directional bias. Adam tracks per-parameter first and second moment estimates, implementing adaptive learning rates per parameter — parameters with historically large gradients get smaller effective learning rates, and vice versa.</p>
+<p>Adam generally wins in practice for most deep learning tasks because it is far less sensitive to learning rate choice, converges faster in early training, and handles sparse gradients well (which is critical for NLP models where word embeddings for rare words receive infrequent gradient updates). When someone wants to get a model training quickly with minimal hyperparameter tuning, Adam is the correct default — its bias correction and per-parameter adaptation make it robust. AdamW, which adds proper weight decay decoupled from the adaptive gradient scaling, is the standard for LLM training.</p>
+<p>SGD with momentum has a well-documented advantage in some computer vision tasks: models trained with SGD + momentum + careful learning rate schedules achieve slightly higher test accuracy than Adam on benchmarks like CIFAR-10 and ImageNet. The explanation, supported by work from Keskar et al.&nbsp;(2017) and Wilson et al.&nbsp;(2017), is that SGD’s noisy updates cause it to converge to wider, flatter minima that generalize better, while Adam’s aggressive adaptation can converge to sharper minima that overfit slightly. This matters when: you have abundant training data, the task is a well-studied vision problem with established training recipes, and you are willing to tune the learning rate schedule carefully. For most practical applications — particularly anything involving language — Adam or AdamW is the right choice.</p>
+</div>
+</div>
+</div>
+<p><strong>Q7. What is the vanishing gradient problem? What causes it and what are the modern architectural solutions?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-9-contents" aria-controls="callout-9" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-9" class="callout-9-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The vanishing gradient problem occurs when gradients diminish exponentially as they propagate backward through deep networks, becoming so small that early layers cannot learn. The cause is multiplicative: backpropagation computes gradients via the chain rule, which multiplies together the Jacobians of each layer’s transformation. For a network with <span class="math inline">\(L\)</span> layers, the gradient at layer <span class="math inline">\(l\)</span> involves a product of <span class="math inline">\(L - l\)</span> Jacobians. If those Jacobians have elements consistently less than 1 — which happens when sigmoid or tanh neurons are in their saturated regions, where the derivative is nearly zero — the product shrinks exponentially. A network with 50 sigmoid layers might have gradients in early layers smaller than <span class="math inline">\(10^{-10}\)</span>, making learning there effectively impossible.</p>
+<p>The practical consequence: in early deep networks (pre-2012), training networks deeper than 4-5 layers was difficult or impossible. The early layers would barely update while later layers learned normally, resulting in models that could not exploit depth.</p>
+<p>Modern solutions: (1) ReLU activations — gradient is exactly 1 for positive inputs, eliminating saturation-driven gradient shrinkage. (2) Careful weight initialization — He initialization (<span class="math inline">\(\mathcal{N}(0, 2/n_\text{in})\)</span> for ReLU) and Xavier/Glorot initialization keep activation and gradient magnitudes consistent across layers at the start of training. (3) Batch normalization — normalizes layer inputs to zero mean and unit variance, keeping activations in the non-saturating regime throughout training. (4) Residual connections — the single most important solution. Adding <span class="math inline">\(F(\mathbf{x}) + \mathbf{x}\)</span> provides a direct gradient path from output to input: the gradient is always at least 1 along the skip connection, enabling training of networks hundreds of layers deep. Every modern transformer architecture uses residual connections around each sub-block for exactly this reason.</p>
+</div>
+</div>
+</div>
+<p><strong>Q8. Prove that stacking linear layers without activation functions is equivalent to a single linear transformation.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-10-contents" aria-controls="callout-10" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-10" class="callout-10-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>This is a straightforward proof by induction on the number of layers. Consider a network with two linear layers (no activation functions). Layer 1 computes <span class="math inline">\(\mathbf{h}_1 = W_1 \mathbf{x} + \mathbf{b}_1\)</span>, where <span class="math inline">\(W_1 \in \mathbb{R}^{d_1 \times d_0}\)</span> and <span class="math inline">\(\mathbf{b}_1 \in \mathbb{R}^{d_1}\)</span>. Layer 2 computes <span class="math inline">\(\mathbf{h}_2 = W_2 \mathbf{h}_1 + \mathbf{b}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2\)</span>.</p>
+<p>Expanding: <span class="math inline">\(\mathbf{h}_2 = (W_2 W_1)\mathbf{x} + (W_2 \mathbf{b}_1 + \mathbf{b}_2)\)</span>.</p>
+<p>Define <span class="math inline">\(W^* = W_2 W_1\)</span> (a matrix, since matrix multiplication is closed) and <span class="math inline">\(\mathbf{b}^* = W_2 \mathbf{b}_1 + \mathbf{b}_2\)</span> (a vector). Then <span class="math inline">\(\mathbf{h}_2 = W^* \mathbf{x} + \mathbf{b}^*\)</span>, which is exactly the form of a single linear layer with weight <span class="math inline">\(W^*\)</span> and bias <span class="math inline">\(\mathbf{b}^*\)</span>.</p>
+<p>By induction, for <span class="math inline">\(L\)</span> layers: <span class="math inline">\(\mathbf{h}_L = W_L W_{L-1} \cdots W_1 \mathbf{x} + \text{constant bias vector}\)</span>. The product of matrices <span class="math inline">\(W_L \cdots W_1\)</span> is itself a matrix, so the entire <span class="math inline">\(L\)</span>-layer linear network is equivalent to one matrix multiplication and one bias addition. Adding layers increases computation and parameter count but does not increase expressive power — the function represented is still an affine map from input to output. This is why activation functions are not optional: they are what makes depth useful. The proof also explains the rank limitation: if any intermediate layer has fewer units than the input or output, the effective linear map <span class="math inline">\(W^*\)</span> is rank-limited by that bottleneck, regardless of other layer sizes.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
@@ -484,9 +744,47 @@ Forward Deployed Engineer
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>A customer’s model is overfitting badly. What diagnostic steps and mitigations would you recommend?</li>
-</ol>
+<p><strong>Q9. A customer’s model is overfitting severely. Walk through your diagnostic process and the mitigations you would apply in order of preference.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-12-contents" aria-controls="callout-12" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-12" class="callout-12-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>I start by confirming the diagnosis: overfitting means training loss is low but validation loss is significantly higher and diverging over epochs. I check the learning curves — if validation loss decreases then plateaus while training loss continues falling, that is classic overfitting. I also check for data leakage first, because leakage can masquerade as a training/validation discrepancy.</p>
+<p>My mitigations in order of preference, from least disruptive to most: First, regularization on the existing model. L2 weight decay (increase the weight decay coefficient in the optimizer) penalizes large weights and is virtually free to add. Dropout (adding dropout layers with <span class="math inline">\(p=0.1\)</span>-<span class="math inline">\(0.3\)</span> in fully connected layers) randomly zeros activations during training, forcing the network to learn redundant representations. Both are easy wins.</p>
+<p>Second, data augmentation — if the task is image classification, adding flips, crops, color jitter, and CutMix can multiply the effective dataset size. For text, synonym substitution, back-translation, or paraphrasing augment the training distribution. Augmentation is often the highest-impact intervention for overfitting in practice.</p>
+<p>Third, reduce model capacity — if the model is too large for the dataset, shrink the number of layers or hidden dimensions. A simpler model has less capacity to memorize training examples. Fourth, get more data — often the most impactful solution but also the most expensive. Even a 2× increase in training data typically reduces overfitting more than any regularization technique. Fifth, early stopping — monitor validation loss and stop training when it stops improving, saving the checkpoint at the validation minimum. This is free and should always be on. Finally, if budget permits, techniques like mixup or label smoothing can further reduce overfitting in classification tasks by softening the training targets.</p>
+</div>
+</div>
+</div>
+<p><strong>Q10. A customer asks why their neural network isn’t learning at all (loss not decreasing). What are the five most common causes you’d check?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-13-contents" aria-controls="callout-13" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-13" class="callout-13-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>When loss is flat from the first epoch, I work through these five causes in order. First, learning rate. A learning rate that is too small (<span class="math inline">\(&lt; 10^{-6}\)</span> for Adam) will produce negligible updates; too large (<span class="math inline">\(&gt; 0.1\)</span> for Adam) causes divergence. I would run a learning rate finder — sweep from <span class="math inline">\(10^{-7}\)</span> to <span class="math inline">\(10^{-1}\)</span> over a few hundred steps and plot loss versus learning rate. The optimal rate is just before the loss starts diverging. This catches ~60% of “model not learning” bugs.</p>
+<p>Second, data pipeline bugs. Are the labels aligned with the inputs? I have seen customers accidentally shuffle features without shuffling labels, producing a perfectly misaligned dataset. Are the inputs normalized? Raw pixel values in [0, 255] instead of [0, 1] can make training erratic. Print a batch, verify manually.</p>
+<p>Third, vanishing gradients — especially in custom architectures. Check gradient norms layer by layer. If gradients in early layers are <span class="math inline">\(&lt; 10^{-7}\)</span> while later layers have gradients of <span class="math inline">\(0.1\)</span>-<span class="math inline">\(1.0\)</span>, vanishing gradients are the problem. Switch to ReLU activations, add batch normalization, or add residual connections.</p>
+<p>Fourth, weight initialization. Weights initialized too small (all near zero) mean activations collapse, gradients vanish, and the network is stuck in a symmetric state where all neurons learn the same function. Check that you are using He or Glorot initialization, not all-zeros.</p>
+<p>Fifth, incorrect loss function setup. Applying softmax inside the loss and also as an activation function doubles the squashing, producing near-uniform predictions. In PyTorch, <code>nn.CrossEntropyLoss</code> expects raw logits, not softmax outputs. Verify the loss function matches the output layer activation, and confirm that the loss is averaging over examples correctly (not accidentally summing, which would produce loss values that grow with batch size).</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 </section>
@@ -495,6 +793,9 @@ Forward Deployed Engineer
 <ul>
 <li><a href="http://neuralnetworksanddeeplearning.com/">Neural Networks and Deep Learning (Nielsen)</a></li>
 <li><a href="https://www.deeplearningbook.org/">Deep Learning (Goodfellow, Bengio, Courville)</a></li>
+<li><a href="https://arxiv.org/abs/1412.6980">Adam: A Method for Stochastic Optimization (Kingma and Ba, 2014)</a></li>
+<li><a href="https://arxiv.org/abs/1512.03385">Deep Residual Learning for Image Recognition (He et al., 2016)</a></li>
+<li><a href="https://arxiv.org/abs/1711.05101">Decoupled Weight Decay Regularization / AdamW (Loshchilov and Hutter, 2017)</a></li>
 </ul>
 
 
@@ -1127,7 +1428,7 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
       </a>
   </div>
 </nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
-<div class="sourceCode" id="cb2" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># Neural Networks — Intuition to Backprop</span></span>
+<div class="sourceCode" id="cb2" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># Neural Networks — From Perceptrons to Backprop</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>::: {.callout-note}</span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>**Who this chapter is for:** Entry Level (review for Mid/FDE)</span>
@@ -1141,61 +1442,279 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 <span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="fu">## The Perceptron</span></span>
 <span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>*[Draft content here]*</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>The perceptron is the fundamental building block of every neural network, from the simplest logistic regression model to a 400-billion-parameter language model. Its design was inspired loosely by the biological neuron: a cell that receives signals from many inputs, integrates them, and fires an output signal if the integrated input exceeds a threshold. The artificial perceptron formalizes this idea mathematically. Given an input vector $\mathbf{x} = <span class="co">[</span><span class="ot">x_1, x_2, \ldots, x_n</span><span class="co">]</span>$, each input is multiplied by a corresponding weight $w_i$, the products are summed together, and a bias term $b$ is added: $z = \mathbf{w} \cdot \mathbf{x} + b = \sum_i w_i x_i + b$. This quantity $z$ is called the pre-activation or logit. The final output is produced by passing $z$ through an activation function $\sigma$: $a = \sigma(z)$.</span>
 <span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a><span class="fu">## Activation Functions</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>The weights and bias are the learnable parameters of the perceptron. Conceptually, each weight $w_i$ encodes how much the corresponding feature $x_i$ contributes to the output. A large positive weight means "when this input is high, the output should be high." A large negative weight means "when this input is high, the output should be low." The bias $b$ shifts the entire activation threshold — it determines how easy or hard it is to activate the neuron independent of the input values. Without bias, the activation function is always centered at zero, which artificially constrains where the decision boundary can lie in input space.</span>
 <span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>*ReLU, Sigmoid, Tanh, Softmax — when to use each and why ReLU dominates.*</span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>A single perceptron is a linear classifier. The decision boundary it draws in input space is a hyperplane — a straight line in 2D, a flat plane in 3D, and so on. This is both its strength and its critical limitation. Linear classification works perfectly well for linearly separable problems, but it fundamentally cannot learn non-linear relationships. The canonical example is the XOR (exclusive-or) problem: given two binary inputs $x_1$ and $x_2$, output 1 if exactly one of them is 1, otherwise output 0. The four input-output pairs $(0,0) \to 0$, $(1,0) \to 1$, $(0,1) \to 1$, $(1,1) \to 0$ cannot be separated by any single straight line. This was proven by Minsky and Papert in their 1969 book "Perceptrons," and it led to a temporary stagnation of neural network research — known as the first "AI winter."</span>
 <span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a><span class="fu">## Loss Functions</span></span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>The solution to the XOR problem, and to non-linear classification in general, is to stack perceptrons in multiple layers — the multilayer perceptron (MLP). The first layer learns representations of the input; subsequent layers learn representations of representations. As long as activation functions are non-linear, stacked layers can represent arbitrarily complex functions. The Universal Approximation Theorem (Hornik, 1989) formalizes this: a feedforward network with at least one hidden layer and a non-linear activation function can approximate any continuous function to arbitrary precision, given enough hidden units. This theorem established the theoretical basis for the expressive power of neural networks, and it explains why a perceptron with the right activation function is the correct building block for systems that can learn any mapping.</span>
 <span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>*Cross-entropy for classification, MSE for regression. What the loss surface looks like.*</span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a><span class="fu">## Activation Functions</span></span>
 <span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a><span class="fu">## Backpropagation</span></span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>Activation functions are not a minor implementation detail — they are what give neural networks their expressive power. To understand why, consider what happens if you remove activation functions from a deep network entirely. The first layer computes $\mathbf{h}_1 = W_1 \mathbf{x} + \mathbf{b}_1$. The second layer computes $\mathbf{h}_2 = W_2 \mathbf{h}_1 + \mathbf{b}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2 = (W_2 W_1)\mathbf{x} + (W_2\mathbf{b}_1 + \mathbf{b}_2)$. The product $W_2 W_1$ is itself a matrix, and the combined bias term is a vector — so a two-layer linear network is mathematically equivalent to a single linear layer. No matter how many linear layers you stack, the result is always a single linear transformation. A 100-layer network without activation functions is equivalent to one layer with different weights. Non-linear activation functions break this collapse: $\sigma(W_2 \sigma(W_1 \mathbf{x}))$ cannot be simplified to a single linear transformation, so the network genuinely gains expressive power with depth.</span>
 <span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>*The chain rule applied to computation graphs. Intuitive walkthrough + a worked NumPy example.*</span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>The sigmoid function $\sigma(x) = \frac{1}{1 + e^{-x}}$ maps any real number to the range $(0, 1)$, which makes it a natural choice for outputting probabilities. It was the dominant activation function in the early neural network era. Its critical weakness is the vanishing gradient problem: in the saturated regions ($x \ll 0$ or $x \gg 0$), the derivative $\sigma'(x) = \sigma(x)(1 - \sigma(x))$ is very close to zero. When gradients flow backward through many sigmoid layers, each multiplication by a near-zero derivative shrinks the gradient exponentially. By the time the gradient reaches the first layers of a deep network, it is so small as to be meaningless — those layers cannot learn. Sigmoid also outputs values in $(0, 1)$ rather than $(-1, 1)$, meaning the average output is positive, which causes gradients to be consistently positive or consistently negative during updates — the "zig-zagging" problem in gradient descent.</span>
 <span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
-<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: backprop-numpy</span></span>
-<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a><span class="co">#| eval: false</span></span>
-<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a><span class="co"># Minimal two-layer network with manual backprop in NumPy</span></span>
-<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>Tanh, defined as $\tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}$, maps to $(-1, 1)$ and is zero-centered, addressing the zig-zagging problem. Its gradient $1 - \tanh^2(x)$ is larger than sigmoid's in the active region, but it still saturates and produces vanishing gradients in the extremes. For shallow networks, tanh often outperforms sigmoid in hidden layers; for deep networks, both suffer.</span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>ReLU (Rectified Linear Unit), $\text{ReLU}(x) = \max(0, x)$, became the dominant activation function in deep learning around 2010-2012, when Nair and Hinton (2010) and other groups demonstrated its empirical advantages. Its properties are elegantly simple: for positive inputs, the gradient is exactly 1 — no vanishing. For negative inputs, the output is zero. This means gradients flow without decay through the positive units, allowing training of much deeper networks. ReLU is also computationally trivial: one comparison operation, versus the exponentiation in sigmoid or tanh. The failure mode is the "dying ReLU" problem: if a neuron's pre-activation becomes negative for all training examples (which can happen when a large gradient update pushes the weights such that $\mathbf{w} \cdot \mathbf{x} + b &lt; 0$ for all $\mathbf{x}$), the gradient is zero for all inputs and the neuron produces no learning signal. It is permanently stuck at zero output — effectively dead. In large networks, a non-trivial fraction of neurons can die, especially with high learning rates.</span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>Leaky ReLU addresses dying neurons by allowing a small negative slope $\alpha$ (typically 0.01) for negative inputs: $\text{LeakyReLU}(x) = \max(\alpha x, x)$. The gradient is $\alpha$ for negative inputs rather than zero, keeping a small but non-zero learning signal alive. ELU (Exponential Linear Unit) uses an exponential curve for negative inputs, producing outputs that average closer to zero and reducing bias shifts in batch statistics. GELU (Gaussian Error Linear Unit), used in BERT, GPT-2, and most modern transformers, is a smooth approximation of ReLU that weights inputs by their probability under a standard Gaussian — providing slightly better empirical performance at the cost of a more expensive computation.</span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a>For output layers, the activation function choice is determined by the task structure. Sigmoid is used for binary classification outputs (single probability). Softmax normalizes a vector of logits to a probability distribution over classes: $\text{softmax}(z_i) = \frac{e^{z_i}}{\sum_j e^{z_j}}$. Softmax ensures all output probabilities are positive and sum to 1, which is exactly what multiclass classification requires. For regression, no activation function is applied at the output — the raw linear output is the prediction. The practical rule: ReLU (or GELU for transformers) for hidden layers; sigmoid or softmax for output layers depending on the classification task; no activation for regression.</span>
 <span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="al">TODO</span><span class="co">: implement forward + backward pass</span></span>
-<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
-<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a><span class="fu">## Gradient Descent and Optimizers</span></span>
-<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a>*SGD, momentum, Adam. Why Adam is the default and when SGD generalizes better.*</span>
-<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a><span class="fu">## Vanishing &amp; Exploding Gradients</span></span>
-<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a>*Why deep networks struggled before residual connections and normalization.*</span>
-<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a>---</span>
-<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
-<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
-<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>What does an activation function do, and why do we need non-linearity?</span>
-<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>Explain backpropagation in plain English.</span>
-<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>What is the difference between batch gradient descent and stochastic gradient descent?</span>
-<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
-<span id="cb2-59"><a href="#cb2-59" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>Why does ReLU suffer from "dying neurons" and how do variants like Leaky ReLU address it?</span>
-<span id="cb2-60"><a href="#cb2-60" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>Compare Adam and SGD with momentum — in what regimes does each perform better?</span>
-<span id="cb2-61"><a href="#cb2-61" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>What is the vanishing gradient problem and how did ResNets address it architecturally?</span>
-<span id="cb2-62"><a href="#cb2-62" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb2-63"><a href="#cb2-63" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-64"><a href="#cb2-64" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
-<span id="cb2-65"><a href="#cb2-65" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>A customer's model is overfitting badly. What diagnostic steps and mitigations would you recommend?</span>
-<span id="cb2-66"><a href="#cb2-66" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb2-67"><a href="#cb2-67" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-68"><a href="#cb2-68" aria-hidden="true" tabindex="-1"></a><span class="fu">## Further Reading</span></span>
-<span id="cb2-69"><a href="#cb2-69" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-70"><a href="#cb2-70" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Neural Networks and Deep Learning (Nielsen)</span><span class="co">](http://neuralnetworksanddeeplearning.com/)</span></span>
-<span id="cb2-71"><a href="#cb2-71" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Deep Learning (Goodfellow, Bengio, Courville)</span><span class="co">](https://www.deeplearningbook.org/)</span></span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a><span class="fu">## Loss Functions</span></span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>A loss function is a scalar measure of how wrong the model's predictions are on the training data. Training is the process of adjusting model parameters to minimize this scalar. Choosing the wrong loss function is one of the most consequential and underappreciated mistakes in applied ML — it directly shapes what the model optimizes for, which may or may not align with the actual business objective.</span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a>For regression tasks, Mean Squared Error (MSE) is the standard choice: $\mathcal{L}_\text{MSE} = \frac{1}{n}\sum_{i=1}^n (y_i - \hat{y}_i)^2$. MSE penalizes large errors much more heavily than small errors because errors are squared — an error of 10 contributes 100 to the loss, while an error of 1 contributes only 1. This makes MSE appropriate when large errors are disproportionately costly, but sensitive to outliers: a single extreme prediction will dominate the loss and pull training toward fitting that outlier. Mean Absolute Error (MAE), $\mathcal{L}_\text{MAE} = \frac{1}{n}\sum_i |y_i - \hat{y}_i|$, treats all errors proportionally and is more robust to outliers, but its gradient is constant in magnitude, which can make optimization less stable near the minimum (the gradient doesn't naturally shrink as you approach the optimal solution). Huber loss combines both: quadratic for small errors, linear for large errors — often the best of both worlds for real-world regression.</span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>For classification tasks, cross-entropy is the standard loss function. For binary classification with a sigmoid output: $\mathcal{L}_\text{BCE} = -\frac{1}{n}\sum_i [y_i \log \hat{y}_i + (1-y_i)\log(1-\hat{y}_i)]$. For multiclass with a softmax output: $\mathcal{L}_\text{CE} = -\frac{1}{n}\sum_i \sum_k y_{ik} \log \hat{y}_{ik}$, where $y_{ik}$ is 1 if example $i$ belongs to class $k$ and 0 otherwise. The justification for cross-entropy is probabilistic: minimizing cross-entropy is equivalent to maximizing the log-likelihood of the correct class labels under the model's predicted probability distribution. It is derived directly from the maximum likelihood estimation principle.</span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a>Why not use accuracy as the loss function for classification? Accuracy is the metric we ultimately care about, but it is not differentiable — it is a step function that changes in discrete jumps when predictions flip from one class to another. Gradient descent requires a smooth, differentiable loss surface to compute meaningful gradients. A 1% improvement in the model's confidence on a correctly classified example produces zero improvement in accuracy but does produce a gradient in cross-entropy loss. Cross-entropy is thus a smooth, differentiable surrogate for accuracy that is tightly coupled to it: a model that minimizes cross-entropy loss will generally maximize classification accuracy, and it also provides well-calibrated probability estimates.</span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a><span class="fu">## Backpropagation</span></span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a>Backpropagation is the algorithm that makes training deep neural networks practical. At its core, it is an efficient application of the chain rule of calculus to a computation graph. Understanding backpropagation requires understanding both the chain rule and the structure of neural network computation.</span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a>The forward pass proceeds layer by layer: given an input $\mathbf{x}$, compute $\mathbf{z}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}$, then $\mathbf{a}^{(1)} = \sigma(\mathbf{z}^{(1)})$, then $\mathbf{z}^{(2)} = W^{(2)}\mathbf{a}^{(1)} + \mathbf{b}^{(2)}$, and so on until you compute the loss $\mathcal{L}$. During this pass, every intermediate value — every $\mathbf{z}^{(l)}$ and $\mathbf{a}^{(l)}$ — is stored in memory, because the backward pass will need them.</span>
+<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a>The backward pass begins at the loss $\mathcal{L}$ and propagates gradient signals backward through the network. We want to compute $\partial \mathcal{L} / \partial W^{(l)}$ and $\partial \mathcal{L} / \partial \mathbf{b}^{(l)}$ for every layer $l$, because these are the gradients that tell us how to update the weights to reduce the loss. The chain rule is the tool: if $\mathcal{L}$ depends on $\mathbf{a}^{(2)}$, which depends on $\mathbf{z}^{(2)}$, which depends on $W^{(2)}$, then $\frac{\partial \mathcal{L}}{\partial W^{(2)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(2)}} \cdot \frac{\partial \mathbf{a}^{(2)}}{\partial \mathbf{z}^{(2)}} \cdot \frac{\partial \mathbf{z}^{(2)}}{\partial W^{(2)}}$. Each factor in this product has a simple analytical form: the loss gradient with respect to activations, the activation function derivative (the diagonal of the Jacobian), and the input to that layer (a simple matrix). The key insight is that by storing intermediate activations during the forward pass and propagating the error signal backward using the chain rule, you can compute the gradient of the loss with respect to every parameter in the network in exactly two passes through the network — one forward, one backward — rather than one pass per parameter.</span>
+<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a>The computational cost matters: a naive finite-difference approach to computing gradients would require a separate forward pass for each parameter, which for a model with billions of parameters is completely infeasible. Backpropagation reduces gradient computation to approximately the same cost as two forward passes, regardless of the number of parameters. This is why deep learning is tractable at scale. The implementation in modern frameworks (PyTorch, JAX, TensorFlow) is handled by automatic differentiation engines that build a dynamic computation graph during the forward pass and execute the backward pass automatically — engineers write forward pass code and get gradients for free.</span>
+<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a>A critical practical implication of backpropagation through many layers is gradient scaling. Each layer in the backward pass multiplies the incoming gradient by the Jacobian of that layer's operation. If the Jacobians have values less than 1 (common when activation functions saturate), the gradient shrinks at each layer. After 50 layers, a gradient that starts at 1.0 multiplied by 0.9 at each layer becomes $0.9^{50} \approx 0.005$ — essentially zero. If the Jacobians have values greater than 1, the gradient grows — potentially to infinity over many layers. These are the vanishing and exploding gradient problems, which are discussed in detail in the final section of this chapter.</span>
+<span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-61"><a href="#cb2-61" aria-hidden="true" tabindex="-1"></a><span class="in">```{python}</span></span>
+<span id="cb2-62"><a href="#cb2-62" aria-hidden="true" tabindex="-1"></a><span class="co">#| label: backprop-numpy</span></span>
+<span id="cb2-63"><a href="#cb2-63" aria-hidden="true" tabindex="-1"></a><span class="co">#| eval: false</span></span>
+<span id="cb2-64"><a href="#cb2-64" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb2-65"><a href="#cb2-65" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-66"><a href="#cb2-66" aria-hidden="true" tabindex="-1"></a><span class="co"># -------------------------------------------------------</span></span>
+<span id="cb2-67"><a href="#cb2-67" aria-hidden="true" tabindex="-1"></a><span class="co"># Minimal two-layer network with manual backprop in NumPy</span></span>
+<span id="cb2-68"><a href="#cb2-68" aria-hidden="true" tabindex="-1"></a><span class="co"># Input: X (N, D_in), Labels: y (N, 1)</span></span>
+<span id="cb2-69"><a href="#cb2-69" aria-hidden="true" tabindex="-1"></a><span class="co"># Architecture: Linear -&gt; ReLU -&gt; Linear -&gt; Sigmoid -&gt; BCE Loss</span></span>
+<span id="cb2-70"><a href="#cb2-70" aria-hidden="true" tabindex="-1"></a><span class="co"># -------------------------------------------------------</span></span>
+<span id="cb2-71"><a href="#cb2-71" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-72"><a href="#cb2-72" aria-hidden="true" tabindex="-1"></a>np.random.seed(<span class="dv">42</span>)</span>
+<span id="cb2-73"><a href="#cb2-73" aria-hidden="true" tabindex="-1"></a>N, D_in, H, D_out <span class="op">=</span> <span class="dv">100</span>, <span class="dv">4</span>, <span class="dv">8</span>, <span class="dv">1</span></span>
+<span id="cb2-74"><a href="#cb2-74" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-75"><a href="#cb2-75" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> np.random.randn(N, D_in)</span>
+<span id="cb2-76"><a href="#cb2-76" aria-hidden="true" tabindex="-1"></a>y <span class="op">=</span> (np.random.randn(N, <span class="dv">1</span>) <span class="op">&gt;</span> <span class="dv">0</span>).astype(<span class="bu">float</span>)</span>
+<span id="cb2-77"><a href="#cb2-77" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-78"><a href="#cb2-78" aria-hidden="true" tabindex="-1"></a><span class="co"># Initialize weights (He initialization for ReLU layers)</span></span>
+<span id="cb2-79"><a href="#cb2-79" aria-hidden="true" tabindex="-1"></a>W1 <span class="op">=</span> np.random.randn(D_in, H) <span class="op">*</span> np.sqrt(<span class="fl">2.0</span> <span class="op">/</span> D_in)</span>
+<span id="cb2-80"><a href="#cb2-80" aria-hidden="true" tabindex="-1"></a>b1 <span class="op">=</span> np.zeros((<span class="dv">1</span>, H))</span>
+<span id="cb2-81"><a href="#cb2-81" aria-hidden="true" tabindex="-1"></a>W2 <span class="op">=</span> np.random.randn(H, D_out) <span class="op">*</span> np.sqrt(<span class="fl">2.0</span> <span class="op">/</span> H)</span>
+<span id="cb2-82"><a href="#cb2-82" aria-hidden="true" tabindex="-1"></a>b2 <span class="op">=</span> np.zeros((<span class="dv">1</span>, D_out))</span>
+<span id="cb2-83"><a href="#cb2-83" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-84"><a href="#cb2-84" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sigmoid(z):</span>
+<span id="cb2-85"><a href="#cb2-85" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="fl">1.0</span> <span class="op">/</span> (<span class="fl">1.0</span> <span class="op">+</span> np.exp(<span class="op">-</span>z))</span>
+<span id="cb2-86"><a href="#cb2-86" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-87"><a href="#cb2-87" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> relu(z):</span>
+<span id="cb2-88"><a href="#cb2-88" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.maximum(<span class="dv">0</span>, z)</span>
+<span id="cb2-89"><a href="#cb2-89" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-90"><a href="#cb2-90" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bce_loss(y_hat, y):</span>
+<span id="cb2-91"><a href="#cb2-91" aria-hidden="true" tabindex="-1"></a>    eps <span class="op">=</span> <span class="fl">1e-9</span></span>
+<span id="cb2-92"><a href="#cb2-92" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="op">-</span>np.mean(y <span class="op">*</span> np.log(y_hat <span class="op">+</span> eps) <span class="op">+</span> (<span class="dv">1</span> <span class="op">-</span> y) <span class="op">*</span> np.log(<span class="dv">1</span> <span class="op">-</span> y_hat <span class="op">+</span> eps))</span>
+<span id="cb2-93"><a href="#cb2-93" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-94"><a href="#cb2-94" aria-hidden="true" tabindex="-1"></a>lr <span class="op">=</span> <span class="fl">0.01</span></span>
+<span id="cb2-95"><a href="#cb2-95" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-96"><a href="#cb2-96" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> epoch <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">500</span>):</span>
+<span id="cb2-97"><a href="#cb2-97" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ---- Forward pass ----</span></span>
+<span id="cb2-98"><a href="#cb2-98" aria-hidden="true" tabindex="-1"></a>    z1 <span class="op">=</span> X <span class="op">@</span> W1 <span class="op">+</span> b1          <span class="co"># (N, H)</span></span>
+<span id="cb2-99"><a href="#cb2-99" aria-hidden="true" tabindex="-1"></a>    a1 <span class="op">=</span> relu(z1)              <span class="co"># (N, H)</span></span>
+<span id="cb2-100"><a href="#cb2-100" aria-hidden="true" tabindex="-1"></a>    z2 <span class="op">=</span> a1 <span class="op">@</span> W2 <span class="op">+</span> b2          <span class="co"># (N, 1)</span></span>
+<span id="cb2-101"><a href="#cb2-101" aria-hidden="true" tabindex="-1"></a>    y_hat <span class="op">=</span> sigmoid(z2)        <span class="co"># (N, 1)</span></span>
+<span id="cb2-102"><a href="#cb2-102" aria-hidden="true" tabindex="-1"></a>    loss <span class="op">=</span> bce_loss(y_hat, y)</span>
+<span id="cb2-103"><a href="#cb2-103" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-104"><a href="#cb2-104" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ---- Backward pass (chain rule by hand) ----</span></span>
+<span id="cb2-105"><a href="#cb2-105" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/d(y_hat): derivative of BCE w.r.t. sigmoid output</span></span>
+<span id="cb2-106"><a href="#cb2-106" aria-hidden="true" tabindex="-1"></a>    dL_dyhat <span class="op">=</span> (y_hat <span class="op">-</span> y) <span class="op">/</span> (y_hat <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> y_hat) <span class="op">+</span> <span class="fl">1e-9</span>) <span class="op">/</span> N</span>
+<span id="cb2-107"><a href="#cb2-107" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-108"><a href="#cb2-108" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dz2: sigmoid derivative = y_hat * (1 - y_hat)</span></span>
+<span id="cb2-109"><a href="#cb2-109" aria-hidden="true" tabindex="-1"></a>    dL_dz2 <span class="op">=</span> dL_dyhat <span class="op">*</span> y_hat <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> y_hat)     <span class="co"># (N, 1)</span></span>
+<span id="cb2-110"><a href="#cb2-110" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-111"><a href="#cb2-111" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dW2 and dL/db2</span></span>
+<span id="cb2-112"><a href="#cb2-112" aria-hidden="true" tabindex="-1"></a>    dW2 <span class="op">=</span> a1.T <span class="op">@</span> dL_dz2                          <span class="co"># (H, 1)</span></span>
+<span id="cb2-113"><a href="#cb2-113" aria-hidden="true" tabindex="-1"></a>    db2 <span class="op">=</span> dL_dz2.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">0</span>, keepdims<span class="op">=</span><span class="va">True</span>)      <span class="co"># (1, 1)</span></span>
+<span id="cb2-114"><a href="#cb2-114" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-115"><a href="#cb2-115" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/da1: propagate through W2</span></span>
+<span id="cb2-116"><a href="#cb2-116" aria-hidden="true" tabindex="-1"></a>    dL_da1 <span class="op">=</span> dL_dz2 <span class="op">@</span> W2.T                       <span class="co"># (N, H)</span></span>
+<span id="cb2-117"><a href="#cb2-117" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-118"><a href="#cb2-118" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dz1: ReLU derivative is 1 where z1 &gt; 0, else 0</span></span>
+<span id="cb2-119"><a href="#cb2-119" aria-hidden="true" tabindex="-1"></a>    dL_dz1 <span class="op">=</span> dL_da1 <span class="op">*</span> (z1 <span class="op">&gt;</span> <span class="dv">0</span>).astype(<span class="bu">float</span>)    <span class="co"># (N, H)</span></span>
+<span id="cb2-120"><a href="#cb2-120" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-121"><a href="#cb2-121" aria-hidden="true" tabindex="-1"></a>    <span class="co"># dL/dW1 and dL/db1</span></span>
+<span id="cb2-122"><a href="#cb2-122" aria-hidden="true" tabindex="-1"></a>    dW1 <span class="op">=</span> X.T <span class="op">@</span> dL_dz1                           <span class="co"># (D_in, H)</span></span>
+<span id="cb2-123"><a href="#cb2-123" aria-hidden="true" tabindex="-1"></a>    db1 <span class="op">=</span> dL_dz1.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">0</span>, keepdims<span class="op">=</span><span class="va">True</span>)      <span class="co"># (1, H)</span></span>
+<span id="cb2-124"><a href="#cb2-124" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-125"><a href="#cb2-125" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ---- Parameter update (vanilla SGD) ----</span></span>
+<span id="cb2-126"><a href="#cb2-126" aria-hidden="true" tabindex="-1"></a>    W2 <span class="op">-=</span> lr <span class="op">*</span> dW2</span>
+<span id="cb2-127"><a href="#cb2-127" aria-hidden="true" tabindex="-1"></a>    b2 <span class="op">-=</span> lr <span class="op">*</span> db2</span>
+<span id="cb2-128"><a href="#cb2-128" aria-hidden="true" tabindex="-1"></a>    W1 <span class="op">-=</span> lr <span class="op">*</span> dW1</span>
+<span id="cb2-129"><a href="#cb2-129" aria-hidden="true" tabindex="-1"></a>    b1 <span class="op">-=</span> lr <span class="op">*</span> db1</span>
+<span id="cb2-130"><a href="#cb2-130" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-131"><a href="#cb2-131" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> epoch <span class="op">%</span> <span class="dv">100</span> <span class="op">==</span> <span class="dv">0</span>:</span>
+<span id="cb2-132"><a href="#cb2-132" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(<span class="ss">f"Epoch </span><span class="sc">{</span>epoch<span class="sc">:4d}</span><span class="ss"> | Loss: </span><span class="sc">{</span>loss<span class="sc">:.4f}</span><span class="ss">"</span>)</span>
+<span id="cb2-133"><a href="#cb2-133" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb2-134"><a href="#cb2-134" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-135"><a href="#cb2-135" aria-hidden="true" tabindex="-1"></a><span class="fu">## Gradient Descent and Optimizers</span></span>
+<span id="cb2-136"><a href="#cb2-136" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-137"><a href="#cb2-137" aria-hidden="true" tabindex="-1"></a>Gradient descent is the core optimization algorithm that drives learning in neural networks. Given the loss $\mathcal{L}(\theta)$ as a function of the model parameters $\theta$, we want to find $\theta^*$ that minimizes $\mathcal{L}$. The gradient $\nabla_\theta \mathcal{L}$ points in the direction of steepest increase of the loss. To decrease the loss, we update parameters in the opposite direction: $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}$, where $\eta$ is the learning rate — the step size along the gradient direction. This update rule is gradient descent, and it is the foundation of every modern deep learning optimizer.</span>
+<span id="cb2-138"><a href="#cb2-138" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-139"><a href="#cb2-139" aria-hidden="true" tabindex="-1"></a>The choice of how many examples to compute the gradient over on each step defines three variants. Batch gradient descent computes the gradient over the entire training dataset before each update. This gives an accurate estimate of the true gradient (low variance) but requires processing the full dataset before any parameter update — computationally expensive and impractical for datasets larger than memory. Stochastic gradient descent (SGD) computes the gradient from a single randomly chosen training example per step, enabling very frequent updates but with very noisy gradient estimates (high variance). The noise in stochastic gradient descent can actually be beneficial in some settings because it acts as a regularizer, preventing the optimizer from settling into sharp minima, but it makes convergence erratic and slow to reach high precision. Mini-batch gradient descent — the default in practice — computes gradients over a small random batch of 32 to 256 examples. This provides a reasonable tradeoff: gradients are smoother than pure stochastic updates, updates are frequent, and batches can be efficiently parallelized across GPU cores using matrix operations.</span>
+<span id="cb2-140"><a href="#cb2-140" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-141"><a href="#cb2-141" aria-hidden="true" tabindex="-1"></a>The learning rate is the most important hyperparameter in gradient descent. Too large a learning rate and the parameter updates overshoot the minimum, causing the loss to oscillate or diverge. Too small a learning rate and convergence is glacially slow, and the optimizer may get trapped in shallow local minima. A learning rate schedule that starts large and decays over training — either step decay, cosine annealing, or linear warmup followed by decay — typically outperforms any fixed learning rate.</span>
+<span id="cb2-142"><a href="#cb2-142" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-143"><a href="#cb2-143" aria-hidden="true" tabindex="-1"></a>Standard SGD with momentum addresses one of SGD's key weaknesses: oscillation in directions of high curvature. Imagine a narrow valley in the loss landscape, where the gradient alternates in direction across the valley but consistently points along it. SGD oscillates back and forth across the valley rather than traveling efficiently along it. Momentum accumulates a velocity vector in the direction of persistent gradients: $v \leftarrow \beta v - \eta \nabla_\theta \mathcal{L}$, $\theta \leftarrow \theta + v$, where $\beta \approx 0.9$ is the momentum coefficient. Velocity builds up in consistent gradient directions and dampens oscillations. The physical analogy: a ball rolling down a hilly landscape builds up speed on gentle consistent slopes and decelerates when the gradient reverses.</span>
+<span id="cb2-144"><a href="#cb2-144" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-145"><a href="#cb2-145" aria-hidden="true" tabindex="-1"></a>Adam (Adaptive Moment Estimation, Kingma and Ba, 2014) is the dominant optimizer for deep learning and the default for virtually all LLM training. Adam maintains per-parameter adaptive learning rates by tracking both the first moment (mean of gradients, like momentum) and the second moment (uncentered variance of gradients): $m_t \leftarrow \beta_1 m_{t-1} + (1-\beta_1)g_t$, $v_t \leftarrow \beta_2 v_{t-1} + (1-\beta_2)g_t^2$. Bias-corrected estimates $\hat{m}_t = m_t/(1-\beta_1^t)$ and $\hat{v}_t = v_t/(1-\beta_2^t)$ account for the cold-start at $t=0$ when the moment estimates are initialized to zero. The update rule is: $\theta_t \leftarrow \theta_{t-1} - \eta \hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$. The intuition: parameters that receive large, consistent gradients get smaller effective learning rates (because $\sqrt{\hat{v}_t}$ is large), while parameters that receive small or inconsistent gradients get larger effective learning rates. This adapts to the curvature of the loss landscape per parameter. Default hyperparameters $\beta_1=0.9$, $\beta_2=0.999$, $\epsilon=10^{-8}$ work well across a wide range of tasks. AdamW modifies Adam by decoupling the weight decay regularization from the gradient update, which prevents the adaptive learning rate from diminishing the effect of weight decay — AdamW is the standard optimizer for LLM training (Loshchilov and Hutter, 2017).</span>
+<span id="cb2-146"><a href="#cb2-146" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-147"><a href="#cb2-147" aria-hidden="true" tabindex="-1"></a><span class="fu">## Vanishing and Exploding Gradients</span></span>
+<span id="cb2-148"><a href="#cb2-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-149"><a href="#cb2-149" aria-hidden="true" tabindex="-1"></a>The vanishing and exploding gradient problems are among the most important phenomena in deep learning, and understanding them explains many architectural choices in modern neural networks that might otherwise seem arbitrary.</span>
+<span id="cb2-150"><a href="#cb2-150" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-151"><a href="#cb2-151" aria-hidden="true" tabindex="-1"></a>In a deep network with $L$ layers, the gradient of the loss with respect to the parameters in layer $l$ involves a product of $L - l$ Jacobian matrices — one for each layer between $l$ and the output. This is a direct consequence of the chain rule: $\frac{\partial \mathcal{L}}{\partial W^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(L)}} \cdot \prod_{k=l}^{L-1} \frac{\partial \mathbf{a}^{(k+1)}}{\partial \mathbf{a}^{(k)}} \cdot \frac{\partial \mathbf{a}^{(l)}}{\partial W^{(l)}}$. If the elements of these Jacobians are consistently less than 1 — which happens when activation functions are in their saturated regions, as with sigmoid or tanh — then this product of many sub-unity values shrinks exponentially toward zero. By layer 1 of a 100-layer network, the gradient may be so small ($&lt; 10^{-10}$) that floating-point arithmetic cannot represent it meaningfully, and the parameters in early layers never update. This is the vanishing gradient problem, and it was the primary reason deep networks with more than a few layers were difficult to train before 2010.</span>
+<span id="cb2-152"><a href="#cb2-152" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-153"><a href="#cb2-153" aria-hidden="true" tabindex="-1"></a>Exploding gradients are the mirror problem: if Jacobian elements are consistently greater than 1 (which can happen with poorly initialized weights), the product grows exponentially, leading to parameter updates so large that training diverges entirely. Exploding gradients are often more visible than vanishing ones because loss divergence is obvious; vanishing gradients can silently prevent learning in early layers without any obvious signal. Exploding gradients are addressed by gradient clipping: before the optimizer step, if the norm of the gradient vector exceeds a threshold (typically 1.0 in LLM training), rescale it to that norm. This prevents a single catastrophic update without affecting the gradient direction.</span>
+<span id="cb2-154"><a href="#cb2-154" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-155"><a href="#cb2-155" aria-hidden="true" tabindex="-1"></a>The modern solutions to vanishing gradients are primarily architectural. ReLU activations have a gradient of exactly 1 for positive inputs — no saturation, no shrinkage. Batch normalization (Ioffe and Szegedy, 2015) normalizes layer inputs to zero mean and unit variance before each layer, keeping activations in the non-saturating regime and providing additional gradient signal through the normalization parameters. Residual connections — the key innovation in ResNets (He et al., 2016) and adopted by every subsequent transformer — provide a direct "gradient highway": instead of $\mathbf{a}^{(l+1)} = \sigma(W^{(l)}\mathbf{a}^{(l)})$, a residual block computes $\mathbf{a}^{(l+1)} = \mathbf{a}^{(l)} + \sigma(W^{(l)}\mathbf{a}^{(l)})$. The gradient of the loss with respect to $\mathbf{a}^{(l)}$ now includes a direct path: $\frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l+1)}} \cdot (1 + \frac{\partial F}{\partial \mathbf{a}^{(l)}})$. The $+1$ term means the gradient is always at least as large as $\frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l+1)}}$, regardless of what the learned function $F$ does. This is why ResNets could be trained at depths of 100-1000 layers, and why every modern transformer architecture uses residual connections around every attention block and feed-forward block.</span>
+<span id="cb2-156"><a href="#cb2-156" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-157"><a href="#cb2-157" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-158"><a href="#cb2-158" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-159"><a href="#cb2-159" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
+<span id="cb2-160"><a href="#cb2-160" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-161"><a href="#cb2-161" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb2-162"><a href="#cb2-162" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-163"><a href="#cb2-163" aria-hidden="true" tabindex="-1"></a>**Q1. What does an activation function do, and why is non-linearity necessary in a neural network?**</span>
+<span id="cb2-164"><a href="#cb2-164" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-165"><a href="#cb2-165" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-166"><a href="#cb2-166" aria-hidden="true" tabindex="-1"></a>An activation function transforms the weighted sum of a neuron's inputs (the pre-activation $z = \mathbf{w} \cdot \mathbf{x} + b$) into the neuron's output activation. It introduces non-linearity into the network's computations. Without activation functions, or with purely linear activation functions like $f(x) = x$, every layer is just a linear transformation. Composing linear transformations always produces another linear transformation — so a 100-layer linear network is mathematically equivalent to a single linear layer with different weights. You gain depth but not expressive power.</span>
+<span id="cb2-167"><a href="#cb2-167" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-168"><a href="#cb2-168" aria-hidden="true" tabindex="-1"></a>Non-linearity is what allows stacked layers to represent complex, curved decision boundaries rather than just hyperplanes. The Universal Approximation Theorem states that a network with even one hidden layer and a non-linear activation can approximate any continuous function — but in practice, depth with non-linearity is what makes modern deep networks so powerful. Each layer learns a non-linear transformation of the previous layer's representation, building increasingly abstract features. Without non-linearity, a network distinguishing cats from dogs can only draw straight-line boundaries; with non-linearity, it can learn complex curved boundaries that capture the actual structure of visual categories.</span>
+<span id="cb2-169"><a href="#cb2-169" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-170"><a href="#cb2-170" aria-hidden="true" tabindex="-1"></a>In practice, ReLU ($\max(0, x)$) is the standard choice for hidden layers in most architectures because it is computationally cheap, does not saturate for positive inputs (avoiding vanishing gradients), and empirically trains well across a wide range of tasks.</span>
+<span id="cb2-171"><a href="#cb2-171" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-172"><a href="#cb2-172" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-173"><a href="#cb2-173" aria-hidden="true" tabindex="-1"></a>**Q2. Explain backpropagation in plain English.**</span>
+<span id="cb2-174"><a href="#cb2-174" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-175"><a href="#cb2-175" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-176"><a href="#cb2-176" aria-hidden="true" tabindex="-1"></a>Backpropagation is the algorithm neural networks use to learn from their mistakes. Here is the intuition: when you make a prediction that is wrong, you want to figure out which parameters in the network were responsible for that mistake, and by how much. Backpropagation answers that question efficiently by working backward from the error.</span>
+<span id="cb2-177"><a href="#cb2-177" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-178"><a href="#cb2-178" aria-hidden="true" tabindex="-1"></a>First, a forward pass runs the input through the network layer by layer, producing a prediction. A loss function measures how wrong that prediction is — this is a single number. Then, the backward pass asks at each layer: "How much did the parameters in this layer contribute to the total error?" Using the chain rule of calculus, the error signal is propagated backward from the output to the input, through every layer in reverse order. Each parameter gets a gradient — a number that says "if you increase this parameter slightly, the loss goes up by this much." Parameters whose gradient is large contributed more to the error; parameters with small gradients contributed less.</span>
+<span id="cb2-179"><a href="#cb2-179" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-180"><a href="#cb2-180" aria-hidden="true" tabindex="-1"></a>The chain rule is the mathematical engine that makes this efficient: $\frac{\partial \mathcal{L}}{\partial W} = \frac{\partial \mathcal{L}}{\partial a} \cdot \frac{\partial a}{\partial z} \cdot \frac{\partial z}{\partial W}$. You chain together local gradients that each layer can compute cheaply. The result is that you get gradients for every parameter in the network in two passes — one forward, one backward — rather than one expensive pass per parameter.</span>
+<span id="cb2-181"><a href="#cb2-181" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-182"><a href="#cb2-182" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-183"><a href="#cb2-183" aria-hidden="true" tabindex="-1"></a>**Q3. What is the difference between batch gradient descent, mini-batch gradient descent, and stochastic gradient descent?**</span>
+<span id="cb2-184"><a href="#cb2-184" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-185"><a href="#cb2-185" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-186"><a href="#cb2-186" aria-hidden="true" tabindex="-1"></a>The difference lies in how many training examples are used to compute the gradient before each parameter update.</span>
+<span id="cb2-187"><a href="#cb2-187" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-188"><a href="#cb2-188" aria-hidden="true" tabindex="-1"></a>Batch gradient descent uses all $N$ training examples to compute a single gradient estimate and performs one update. This gives an accurate, low-variance estimate of the true gradient but requires processing the entire dataset before any learning happens. For large datasets (millions of examples), one update may take minutes, making this impractical.</span>
+<span id="cb2-189"><a href="#cb2-189" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-190"><a href="#cb2-190" aria-hidden="true" tabindex="-1"></a>Stochastic gradient descent (SGD) uses a single randomly selected training example per update. Updates are extremely frequent — one per example — but each gradient estimate is very noisy (high variance). The noise can help escape local minima and has a regularizing effect, but convergence is erratic and it struggles to reach high-precision solutions.</span>
+<span id="cb2-191"><a href="#cb2-191" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-192"><a href="#cb2-192" aria-hidden="true" tabindex="-1"></a>Mini-batch gradient descent — the standard in all modern deep learning — uses a small random subset (typically 32 to 256 examples, called a "batch") per update. This balances the tradeoffs: gradient estimates are smooth enough for stable convergence, updates are frequent enough for fast learning, and batches can be efficiently parallelized across GPU matrix operations. When practitioners say "SGD" in the context of PyTorch or modern frameworks, they almost always mean mini-batch SGD. The batch size is itself a hyperparameter: larger batches give more accurate gradients but generalize slightly worse (sharp minima); smaller batches introduce noise that acts as regularization.</span>
+<span id="cb2-193"><a href="#cb2-193" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-194"><a href="#cb2-194" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-195"><a href="#cb2-195" aria-hidden="true" tabindex="-1"></a>**Q4. Why is cross-entropy loss used for classification instead of mean squared error?**</span>
+<span id="cb2-196"><a href="#cb2-196" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-197"><a href="#cb2-197" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-198"><a href="#cb2-198" aria-hidden="true" tabindex="-1"></a>There are two complementary reasons: probabilistic justification and gradient behavior.</span>
+<span id="cb2-199"><a href="#cb2-199" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-200"><a href="#cb2-200" aria-hidden="true" tabindex="-1"></a>The probabilistic justification: a classification model with a softmax output produces a probability distribution over classes. The natural way to measure how well a probability distribution fits observed data is likelihood — specifically, the log-likelihood of the correct class labels under the model's predicted distribution. Cross-entropy loss is exactly the negative log-likelihood of the correct classes: $\mathcal{L} = -\sum_i \log P(\text{correct class}_i)$. Minimizing cross-entropy is therefore equivalent to maximum likelihood estimation of the model parameters — a principled statistical objective.</span>
+<span id="cb2-201"><a href="#cb2-201" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-202"><a href="#cb2-202" aria-hidden="true" tabindex="-1"></a>The gradient behavior reason: consider a sigmoid output neuron. With MSE loss on a sigmoid, the gradient is $\frac{\partial \mathcal{L}}{\partial z} = (\hat{y} - y) \cdot \sigma'(z)$. When the prediction is confidently wrong (say, $\hat{y} = 0.99$ but $y = 0$), $\sigma'(z)$ is nearly zero because the sigmoid is saturated. The gradient is tiny, so the network learns very slowly from its most egregious mistakes. With cross-entropy, the gradient simplifies beautifully to $(\hat{y} - y)$ — it is large when the prediction is confidently wrong, regardless of saturation. This is the cross-entropy gradient's famous property: it provides strong learning signal for confident errors, which is exactly where learning should be fastest. Using MSE for classification is not catastrophically wrong, but it produces slower and less stable training than cross-entropy.</span>
+<span id="cb2-203"><a href="#cb2-203" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-204"><a href="#cb2-204" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-205"><a href="#cb2-205" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-206"><a href="#cb2-206" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-207"><a href="#cb2-207" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb2-208"><a href="#cb2-208" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-209"><a href="#cb2-209" aria-hidden="true" tabindex="-1"></a>**Q5. Why does ReLU suffer from "dying neurons" and how do variants like Leaky ReLU address it?**</span>
+<span id="cb2-210"><a href="#cb2-210" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-211"><a href="#cb2-211" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-212"><a href="#cb2-212" aria-hidden="true" tabindex="-1"></a>ReLU computes $\max(0, x)$. For inputs $x &gt; 0$, the output is $x$ and the gradient is 1. For inputs $x \leq 0$, the output is 0 and the gradient is 0. The dying neuron problem occurs when a neuron's pre-activation $z = \mathbf{w} \cdot \mathbf{x} + b$ becomes negative for every example in the training set. Once this happens, the gradient for that neuron is zero for every forward and backward pass — the optimizer receives no signal and cannot update the neuron's weights to bring them out of the dead zone. The neuron is permanently stuck outputting zero.</span>
+<span id="cb2-213"><a href="#cb2-213" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-214"><a href="#cb2-214" aria-hidden="true" tabindex="-1"></a>This can happen when a large gradient update pushes the weights or bias such that $z &lt; 0$ for all inputs, or when learning rates are too high and produce large weight updates early in training. In practice, 10-50% of neurons in a ReLU network can die in poorly tuned training runs, which effectively reduces network capacity.</span>
+<span id="cb2-215"><a href="#cb2-215" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-216"><a href="#cb2-216" aria-hidden="true" tabindex="-1"></a>Leaky ReLU ($\max(\alpha x, x)$ with $\alpha \approx 0.01$) addresses this by allowing a small but non-zero gradient for negative inputs. The dying neuron problem cannot occur because the gradient is always at least $\alpha$, no matter how negative the pre-activation. Parametric ReLU (PReLU) learns $\alpha$ as a parameter rather than fixing it. ELU uses $\alpha(e^x - 1)$ for $x &lt; 0$, producing negative outputs that push the mean activation closer to zero, reducing bias shift. In practice, GELU (used in all modern transformers) provides further improvements by weighting inputs by their cumulative Gaussian probability, producing smooth gradients throughout. For most modern work, GELU or SiLU has replaced ReLU in large models.</span>
+<span id="cb2-217"><a href="#cb2-217" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-218"><a href="#cb2-218" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-219"><a href="#cb2-219" aria-hidden="true" tabindex="-1"></a>**Q6. Compare Adam and SGD with momentum — when does each perform better and why?**</span>
+<span id="cb2-220"><a href="#cb2-220" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-221"><a href="#cb2-221" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-222"><a href="#cb2-222" aria-hidden="true" tabindex="-1"></a>Adam and SGD with momentum implement fundamentally different update strategies. SGD with momentum accumulates a velocity vector in the direction of persistent gradients, providing a global learning rate with a directional bias. Adam tracks per-parameter first and second moment estimates, implementing adaptive learning rates per parameter — parameters with historically large gradients get smaller effective learning rates, and vice versa.</span>
+<span id="cb2-223"><a href="#cb2-223" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-224"><a href="#cb2-224" aria-hidden="true" tabindex="-1"></a>Adam generally wins in practice for most deep learning tasks because it is far less sensitive to learning rate choice, converges faster in early training, and handles sparse gradients well (which is critical for NLP models where word embeddings for rare words receive infrequent gradient updates). When someone wants to get a model training quickly with minimal hyperparameter tuning, Adam is the correct default — its bias correction and per-parameter adaptation make it robust. AdamW, which adds proper weight decay decoupled from the adaptive gradient scaling, is the standard for LLM training.</span>
+<span id="cb2-225"><a href="#cb2-225" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-226"><a href="#cb2-226" aria-hidden="true" tabindex="-1"></a>SGD with momentum has a well-documented advantage in some computer vision tasks: models trained with SGD + momentum + careful learning rate schedules achieve slightly higher test accuracy than Adam on benchmarks like CIFAR-10 and ImageNet. The explanation, supported by work from Keskar et al. (2017) and Wilson et al. (2017), is that SGD's noisy updates cause it to converge to wider, flatter minima that generalize better, while Adam's aggressive adaptation can converge to sharper minima that overfit slightly. This matters when: you have abundant training data, the task is a well-studied vision problem with established training recipes, and you are willing to tune the learning rate schedule carefully. For most practical applications — particularly anything involving language — Adam or AdamW is the right choice.</span>
+<span id="cb2-227"><a href="#cb2-227" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-228"><a href="#cb2-228" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-229"><a href="#cb2-229" aria-hidden="true" tabindex="-1"></a>**Q7. What is the vanishing gradient problem? What causes it and what are the modern architectural solutions?**</span>
+<span id="cb2-230"><a href="#cb2-230" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-231"><a href="#cb2-231" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-232"><a href="#cb2-232" aria-hidden="true" tabindex="-1"></a>The vanishing gradient problem occurs when gradients diminish exponentially as they propagate backward through deep networks, becoming so small that early layers cannot learn. The cause is multiplicative: backpropagation computes gradients via the chain rule, which multiplies together the Jacobians of each layer's transformation. For a network with $L$ layers, the gradient at layer $l$ involves a product of $L - l$ Jacobians. If those Jacobians have elements consistently less than 1 — which happens when sigmoid or tanh neurons are in their saturated regions, where the derivative is nearly zero — the product shrinks exponentially. A network with 50 sigmoid layers might have gradients in early layers smaller than $10^{-10}$, making learning there effectively impossible.</span>
+<span id="cb2-233"><a href="#cb2-233" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-234"><a href="#cb2-234" aria-hidden="true" tabindex="-1"></a>The practical consequence: in early deep networks (pre-2012), training networks deeper than 4-5 layers was difficult or impossible. The early layers would barely update while later layers learned normally, resulting in models that could not exploit depth.</span>
+<span id="cb2-235"><a href="#cb2-235" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-236"><a href="#cb2-236" aria-hidden="true" tabindex="-1"></a>Modern solutions: (1) ReLU activations — gradient is exactly 1 for positive inputs, eliminating saturation-driven gradient shrinkage. (2) Careful weight initialization — He initialization ($\mathcal{N}(0, 2/n_\text{in})$ for ReLU) and Xavier/Glorot initialization keep activation and gradient magnitudes consistent across layers at the start of training. (3) Batch normalization — normalizes layer inputs to zero mean and unit variance, keeping activations in the non-saturating regime throughout training. (4) Residual connections — the single most important solution. Adding $F(\mathbf{x}) + \mathbf{x}$ provides a direct gradient path from output to input: the gradient is always at least 1 along the skip connection, enabling training of networks hundreds of layers deep. Every modern transformer architecture uses residual connections around each sub-block for exactly this reason.</span>
+<span id="cb2-237"><a href="#cb2-237" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-238"><a href="#cb2-238" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-239"><a href="#cb2-239" aria-hidden="true" tabindex="-1"></a>**Q8. Prove that stacking linear layers without activation functions is equivalent to a single linear transformation.**</span>
+<span id="cb2-240"><a href="#cb2-240" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-241"><a href="#cb2-241" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-242"><a href="#cb2-242" aria-hidden="true" tabindex="-1"></a>This is a straightforward proof by induction on the number of layers. Consider a network with two linear layers (no activation functions). Layer 1 computes $\mathbf{h}_1 = W_1 \mathbf{x} + \mathbf{b}_1$, where $W_1 \in \mathbb{R}^{d_1 \times d_0}$ and $\mathbf{b}_1 \in \mathbb{R}^{d_1}$. Layer 2 computes $\mathbf{h}_2 = W_2 \mathbf{h}_1 + \mathbf{b}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2$.</span>
+<span id="cb2-243"><a href="#cb2-243" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-244"><a href="#cb2-244" aria-hidden="true" tabindex="-1"></a>Expanding: $\mathbf{h}_2 = (W_2 W_1)\mathbf{x} + (W_2 \mathbf{b}_1 + \mathbf{b}_2)$.</span>
+<span id="cb2-245"><a href="#cb2-245" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-246"><a href="#cb2-246" aria-hidden="true" tabindex="-1"></a>Define $W^* = W_2 W_1$ (a matrix, since matrix multiplication is closed) and $\mathbf{b}^* = W_2 \mathbf{b}_1 + \mathbf{b}_2$ (a vector). Then $\mathbf{h}_2 = W^* \mathbf{x} + \mathbf{b}^*$, which is exactly the form of a single linear layer with weight $W^*$ and bias $\mathbf{b}^*$.</span>
+<span id="cb2-247"><a href="#cb2-247" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-248"><a href="#cb2-248" aria-hidden="true" tabindex="-1"></a>By induction, for $L$ layers: $\mathbf{h}_L = W_L W_{L-1} \cdots W_1 \mathbf{x} + \text{constant bias vector}$. The product of matrices $W_L \cdots W_1$ is itself a matrix, so the entire $L$-layer linear network is equivalent to one matrix multiplication and one bias addition. Adding layers increases computation and parameter count but does not increase expressive power — the function represented is still an affine map from input to output. This is why activation functions are not optional: they are what makes depth useful. The proof also explains the rank limitation: if any intermediate layer has fewer units than the input or output, the effective linear map $W^*$ is rank-limited by that bottleneck, regardless of other layer sizes.</span>
+<span id="cb2-249"><a href="#cb2-249" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-250"><a href="#cb2-250" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-251"><a href="#cb2-251" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-252"><a href="#cb2-252" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-253"><a href="#cb2-253" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb2-254"><a href="#cb2-254" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-255"><a href="#cb2-255" aria-hidden="true" tabindex="-1"></a>**Q9. A customer's model is overfitting severely. Walk through your diagnostic process and the mitigations you would apply in order of preference.**</span>
+<span id="cb2-256"><a href="#cb2-256" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-257"><a href="#cb2-257" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-258"><a href="#cb2-258" aria-hidden="true" tabindex="-1"></a>I start by confirming the diagnosis: overfitting means training loss is low but validation loss is significantly higher and diverging over epochs. I check the learning curves — if validation loss decreases then plateaus while training loss continues falling, that is classic overfitting. I also check for data leakage first, because leakage can masquerade as a training/validation discrepancy.</span>
+<span id="cb2-259"><a href="#cb2-259" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-260"><a href="#cb2-260" aria-hidden="true" tabindex="-1"></a>My mitigations in order of preference, from least disruptive to most: First, regularization on the existing model. L2 weight decay (increase the weight decay coefficient in the optimizer) penalizes large weights and is virtually free to add. Dropout (adding dropout layers with $p=0.1$-$0.3$ in fully connected layers) randomly zeros activations during training, forcing the network to learn redundant representations. Both are easy wins.</span>
+<span id="cb2-261"><a href="#cb2-261" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-262"><a href="#cb2-262" aria-hidden="true" tabindex="-1"></a>Second, data augmentation — if the task is image classification, adding flips, crops, color jitter, and CutMix can multiply the effective dataset size. For text, synonym substitution, back-translation, or paraphrasing augment the training distribution. Augmentation is often the highest-impact intervention for overfitting in practice.</span>
+<span id="cb2-263"><a href="#cb2-263" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-264"><a href="#cb2-264" aria-hidden="true" tabindex="-1"></a>Third, reduce model capacity — if the model is too large for the dataset, shrink the number of layers or hidden dimensions. A simpler model has less capacity to memorize training examples. Fourth, get more data — often the most impactful solution but also the most expensive. Even a 2× increase in training data typically reduces overfitting more than any regularization technique. Fifth, early stopping — monitor validation loss and stop training when it stops improving, saving the checkpoint at the validation minimum. This is free and should always be on. Finally, if budget permits, techniques like mixup or label smoothing can further reduce overfitting in classification tasks by softening the training targets.</span>
+<span id="cb2-265"><a href="#cb2-265" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-266"><a href="#cb2-266" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-267"><a href="#cb2-267" aria-hidden="true" tabindex="-1"></a>**Q10. A customer asks why their neural network isn't learning at all (loss not decreasing). What are the five most common causes you'd check?**</span>
+<span id="cb2-268"><a href="#cb2-268" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-269"><a href="#cb2-269" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-270"><a href="#cb2-270" aria-hidden="true" tabindex="-1"></a>When loss is flat from the first epoch, I work through these five causes in order. First, learning rate. A learning rate that is too small ($&lt; 10^{-6}$ for Adam) will produce negligible updates; too large ($&gt; 0.1$ for Adam) causes divergence. I would run a learning rate finder — sweep from $10^{-7}$ to $10^{-1}$ over a few hundred steps and plot loss versus learning rate. The optimal rate is just before the loss starts diverging. This catches ~60% of "model not learning" bugs.</span>
+<span id="cb2-271"><a href="#cb2-271" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-272"><a href="#cb2-272" aria-hidden="true" tabindex="-1"></a>Second, data pipeline bugs. Are the labels aligned with the inputs? I have seen customers accidentally shuffle features without shuffling labels, producing a perfectly misaligned dataset. Are the inputs normalized? Raw pixel values in <span class="co">[</span><span class="ot">0, 255</span><span class="co">]</span> instead of <span class="co">[</span><span class="ot">0, 1</span><span class="co">]</span> can make training erratic. Print a batch, verify manually.</span>
+<span id="cb2-273"><a href="#cb2-273" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-274"><a href="#cb2-274" aria-hidden="true" tabindex="-1"></a>Third, vanishing gradients — especially in custom architectures. Check gradient norms layer by layer. If gradients in early layers are $&lt; 10^{-7}$ while later layers have gradients of $0.1$-$1.0$, vanishing gradients are the problem. Switch to ReLU activations, add batch normalization, or add residual connections.</span>
+<span id="cb2-275"><a href="#cb2-275" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-276"><a href="#cb2-276" aria-hidden="true" tabindex="-1"></a>Fourth, weight initialization. Weights initialized too small (all near zero) mean activations collapse, gradients vanish, and the network is stuck in a symmetric state where all neurons learn the same function. Check that you are using He or Glorot initialization, not all-zeros.</span>
+<span id="cb2-277"><a href="#cb2-277" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-278"><a href="#cb2-278" aria-hidden="true" tabindex="-1"></a>Fifth, incorrect loss function setup. Applying softmax inside the loss and also as an activation function doubles the squashing, producing near-uniform predictions. In PyTorch, <span class="in">`nn.CrossEntropyLoss`</span> expects raw logits, not softmax outputs. Verify the loss function matches the output layer activation, and confirm that the loss is averaging over examples correctly (not accidentally summing, which would produce loss values that grow with batch size).</span>
+<span id="cb2-279"><a href="#cb2-279" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-280"><a href="#cb2-280" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-281"><a href="#cb2-281" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-282"><a href="#cb2-282" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-283"><a href="#cb2-283" aria-hidden="true" tabindex="-1"></a><span class="fu">## Further Reading</span></span>
+<span id="cb2-284"><a href="#cb2-284" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-285"><a href="#cb2-285" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Neural Networks and Deep Learning (Nielsen)</span><span class="co">](http://neuralnetworksanddeeplearning.com/)</span></span>
+<span id="cb2-286"><a href="#cb2-286" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Deep Learning (Goodfellow, Bengio, Courville)</span><span class="co">](https://www.deeplearningbook.org/)</span></span>
+<span id="cb2-287"><a href="#cb2-287" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Adam: A Method for Stochastic Optimization (Kingma and Ba, 2014)</span><span class="co">](https://arxiv.org/abs/1412.6980)</span></span>
+<span id="cb2-288"><a href="#cb2-288" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Deep Residual Learning for Image Recognition (He et al., 2016)</span><span class="co">](https://arxiv.org/abs/1512.03385)</span></span>
+<span id="cb2-289"><a href="#cb2-289" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Decoupled Weight Decay Regularization / AdamW (Loshchilov and Hutter, 2017)</span><span class="co">](https://arxiv.org/abs/1711.05101)</span></span>
 </code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->

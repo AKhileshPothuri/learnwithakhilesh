@@ -209,7 +209,7 @@ window.Quarto = {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></span></a>
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -530,11 +530,63 @@ Entry Level
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>What problem does the attention mechanism solve that RNNs couldn’t?</li>
-<li>Explain the Query, Key, Value abstraction in attention.</li>
-<li>What is positional encoding and why is it needed?</li>
-</ol>
+<p><strong>Q1. What problem does the attention mechanism solve that RNNs couldn’t?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>RNNs process sequences token-by-token in strict order, which creates two compounding problems. First, long-range dependencies degrade badly — the signal from token 1 must pass through every intermediate hidden state to influence token 512, and gradients vanish or explode along the way. Second, sequential processing prevents parallelism, making training slow.</p>
+<p>Attention solves both simultaneously. Every token attends directly to every other token in a single operation — the famous dot-product: softmax(QKᵀ/√d_k)V. This means token 1 and token 512 have equal “distance” regardless of how far apart they are in the sequence. There’s no gradient path length problem because the connection is direct.</p>
+<p>The parallelism gain is enormous for training: instead of O(n) serial steps, attention computes all pairwise relationships in one matrix multiplication, allowing full GPU utilization. The practical result is that BERT trained in days what would have taken weeks as an LSTM, and could learn that “The trophy didn’t fit in the suitcase because it was too big” — “it” refers to the trophy, not the suitcase — because it could directly model that long-range coreference.</p>
+</div>
+</div>
+</div>
+<p><strong>Q2. Explain the Query, Key, Value abstraction in attention.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The QKV abstraction is a soft, differentiable lookup table. Think of a library: the Query is your search request, the Keys are the index labels on every book, and the Values are the actual book contents.</p>
+<p>Mechanically: every token gets projected into three vectors — Q, K, and V — via learned weight matrices W_Q, W_K, W_V. To compute how much token i should attend to token j, we take the dot product of Q_i with K_j (measuring compatibility), scale by 1/√d_k to prevent softmax saturation, then softmax across all j to get attention weights that sum to 1. The output is a weighted sum of all Values, where the weights reflect relevance.</p>
+<p>What makes it powerful is that Q, K, and V are independent projections. A token can “ask about” one aspect of meaning (Q) while “advertising” a different aspect (K), and “contribute” yet another aspect (V). In multi-head attention, different heads learn different Q/K/V projections in parallel — head 1 might capture syntactic dependencies, head 5 might track coreference. The heads run simultaneously and their outputs are concatenated and projected, letting the model attend to different representation subspaces at once.</p>
+</div>
+</div>
+</div>
+<p><strong>Q3. What is positional encoding and why is it needed?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The attention operation itself is permutation-invariant — if you shuffle the tokens, the attention weights change but the mechanism has no built-in notion of position. Without positional encoding, “dog bites man” and “man bites dog” would be indistinguishable to the model.</p>
+<p>Positional encodings inject sequence position information into the token representations before attention. The original Vaswani et al.&nbsp;(2017) paper used fixed sinusoidal functions: PE(pos, 2i) = sin(pos/10000^(2i/d_model)), with different frequencies for even/odd dimensions. This gives every position a unique fingerprint, and the sinusoidal structure means relative distances can be computed via linear transformations.</p>
+<p>Modern LLMs have moved to learned and relative approaches. RoPE (Rotary Position Embedding, used in Llama, Mistral) applies a rotation to Q and K vectors based on position — this means the dot product QᵢKⱼ naturally encodes the relative distance (i−j) rather than absolute positions. ALiBi (used in MPT) applies a position penalty directly to attention logits. Both approaches generalize better to sequence lengths longer than those seen during training than the original sinusoidal encoding does.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
@@ -547,11 +599,69 @@ Mid Level
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>Why is attention complexity O(n²) in sequence length, and what architectural changes address this?</li>
-<li>Compare encoder-only vs.&nbsp;decoder-only architectures — when would you choose each?</li>
-<li>What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?</li>
-</ol>
+<p><strong>Q1. Why is attention complexity O(n²) in sequence length, and what architectural changes address this?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Standard attention computes pairwise compatibility between every token and every other token. For a sequence of length n, that’s an n×n attention matrix — O(n²) in both compute and memory. At n=4,096 this is manageable; at n=100,000 it becomes prohibitive (a 100k×100k FP16 matrix is ~20 GB just for attention weights, per head).</p>
+<p>Several architectural approaches reduce this:</p>
+<p><strong>Sparse attention</strong> (Longformer, BigBird): each token only attends to a local window plus a few global tokens. Reduces to O(n·w) where w is the window size. Longformer uses window size 512 with global tokens at [CLS] and task-relevant positions.</p>
+<p><strong>Linear attention</strong> (Performer, RWKV): approximates or replaces softmax attention with kernel methods that decompose into O(n·d) operations. Quality tradeoff is real.</p>
+<p><strong>Flash Attention</strong> (Dao et al., 2022): doesn’t reduce algorithmic complexity but dramatically reduces memory I/O by tiling computation to stay in SRAM rather than repeatedly reading/writing HBM. Result: same O(n²) compute but 5–20x faster and uses 10x less memory in practice. This is the dominant approach in production today.</p>
+<p><strong>Sliding window + retrieval</strong> (used in Gemini 1.5): process locally with sliding window attention, retrieve from distant context when needed. Achieves 1M+ context windows.</p>
+</div>
+</div>
+</div>
+<p><strong>Q2. Compare encoder-only vs.&nbsp;decoder-only architectures — when would you choose each?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The key difference is the attention mask. Encoder-only models (BERT, RoBERTa) use full bidirectional attention — every token attends to every other token in both directions. Decoder-only models (GPT, Llama) use causal masking — each token can only attend to prior tokens, enabling autoregressive generation.</p>
+<p><strong>Choose encoder-only when:</strong> - You need a representation of the full input (classification, NER, embeddings, semantic similarity) - Examples: BERT for sentiment classification, a RoBERTa-based NLI model for entailment, all-MiniLM for generating sentence embeddings - The task is discriminative — you’re mapping input to label, not generating new text</p>
+<p><strong>Choose decoder-only when:</strong> - You need open-ended text generation, completion, or instruction following - Examples: GPT-4 for summarization, Llama-3 for code generation, any chat/assistant use case - The task is generative — you’re producing new tokens</p>
+<p><strong>Encoder-decoder</strong> (T5, BART) bridges both: encode the full input bidirectionally, then generate output autoregressively. Best for structured generation tasks where input and output are distinct (translation, summarization with controlled format).</p>
+<p>In practice, the industry has largely converged on decoder-only for general-purpose LLMs because they scale better and few-shot prompting effectively handles discriminative tasks too.</p>
+</div>
+</div>
+</div>
+<p><strong>Q3. What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The difference is where LayerNorm is applied within each transformer block relative to the sublayers (attention, FFN).</p>
+<p><strong>Post-LN</strong> (original Vaswani 2017): LayerNorm is applied after the residual addition — x = LayerNorm(x + Sublayer(x)). The residual path bypasses normalization entirely, so early in training when weights are random, gradients can be very large. This makes post-LN models sensitive to learning rate and requiring careful warmup schedules. Deep post-LN models (24+ layers) are notoriously difficult to train from scratch.</p>
+<p><strong>Pre-LN</strong>: LayerNorm is applied before the sublayer — x = x + Sublayer(LayerNorm(x)). Normalization happens on the input to each sublayer, which stabilizes gradient magnitudes throughout the network. GPT-2, GPT-3, and most modern LLMs use pre-LN because it trains stably without extensive hyperparameter tuning and scales to hundreds of layers.</p>
+<p>The practical consequence: if you’re fine-tuning a post-LN model (like original BERT), you need lower learning rates and more warmup steps than pre-LN models. If you see training loss spikes or divergence early in training, check which variant you’re using. Most modern checkpoints (Llama, Mistral, Gemma) are pre-LN with RMSNorm (a simplified LayerNorm that skips the re-centering step and is 10–20% faster).</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 <div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
@@ -564,10 +674,46 @@ Forward Deployed Engineer
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<ol type="1">
-<li>A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?</li>
-<li>How would you explain context window limitations to a customer who wants to “just feed in the whole database”?</li>
-</ol>
+<p><strong>Q1. A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-10-contents" aria-controls="callout-10" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-10" class="callout-10-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>I’d recommend an encoder-only architecture, specifically a fine-tuned BERT or RoBERTa variant, for this use case — with an important caveat about the 10k label count.</p>
+<p>Encoder-only models produce a pooled [CLS] representation of the full input bidirectionally, which is ideal for classification tasks. You fine-tune by adding a linear classification head (hidden_dim × 10k) on top of the pooled output and training with cross-entropy loss. Models like DeBERTa-v3 consistently top classification benchmarks and are well-understood for this use case.</p>
+<p>The 10k label challenge is real: with 10k output classes, you need substantial labeled examples per class to train the classification head well. My first questions would be: how many labeled examples exist per label? If under 50 per class, zero-shot or few-shot approaches using a decoder model with structured output might actually outperform a fine-tuned classifier — GPT-4 with the full label taxonomy in the system prompt can classify without per-label training data.</p>
+<p>If there are sufficient labels (ideally 200+ per class), fine-tune a RoBERTa-large or DeBERTa-v3-base with the classification head. Inference cost matters at 10k labels — encoder models are significantly cheaper at inference than large decoders, which matters when classifying millions of documents. For the proprietary label concern, on-prem fine-tuning keeps the data local.</p>
+</div>
+</div>
+</div>
+<p><strong>Q2. How would you explain context window limitations to a customer who wants to “just feed in the whole database”?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-11-contents" aria-controls="callout-11" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-11" class="callout-11-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>I use an analogy first: “Think of the context window like a whiteboard. The model can only reason about what’s written on the whiteboard right now. Your database is a library — you can’t put the whole library on the whiteboard.”</p>
+<p>Then I get concrete about costs: a typical enterprise database might have 10 million documents averaging 1,000 tokens each — that’s 10 billion tokens. At $3 per million tokens (Claude Sonnet pricing), that’s $30,000 per query, with latency measured in hours. Even with 1M-token context windows (Gemini 1.5 Pro), you’re still a factor of 10,000 short of “the whole database.”</p>
+<p>But the more important point is that it doesn’t work even if it were free. Research (Liu et al., “Lost in the Middle,” 2023) shows model performance degrades badly for information buried in the middle of very long contexts — models effectively use only the beginning and end of their context well. More context doesn’t mean better reasoning; it often means worse.</p>
+<p>The right solution is RAG: index the database as embeddings, retrieve the 3–5 most relevant chunks at query time, and give the model only the focused context it needs. The model reasons better with 2,000 tokens of relevant content than with 100,000 tokens of mixed relevance. I’d then walk through what an indexing and retrieval pipeline looks like for their specific database type.</p>
+</div>
+</div>
+</div>
 </div>
 </div>
 </section>
@@ -1199,8 +1345,8 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../chapters/02-neural-networks.html" class="pagination-link" aria-label="Neural Networks — Intuition to Backprop">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — Intuition to Backprop</span></span>
+      <a href="../chapters/02-neural-networks.html" class="pagination-link" aria-label="Neural Networks — From Perceptrons to Backprop">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
@@ -1278,27 +1424,124 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 <span id="cb2-69"><a href="#cb2-69" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
 <span id="cb2-70"><a href="#cb2-70" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-71"><a href="#cb2-71" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
-<span id="cb2-72"><a href="#cb2-72" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>What problem does the attention mechanism solve that RNNs couldn't?</span>
-<span id="cb2-73"><a href="#cb2-73" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>Explain the Query, Key, Value abstraction in attention.</span>
-<span id="cb2-74"><a href="#cb2-74" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>What is positional encoding and why is it needed?</span>
-<span id="cb2-75"><a href="#cb2-75" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb2-76"><a href="#cb2-76" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-77"><a href="#cb2-77" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
-<span id="cb2-78"><a href="#cb2-78" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>Why is attention complexity O(n²) in sequence length, and what architectural changes address this?</span>
-<span id="cb2-79"><a href="#cb2-79" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>Compare encoder-only vs. decoder-only architectures — when would you choose each?</span>
-<span id="cb2-80"><a href="#cb2-80" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?</span>
+<span id="cb2-72"><a href="#cb2-72" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-73"><a href="#cb2-73" aria-hidden="true" tabindex="-1"></a>**Q1. What problem does the attention mechanism solve that RNNs couldn't?**</span>
+<span id="cb2-74"><a href="#cb2-74" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-75"><a href="#cb2-75" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-76"><a href="#cb2-76" aria-hidden="true" tabindex="-1"></a>RNNs process sequences token-by-token in strict order, which creates two compounding problems. First, long-range dependencies degrade badly — the signal from token 1 must pass through every intermediate hidden state to influence token 512, and gradients vanish or explode along the way. Second, sequential processing prevents parallelism, making training slow.</span>
+<span id="cb2-77"><a href="#cb2-77" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-78"><a href="#cb2-78" aria-hidden="true" tabindex="-1"></a>Attention solves both simultaneously. Every token attends directly to every other token in a single operation — the famous dot-product: softmax(QKᵀ/√d_k)V. This means token 1 and token 512 have equal "distance" regardless of how far apart they are in the sequence. There's no gradient path length problem because the connection is direct.</span>
+<span id="cb2-79"><a href="#cb2-79" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-80"><a href="#cb2-80" aria-hidden="true" tabindex="-1"></a>The parallelism gain is enormous for training: instead of O(n) serial steps, attention computes all pairwise relationships in one matrix multiplication, allowing full GPU utilization. The practical result is that BERT trained in days what would have taken weeks as an LSTM, and could learn that "The trophy didn't fit in the suitcase because it was too big" — "it" refers to the trophy, not the suitcase — because it could directly model that long-range coreference.</span>
 <span id="cb2-81"><a href="#cb2-81" aria-hidden="true" tabindex="-1"></a>:::</span>
 <span id="cb2-82"><a href="#cb2-82" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-83"><a href="#cb2-83" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
-<span id="cb2-84"><a href="#cb2-84" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?</span>
-<span id="cb2-85"><a href="#cb2-85" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>How would you explain context window limitations to a customer who wants to "just feed in the whole database"?</span>
-<span id="cb2-86"><a href="#cb2-86" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-83"><a href="#cb2-83" aria-hidden="true" tabindex="-1"></a>**Q2. Explain the Query, Key, Value abstraction in attention.**</span>
+<span id="cb2-84"><a href="#cb2-84" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-85"><a href="#cb2-85" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-86"><a href="#cb2-86" aria-hidden="true" tabindex="-1"></a>The QKV abstraction is a soft, differentiable lookup table. Think of a library: the Query is your search request, the Keys are the index labels on every book, and the Values are the actual book contents.</span>
 <span id="cb2-87"><a href="#cb2-87" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-88"><a href="#cb2-88" aria-hidden="true" tabindex="-1"></a><span class="fu">## Further Reading</span></span>
+<span id="cb2-88"><a href="#cb2-88" aria-hidden="true" tabindex="-1"></a>Mechanically: every token gets projected into three vectors — Q, K, and V — via learned weight matrices W_Q, W_K, W_V. To compute how much token i should attend to token j, we take the dot product of Q_i with K_j (measuring compatibility), scale by 1/√d_k to prevent softmax saturation, then softmax across all j to get attention weights that sum to 1. The output is a weighted sum of all Values, where the weights reflect relevance.</span>
 <span id="cb2-89"><a href="#cb2-89" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-90"><a href="#cb2-90" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Attention Is All You Need (Vaswani et al., 2017)</span><span class="co">](https://arxiv.org/abs/1706.03762)</span></span>
-<span id="cb2-91"><a href="#cb2-91" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">The Illustrated Transformer (Jay Alammar)</span><span class="co">](https://jalammar.github.io/illustrated-transformer/)</span></span>
-<span id="cb2-92"><a href="#cb2-92" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">RoFormer: Enhanced Transformer with Rotary Position Embedding</span><span class="co">](https://arxiv.org/abs/2104.09864)</span></span>
+<span id="cb2-90"><a href="#cb2-90" aria-hidden="true" tabindex="-1"></a>What makes it powerful is that Q, K, and V are independent projections. A token can "ask about" one aspect of meaning (Q) while "advertising" a different aspect (K), and "contribute" yet another aspect (V). In multi-head attention, different heads learn different Q/K/V projections in parallel — head 1 might capture syntactic dependencies, head 5 might track coreference. The heads run simultaneously and their outputs are concatenated and projected, letting the model attend to different representation subspaces at once.</span>
+<span id="cb2-91"><a href="#cb2-91" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-92"><a href="#cb2-92" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-93"><a href="#cb2-93" aria-hidden="true" tabindex="-1"></a>**Q3. What is positional encoding and why is it needed?**</span>
+<span id="cb2-94"><a href="#cb2-94" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-95"><a href="#cb2-95" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-96"><a href="#cb2-96" aria-hidden="true" tabindex="-1"></a>The attention operation itself is permutation-invariant — if you shuffle the tokens, the attention weights change but the mechanism has no built-in notion of position. Without positional encoding, "dog bites man" and "man bites dog" would be indistinguishable to the model.</span>
+<span id="cb2-97"><a href="#cb2-97" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-98"><a href="#cb2-98" aria-hidden="true" tabindex="-1"></a>Positional encodings inject sequence position information into the token representations before attention. The original Vaswani et al. (2017) paper used fixed sinusoidal functions: PE(pos, 2i) = sin(pos/10000^(2i/d_model)), with different frequencies for even/odd dimensions. This gives every position a unique fingerprint, and the sinusoidal structure means relative distances can be computed via linear transformations.</span>
+<span id="cb2-99"><a href="#cb2-99" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-100"><a href="#cb2-100" aria-hidden="true" tabindex="-1"></a>Modern LLMs have moved to learned and relative approaches. RoPE (Rotary Position Embedding, used in Llama, Mistral) applies a rotation to Q and K vectors based on position — this means the dot product QᵢKⱼ naturally encodes the relative distance (i−j) rather than absolute positions. ALiBi (used in MPT) applies a position penalty directly to attention logits. Both approaches generalize better to sequence lengths longer than those seen during training than the original sinusoidal encoding does.</span>
+<span id="cb2-101"><a href="#cb2-101" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-102"><a href="#cb2-102" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-103"><a href="#cb2-103" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-104"><a href="#cb2-104" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-105"><a href="#cb2-105" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb2-106"><a href="#cb2-106" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-107"><a href="#cb2-107" aria-hidden="true" tabindex="-1"></a>**Q1. Why is attention complexity O(n²) in sequence length, and what architectural changes address this?**</span>
+<span id="cb2-108"><a href="#cb2-108" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-109"><a href="#cb2-109" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-110"><a href="#cb2-110" aria-hidden="true" tabindex="-1"></a>Standard attention computes pairwise compatibility between every token and every other token. For a sequence of length n, that's an n×n attention matrix — O(n²) in both compute and memory. At n=4,096 this is manageable; at n=100,000 it becomes prohibitive (a 100k×100k FP16 matrix is ~20 GB just for attention weights, per head).</span>
+<span id="cb2-111"><a href="#cb2-111" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-112"><a href="#cb2-112" aria-hidden="true" tabindex="-1"></a>Several architectural approaches reduce this:</span>
+<span id="cb2-113"><a href="#cb2-113" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-114"><a href="#cb2-114" aria-hidden="true" tabindex="-1"></a>**Sparse attention** (Longformer, BigBird): each token only attends to a local window plus a few global tokens. Reduces to O(n·w) where w is the window size. Longformer uses window size 512 with global tokens at <span class="co">[</span><span class="ot">CLS</span><span class="co">]</span> and task-relevant positions.</span>
+<span id="cb2-115"><a href="#cb2-115" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-116"><a href="#cb2-116" aria-hidden="true" tabindex="-1"></a>**Linear attention** (Performer, RWKV): approximates or replaces softmax attention with kernel methods that decompose into O(n·d) operations. Quality tradeoff is real.</span>
+<span id="cb2-117"><a href="#cb2-117" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-118"><a href="#cb2-118" aria-hidden="true" tabindex="-1"></a>**Flash Attention** (Dao et al., 2022): doesn't reduce algorithmic complexity but dramatically reduces memory I/O by tiling computation to stay in SRAM rather than repeatedly reading/writing HBM. Result: same O(n²) compute but 5–20x faster and uses 10x less memory in practice. This is the dominant approach in production today.</span>
+<span id="cb2-119"><a href="#cb2-119" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-120"><a href="#cb2-120" aria-hidden="true" tabindex="-1"></a>**Sliding window + retrieval** (used in Gemini 1.5): process locally with sliding window attention, retrieve from distant context when needed. Achieves 1M+ context windows.</span>
+<span id="cb2-121"><a href="#cb2-121" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-122"><a href="#cb2-122" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-123"><a href="#cb2-123" aria-hidden="true" tabindex="-1"></a>**Q2. Compare encoder-only vs. decoder-only architectures — when would you choose each?**</span>
+<span id="cb2-124"><a href="#cb2-124" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-125"><a href="#cb2-125" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-126"><a href="#cb2-126" aria-hidden="true" tabindex="-1"></a>The key difference is the attention mask. Encoder-only models (BERT, RoBERTa) use full bidirectional attention — every token attends to every other token in both directions. Decoder-only models (GPT, Llama) use causal masking — each token can only attend to prior tokens, enabling autoregressive generation.</span>
+<span id="cb2-127"><a href="#cb2-127" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-128"><a href="#cb2-128" aria-hidden="true" tabindex="-1"></a>**Choose encoder-only when:**</span>
+<span id="cb2-129"><a href="#cb2-129" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>You need a representation of the full input (classification, NER, embeddings, semantic similarity)</span>
+<span id="cb2-130"><a href="#cb2-130" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Examples: BERT for sentiment classification, a RoBERTa-based NLI model for entailment, all-MiniLM for generating sentence embeddings</span>
+<span id="cb2-131"><a href="#cb2-131" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The task is discriminative — you're mapping input to label, not generating new text</span>
+<span id="cb2-132"><a href="#cb2-132" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-133"><a href="#cb2-133" aria-hidden="true" tabindex="-1"></a>**Choose decoder-only when:**</span>
+<span id="cb2-134"><a href="#cb2-134" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>You need open-ended text generation, completion, or instruction following</span>
+<span id="cb2-135"><a href="#cb2-135" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Examples: GPT-4 for summarization, Llama-3 for code generation, any chat/assistant use case</span>
+<span id="cb2-136"><a href="#cb2-136" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The task is generative — you're producing new tokens</span>
+<span id="cb2-137"><a href="#cb2-137" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-138"><a href="#cb2-138" aria-hidden="true" tabindex="-1"></a>**Encoder-decoder** (T5, BART) bridges both: encode the full input bidirectionally, then generate output autoregressively. Best for structured generation tasks where input and output are distinct (translation, summarization with controlled format).</span>
+<span id="cb2-139"><a href="#cb2-139" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-140"><a href="#cb2-140" aria-hidden="true" tabindex="-1"></a>In practice, the industry has largely converged on decoder-only for general-purpose LLMs because they scale better and few-shot prompting effectively handles discriminative tasks too.</span>
+<span id="cb2-141"><a href="#cb2-141" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-142"><a href="#cb2-142" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-143"><a href="#cb2-143" aria-hidden="true" tabindex="-1"></a>**Q3. What is the difference between pre-LN and post-LN transformers, and why does it matter for training stability?**</span>
+<span id="cb2-144"><a href="#cb2-144" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-145"><a href="#cb2-145" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-146"><a href="#cb2-146" aria-hidden="true" tabindex="-1"></a>The difference is where LayerNorm is applied within each transformer block relative to the sublayers (attention, FFN).</span>
+<span id="cb2-147"><a href="#cb2-147" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-148"><a href="#cb2-148" aria-hidden="true" tabindex="-1"></a>**Post-LN** (original Vaswani 2017): LayerNorm is applied after the residual addition — x = LayerNorm(x + Sublayer(x)). The residual path bypasses normalization entirely, so early in training when weights are random, gradients can be very large. This makes post-LN models sensitive to learning rate and requiring careful warmup schedules. Deep post-LN models (24+ layers) are notoriously difficult to train from scratch.</span>
+<span id="cb2-149"><a href="#cb2-149" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-150"><a href="#cb2-150" aria-hidden="true" tabindex="-1"></a>**Pre-LN**: LayerNorm is applied before the sublayer — x = x + Sublayer(LayerNorm(x)). Normalization happens on the input to each sublayer, which stabilizes gradient magnitudes throughout the network. GPT-2, GPT-3, and most modern LLMs use pre-LN because it trains stably without extensive hyperparameter tuning and scales to hundreds of layers.</span>
+<span id="cb2-151"><a href="#cb2-151" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-152"><a href="#cb2-152" aria-hidden="true" tabindex="-1"></a>The practical consequence: if you're fine-tuning a post-LN model (like original BERT), you need lower learning rates and more warmup steps than pre-LN models. If you see training loss spikes or divergence early in training, check which variant you're using. Most modern checkpoints (Llama, Mistral, Gemma) are pre-LN with RMSNorm (a simplified LayerNorm that skips the re-centering step and is 10–20% faster).</span>
+<span id="cb2-153"><a href="#cb2-153" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-154"><a href="#cb2-154" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-155"><a href="#cb2-155" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-156"><a href="#cb2-156" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-157"><a href="#cb2-157" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb2-158"><a href="#cb2-158" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-159"><a href="#cb2-159" aria-hidden="true" tabindex="-1"></a>**Q1. A customer needs a model for document classification on 10k proprietary labels. Encoder or decoder architecture — which do you recommend and why?**</span>
+<span id="cb2-160"><a href="#cb2-160" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-161"><a href="#cb2-161" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-162"><a href="#cb2-162" aria-hidden="true" tabindex="-1"></a>I'd recommend an encoder-only architecture, specifically a fine-tuned BERT or RoBERTa variant, for this use case — with an important caveat about the 10k label count.</span>
+<span id="cb2-163"><a href="#cb2-163" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-164"><a href="#cb2-164" aria-hidden="true" tabindex="-1"></a>Encoder-only models produce a pooled <span class="co">[</span><span class="ot">CLS</span><span class="co">]</span> representation of the full input bidirectionally, which is ideal for classification tasks. You fine-tune by adding a linear classification head (hidden_dim × 10k) on top of the pooled output and training with cross-entropy loss. Models like DeBERTa-v3 consistently top classification benchmarks and are well-understood for this use case.</span>
+<span id="cb2-165"><a href="#cb2-165" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-166"><a href="#cb2-166" aria-hidden="true" tabindex="-1"></a>The 10k label challenge is real: with 10k output classes, you need substantial labeled examples per class to train the classification head well. My first questions would be: how many labeled examples exist per label? If under 50 per class, zero-shot or few-shot approaches using a decoder model with structured output might actually outperform a fine-tuned classifier — GPT-4 with the full label taxonomy in the system prompt can classify without per-label training data.</span>
+<span id="cb2-167"><a href="#cb2-167" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-168"><a href="#cb2-168" aria-hidden="true" tabindex="-1"></a>If there are sufficient labels (ideally 200+ per class), fine-tune a RoBERTa-large or DeBERTa-v3-base with the classification head. Inference cost matters at 10k labels — encoder models are significantly cheaper at inference than large decoders, which matters when classifying millions of documents. For the proprietary label concern, on-prem fine-tuning keeps the data local.</span>
+<span id="cb2-169"><a href="#cb2-169" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-170"><a href="#cb2-170" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-171"><a href="#cb2-171" aria-hidden="true" tabindex="-1"></a>**Q2. How would you explain context window limitations to a customer who wants to "just feed in the whole database"?**</span>
+<span id="cb2-172"><a href="#cb2-172" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-173"><a href="#cb2-173" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb2-174"><a href="#cb2-174" aria-hidden="true" tabindex="-1"></a>I use an analogy first: "Think of the context window like a whiteboard. The model can only reason about what's written on the whiteboard right now. Your database is a library — you can't put the whole library on the whiteboard."</span>
+<span id="cb2-175"><a href="#cb2-175" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-176"><a href="#cb2-176" aria-hidden="true" tabindex="-1"></a>Then I get concrete about costs: a typical enterprise database might have 10 million documents averaging 1,000 tokens each — that's 10 billion tokens. At $3 per million tokens (Claude Sonnet pricing), that's $30,000 per query, with latency measured in hours. Even with 1M-token context windows (Gemini 1.5 Pro), you're still a factor of 10,000 short of "the whole database."</span>
+<span id="cb2-177"><a href="#cb2-177" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-178"><a href="#cb2-178" aria-hidden="true" tabindex="-1"></a>But the more important point is that it doesn't work even if it were free. Research (Liu et al., "Lost in the Middle," 2023) shows model performance degrades badly for information buried in the middle of very long contexts — models effectively use only the beginning and end of their context well. More context doesn't mean better reasoning; it often means worse.</span>
+<span id="cb2-179"><a href="#cb2-179" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-180"><a href="#cb2-180" aria-hidden="true" tabindex="-1"></a>The right solution is RAG: index the database as embeddings, retrieve the 3–5 most relevant chunks at query time, and give the model only the focused context it needs. The model reasons better with 2,000 tokens of relevant content than with 100,000 tokens of mixed relevance. I'd then walk through what an indexing and retrieval pipeline looks like for their specific database type.</span>
+<span id="cb2-181"><a href="#cb2-181" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-182"><a href="#cb2-182" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-183"><a href="#cb2-183" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-184"><a href="#cb2-184" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-185"><a href="#cb2-185" aria-hidden="true" tabindex="-1"></a><span class="fu">## Further Reading</span></span>
+<span id="cb2-186"><a href="#cb2-186" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-187"><a href="#cb2-187" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">Attention Is All You Need (Vaswani et al., 2017)</span><span class="co">](https://arxiv.org/abs/1706.03762)</span></span>
+<span id="cb2-188"><a href="#cb2-188" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">The Illustrated Transformer (Jay Alammar)</span><span class="co">](https://jalammar.github.io/illustrated-transformer/)</span></span>
+<span id="cb2-189"><a href="#cb2-189" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="co">[</span><span class="ot">RoFormer: Enhanced Transformer with Rotary Position Embedding</span><span class="co">](https://arxiv.org/abs/2104.09864)</span></span>
 </code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->
