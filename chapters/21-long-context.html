@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.6.43">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="A depth-first interview preparation guide covering Generative AI foundations, large language models, fine-tuning, GenAI systems architecture, and a dedicated track for Forward Deployed Engineers.">
+
+<title>21&nbsp; Long Context &amp; Efficient Attention – GenAI Interview Prep</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../chapters/22-speculative-decoding.html" rel="next">
+<link href="../chapters/20-ssm-mamba.html" rel="prev">
+<script src="../site_libs/quarto-html/quarto.js"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-7fd0fe4245b865325b8ce8dccb604d59.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-dc95f10abd972b9c41a78ec8992004fc.css" rel="prefetch" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-ccd92d5b9cd3e64de80ef7f1ead5b3e1.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-375668ddd5fab82322274c16a79adfb4.min.css" rel="prefetch" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-sidebar docked nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">GenAI Interview Prep</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/AKhileshPothuri/learnwithakhilesh"> <i class="bi bi-github" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+    <a href="https://github.com/AKhileshPothuri/learnwithakhilesh" title="Source Code" class="quarto-navigation-tool px-1" aria-label="Source Code"><i class="bi bi-github"></i></a>
+  <a href="" class="quarto-color-scheme-toggle quarto-navigation-tool  px-1" onclick="window.quartoToggleColorScheme(); return false;" title="Toggle dark mode"><i class="bi"></i></a>
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/19-moe.html">Part VI — Modern Architectures &amp; Efficiency</a></li><li class="breadcrumb-item"><a href="../chapters/21-long-context.html"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation docked overflow-auto">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Preface</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part I — Foundations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/01-intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">What Is Generative AI?</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/03-transformers.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">The Transformer Architecture</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part II — Large Language Models</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/04-llm-pretraining.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">LLM Pretraining — Data, Scale, and Paradigms</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/05-embeddings.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Embeddings — Representations That Encode Meaning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/06-inference.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Inference &amp; Decoding Strategies</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part III — Adapting &amp; Aligning LLMs</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/07-prompting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Prompt Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/08-finetuning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Fine-Tuning LLMs</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/09-peft-lora.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">PEFT, LoRA &amp; QLoRA</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/10-rlhf-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">RLHF &amp; Alignment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IV — GenAI Systems &amp; Architecture</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/11-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Retrieval-Augmented Generation (RAG)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/12-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Agents &amp; Tool Use</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/13-evaluation.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Evaluation — Measuring What Matters</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/14-deployment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Deployment &amp; Optimization</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part V — Forward Deployed Engineer Track</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/15-fde-overview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">The Forward Deployed Engineer Role</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/16-customer-scenarios.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Common GenAI Customer Use Cases</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/17-integration.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Enterprise Integration Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/18-safety-production.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Safety &amp; Responsible Deployment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VI — Modern Architectures &amp; Efficiency</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/19-moe.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Mixture of Experts (MoE)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/20-ssm-mamba.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/21-long-context.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/22-speculative-decoding.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VII — Reasoning &amp; Multimodal</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/23-reasoning-models.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/24-multimodal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/25-diffusion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VIII — Advanced Training &amp; Alignment</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/26-modern-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/27-synthetic-data.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Synthetic Data &amp; Data-Centric AI</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IX — Advanced Production Systems</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/28-advanced-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Advanced RAG Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/29-advanced-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Advanced Agents: MCP, Computer Use &amp; GUI Agents</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/30-prompt-optimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Prompt Optimization &amp; DSPy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/31-interpretability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Mechanistic Interpretability &amp; Sparse Autoencoders</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/32-observability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/appendix-ml-fundamentals.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">ML Fundamentals Refresher</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#the-context-window-problem" id="toc-the-context-window-problem" class="nav-link active" data-scroll-target="#the-context-window-problem"><span class="header-section-number">21.1</span> The Context Window Problem</a></li>
+  <li><a href="#flashattention" id="toc-flashattention" class="nav-link" data-scroll-target="#flashattention"><span class="header-section-number">21.2</span> FlashAttention</a></li>
+  <li><a href="#extending-context-with-rope" id="toc-extending-context-with-rope" class="nav-link" data-scroll-target="#extending-context-with-rope"><span class="header-section-number">21.3</span> Extending Context with RoPE</a></li>
+  <li><a href="#sparse-efficient-attention-variants" id="toc-sparse-efficient-attention-variants" class="nav-link" data-scroll-target="#sparse-efficient-attention-variants"><span class="header-section-number">21.4</span> Sparse &amp; Efficient Attention Variants</a></li>
+  <li><a href="#interview-questions" id="toc-interview-questions" class="nav-link" data-scroll-target="#interview-questions"><span class="header-section-number">21.5</span> Interview Questions</a></li>
+  </ul>
+<div class="toc-actions"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/21-long-context.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/19-moe.html">Part VI — Modern Architectures &amp; Efficiency</a></li><li class="breadcrumb-item"><a href="../chapters/21-long-context.html"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></a></li></ol></nav>
+<div class="quarto-title">
+<div class="quarto-title-block"><div><h1 class="title"><span id="sec-21" class="quarto-section-identifier"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Note
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Who this chapter is for:</strong> Mid / FDE <strong>What you’ll be able to answer after reading this:</strong></p>
+<ul>
+<li>Why the O(n²) attention bottleneck matters in practice and where it bites hardest</li>
+<li>How FlashAttention achieves the same mathematical result as standard attention while avoiding HBM bottlenecks</li>
+<li>Why models fail to extrapolate beyond their training context length and what RoPE extension methods actually do</li>
+<li>The practical tradeoffs of sparse attention variants: GQA, MQA, sliding window</li>
+<li>When extending context is the right answer versus chunked retrieval</li>
+</ul>
+</div>
+</div>
+<section id="the-context-window-problem" class="level2" data-number="21.1">
+<h2 data-number="21.1" class="anchored" data-anchor-id="the-context-window-problem"><span class="header-section-number">21.1</span> The Context Window Problem</h2>
+<p>Transformer attention is quadratic in sequence length in both time and memory. The raw computation of QK^T produces an n×n matrix requiring O(n²) multiplications and O(n²) storage. At n=4,096 (a typical base context), the attention matrix is ~64M elements — manageable. At n=32,768, it is ~4B elements per head (~8GB at FP16 for a single attention head, times the number of heads times batch size). At n=131,072, storing the attention matrix for a single head in FP16 requires 128GB. Standard attention implementation writes the full n×n matrix to GPU HBM (high-bandwidth memory) for the softmax computation, making long context not just expensive but physically impossible without algorithmic intervention. This is the hard ceiling that all long-context techniques attempt to work around.</p>
+<p>The KV cache problem at inference is distinct from but related to the training attention problem. During autoregressive generation, each new token must attend to all previous tokens’ keys and values. Those K and V tensors must be stored and retrieved for every generation step. The KV cache size scales as 2 × n × n_layers × n_heads × d_head × precision_bytes. For Llama-3-8B (32 layers, 8 KV heads in GQA, d_head=128, FP16): the KV cache is 2 × n × 32 × 8 × 128 × 2 = 131,072 × n bytes. At n=128k tokens, the KV cache is ~16.7GB for a single sequence. Serving a batch of 8 concurrent 128k-context users requires 134GB of KV cache — exceeding an A100 80GB GPU’s total memory. This KV cache pressure is why long-context serving is so expensive and why GQA (grouped-query attention) exists: by reducing the number of KV heads, GQA reduces KV cache size proportionally.</p>
+<p>Positional encodings introduce a qualitatively different problem: generalization. A model trained with sinusoidal absolute positional encodings at maximum length n_max simply has no learned representation for positions &gt; n_max. The positional embedding lookup table has no entry beyond position n_max. RoPE (Rotary Position Embedding) and ALiBi (Attention with Linear Biases) handle positions more flexibly, but RoPE’s rotational frequencies are calibrated to the training length. Tokens at positions far beyond the training distribution produce rotation angles that the model’s attention weights have never been trained to handle — the dot products between query and key vectors become erratic and the softmax distribution degrades. This is the extrapolation problem: even if you can fit the KV cache, the model may produce garbage outputs because its positional reasoning breaks down.</p>
+<p>The gap between a model’s nominal context window and its effective context window is practically significant. “Effective context” is the portion of the context from which the model reliably retrieves and uses information. Research on the “lost-in-the-middle” phenomenon demonstrates that long-context transformers, despite supporting up to n_max tokens, show a characteristic retrieval pattern: information at the very start and very end of the context is retrieved accurately, while information in the middle of long contexts is systematically underutilized. For a 128k-token context, relevant information buried in positions 20k–100k may effectively be invisible to the model. This means that a “128k context” model and a model that reliably uses all 128k tokens are not the same thing. When the relevant content will land in the middle of a long context, chunked retrieval can outperform naive long-context stuffing.</p>
+</section>
+<section id="flashattention" class="level2" data-number="21.2">
+<h2 data-number="21.2" class="anchored" data-anchor-id="flashattention"><span class="header-section-number">21.2</span> FlashAttention</h2>
+<p>The standard attention implementation has a memory bottleneck that is not the O(n²) computation itself but the O(n²) HBM reads and writes that computation requires. GPUs have a memory hierarchy: fast on-chip SRAM (shared memory and registers, ~20MB on A100), slow off-chip HBM (the “GPU memory” visible to users, ~80GB on A100), connected by a bandwidth-limited bus (~2 TB/s HBM bandwidth). Standard attention must write the n×n attention matrix S = QK^T/√d to HBM, read it back for softmax, write the softmax result P to HBM, read P back again for the PV multiplication to produce output. Each of these HBM round trips costs precious bandwidth. The actual FLOP arithmetic — matrix multiplications and the softmax — is not the bottleneck; the data movement is. Profiling shows that standard attention is HBM-bandwidth-bound, not compute-bound.</p>
+<p>FlashAttention’s core algorithmic insight is to compute attention output without ever materializing the full n×n matrix in HBM. The approach is tiling: divide the Q, K, V matrices into blocks that fit in SRAM (~128 or 256 rows at a time). For each tile of Q rows, iterate over tiles of K and V columns, computing partial attention scores, running an online softmax to track the running maximum and normalizer needed for numerically stable softmax, and accumulating partial output sums. When the tile-level loops complete, the running statistics are sufficient to produce the exact same output as standard attention — no approximation. The n×n attention matrix is computed implicitly in tiles and never written to HBM in full. HBM reads/writes are reduced from O(n²) to O(n × d) — reading Q, K, V once and writing the output once, proportional to the total number of elements in the input and output, not their pairwise products.</p>
+<p>The IO complexity improvement is the key metric. Standard attention performs O(n²) HBM reads/writes regardless of d.&nbsp;FlashAttention performs O(n × d / M) passes over the HBM, where M is the SRAM capacity, but each pass reads O(n × d) total — so the total HBM IO is O(n² d / M × d) which reduces to O(n × d) when M ≥ d.&nbsp;For practical d=128 and M=20MB, the reduction is roughly 100–200× fewer HBM accesses for long sequences. This translates directly to wall-clock speedup: FlashAttention is 2–4× faster than PyTorch’s standard attention implementation at n=2k and increasingly faster at longer sequences. The mathematical equivalence to standard attention means no quality degradation — outputs are bitwise identical (up to floating-point associativity differences).</p>
+<p>FlashAttention-2 (2023) improved the implementation in three ways: better parallelism by assigning different query blocks to different thread blocks (rather than different KV blocks), reducing synchronization overhead; reduced non-matmul FLOPs in the inner loop, bringing the attention kernel closer to the theoretical peak FLOP efficiency; and improved handling of causal masking to avoid wasteful computation on the lower triangle. The practical result was approximately 2× speedup over FlashAttention-1 and utilization above 70% of A100 peak FLOPS for head dimension 128. FlashAttention-3 (2024, targeting H100) adds asynchronous pipeline execution that overlaps softmax computation (on CUDA cores) with matrix multiplication (on Tensor Cores), exploits H100’s FP8 Tensor Cores for the matrix multiplications, and uses a warp-specialization technique to eliminate idle cycles. FlashAttention-3 achieves approximately 740 TFLOPS/s on H100, out of the theoretical peak of 989 TFLOPS/s — 75% utilization.</p>
+</section>
+<section id="extending-context-with-rope" class="level2" data-number="21.3">
+<h2 data-number="21.3" class="anchored" data-anchor-id="extending-context-with-rope"><span class="header-section-number">21.3</span> Extending Context with RoPE</h2>
+<p>RoPE (Rotary Position Embedding) encodes position by rotating query and key vectors in pairs of dimensions by angles that depend on position. For position m, the rotation angle for the i-th dimension pair is θ_i = m × b^{-2i/d}, where b is the base (typically 10,000 and d is the head dimension. The dot product Q_m · K_n becomes a function of only the relative position (m-n), giving RoPE relative position semantics without needing to explicitly compute relative position indices. Critically, the angles θ_i span a geometric range: low frequency for large dimension indices (slowly varying, captures long-range position distinctions), high frequency for small indices (rapidly varying, captures fine-grained position distinctions). The high-frequency dimensions cycle many times within the training context length and “know” how to handle positions up to n_max. Beyond n_max, those high-frequency dimensions enter positions they were never trained for, producing anomalous dot products.</p>
+<p>Position Interpolation (PI) (Chen et al., 2023) addresses the extrapolation problem by rescaling the position indices before applying RoPE rotations. If the model was trained with n_max=4k and you want to extend to 32k, interpolate positions by dividing all position indices by a scale factor s = 32k/4k = 8. Position index 32,000 is mapped to 32,000/8 = 4,000, which is within the training distribution. The model never sees positions outside [0, n_max] after rescaling. The cost: positions that previously had distinct absolute encodings are now compressed — position 4,000 and position 3,992 map to 500 and 499, much closer together than before. This reduces the model’s ability to distinguish nearby positions precisely, which typically requires fine-tuning of a few hundred steps to recover. PI requires fine-tuning on long-context data but dramatically less than training from scratch.</p>
+<p>NTK-aware interpolation (Neural Tangent Kernel-aware scaling) improves on PI by recognizing that high-frequency and low-frequency RoPE dimensions have different sensitivity to the scaling. Rather than applying a uniform scaling factor, NTK-aware interpolation changes the base b from 10,000 to a larger value b’ = b × s^{d/(d-2)}, where s is the target context extension factor. A larger base stretches the frequency spectrum of all dimensions, preserving high-frequency resolution while naturally extending the effective range. In practice, NTK interpolation requires less fine-tuning than PI to recover quality at long contexts, and often works zero-shot (without any fine-tuning) for moderate extension factors (up to 4–8×). For larger extension factors, fine-tuning on long-context data remains beneficial.</p>
+<p>YaRN (Yet another RoPE extensioN) combines NTK-aware interpolation with an attention scaling correction. As context length extends and positions interpolate, the attention logit magnitude distribution shifts — token entropy (how spread out the attention softmax distribution is) changes in ways that hurt model performance. YaRN introduces a temperature factor t applied to the attention logits: attention(Q,K,V) = softmax(QK^T/(√d × t)) V. The temperature t is set to compensate for the distribution shift induced by the positional interpolation, keeping the softmax sharpness similar to what the model experienced during training. YaRN also applies dimension-dependent interpolation: high-frequency dimensions get less scaling (they handle short-range structure well already) and low-frequency dimensions get more scaling (they need to extend their range). Llama-3 models use a variant of RoPE extension for their extended context versions, and many open-source long-context models (Qwen2, Mistral NeMo, etc.) use YaRN or similar methods.</p>
+<p>The distinction between “supports 64k context” and “effectively uses 64k context” has practical implications for system design. A model trained on 4k tokens and extended to 64k via RoPE interpolation will show degraded quality on tasks that require retrieving information from positions 40k–60k, even if the model technically runs without error. Proper long-context capability requires either training on data sequences with length up to the target context from the start, or fine-tuning on carefully constructed long-context datasets with retrieval tasks spread across the full target length. Models that advertise 64k or 128k context windows but were extended with only moderate fine-tuning often have the “lost-in-the-middle” problem amplified: the interpolated positions may be attended to even less consistently than the natural positional drift in models trained to their advertised length.</p>
+</section>
+<section id="sparse-efficient-attention-variants" class="level2" data-number="21.4">
+<h2 data-number="21.4" class="anchored" data-anchor-id="sparse-efficient-attention-variants"><span class="header-section-number">21.4</span> Sparse &amp; Efficient Attention Variants</h2>
+<p>Sliding window attention (SWA), used in Mistral-7B and Gemma models, restricts each token’s attention to a window of the w most recent tokens rather than attending to all previous tokens. A token at position t attends only to positions [t-w, t]. With a window size w=4096, compute per token is O(w × d) instead of O(n × d), and the full forward pass is O(n × w) instead of O(n²). For sequences shorter than w, SWA is equivalent to full attention. For sequences longer than w, SWA is an approximation that can miss long-range dependencies. Mistral-7B (original) uses SWA with a 4096-token window in alternating layers — every other attention layer is full attention, providing some long-range coverage. The KV cache in SWA only needs to store the last w positions, reducing memory proportionally. Mistral-7B-v0.2 and later revisions extended to longer full-attention context.</p>
+<p>Multi-head attention (MHA), multi-query attention (MQA), and grouped-query attention (GQA) represent a design axis controlling KV cache size versus model quality. Standard MHA has h query heads and h independent key-value head pairs: each head maintains separate K and V projections. The KV cache stores h_kv = h key-value tensors per layer. MQA (Shazeer, 2019) uses a single shared K and V projection across all h query heads: every query head attends to the same K and V, reducing KV cache storage by a factor of h. The quality penalty from MQA is measurable but small — empirically, Falcons and early code models that used MQA maintained competitive benchmark scores. GQA (Ainslie et al., 2023) generalizes: divide h query heads into g groups; each group shares one K and one V head. KV cache scales by factor g/h. Llama-3 uses g=8 KV heads for h=32 query heads — a 4× KV cache reduction with minimal quality penalty. GQA is now the dominant attention variant in production LLMs because it provides most of MQA’s memory savings with better quality (the grouping allows some per-group specialization that all-shared MQA cannot).</p>
+<p>The Longformer global+local attention pattern addresses documents where most tokens need local context (sentences, clauses) but a small number of special tokens — document markers, question tokens, summaries — need global attention to every position. Longformer uses sliding window attention for most positions (O(n×w) cost) plus full attention from designated global tokens to all positions (O(n×n_global) cost). For n_global much smaller than n, total cost is O(n×w + n×n_global) ≈ O(n×w). This enables processing very long documents (book-length, up to 32k tokens in the original paper) while retaining the ability for key positions to aggregate global information. The limitation is that the global token designation must be known at inference time — Longformer is most natural for tasks with well-defined global context (QA where the question is a natural “global” token, document classification where a CLS token attends globally).</p>
+<p>Practical guidance on when you actually need &gt;32k context: most enterprise tasks that claim to need very long context can be handled with chunked retrieval at 8k–16k chunks, with semantic retrieval selecting the most relevant chunks. The cases where long context genuinely outperforms chunked retrieval are: tasks requiring holistic reasoning across the full document (legal contract analysis where clauses in different sections modify each other, code bases where calling code and callee code are far apart, longitudinal dialogue where early conversation context influences late responses), and tasks where the relevant information is unpredictable ahead of time (you do not know which parts of a 200k-token document will be relevant to a query, so you cannot preselect chunks). For straightforward factual extraction — “what was the revenue in Q3?” — a 4k-chunk semantic retrieval pipeline at 10ms latency beats a 200k-context model at 2000ms latency.</p>
+</section>
+<section id="interview-questions" class="level2" data-number="21.5">
+<h2 data-number="21.5" class="anchored" data-anchor-id="interview-questions"><span class="header-section-number">21.5</span> Interview Questions</h2>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. Why does processing a 100k-token document in an LLM cost so much more than a 10k-token document?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Transformer attention scales quadratically in time and memory with sequence length. Going from 10k to 100k tokens (a 10× increase in length) increases attention computation by 100× (10² = 100), not 10×. The attention mechanism computes pairwise relationships between every position pair: for a 10k-token sequence, that is 100M pairs; for 100k tokens, it is 10B pairs — 100 times more computation.</p>
+<p>Memory scales the same way. The attention matrix for 100k tokens at FP16 requires approximately 40GB per attention head — far exceeding what fits in GPU memory for standard attention. Even with FlashAttention (which avoids storing the full matrix), the KV cache that accumulates during generation grows linearly: at 100k tokens for a 32-layer model with 32 KV heads, the KV cache alone is roughly 50GB per sequence. This limits how many concurrent users can be served on a given GPU cluster and dramatically increases inference cost.</p>
+<p>In practice, doubling context from 64k to 128k roughly quadruples the attention compute cost (for full attention) and roughly doubles the KV cache memory requirement (since KV cache is linear in n). The combined effect on dollar-cost-per-query is typically a 5–10× increase from 8k to 128k context for the same model.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. What is FlashAttention and what problem does it solve?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>FlashAttention is an attention algorithm that computes the exact same output as standard attention but reorganizes computation to avoid writing the n×n attention matrix to GPU memory, making attention much faster and more memory-efficient at long sequence lengths.</p>
+<p>Standard attention must write the n×n matrix (QK^T / √d) to GPU HBM (the main GPU memory), read it back for softmax, write the softmax probabilities, and read them again for the weighted sum of values. These HBM read-write operations are slow — GPU HBM bandwidth is limited to ~2 TB/s while on-chip SRAM runs at ~20 TB/s. For long sequences, the attention implementation becomes bottlenecked by this data movement, not by the actual arithmetic.</p>
+<p>FlashAttention tiles the computation: it processes small blocks of Q, K, V that fit in on-chip SRAM (the fast memory), maintains running softmax statistics per tile, and accumulates the output incrementally. The full n×n matrix is never written to HBM. Total HBM traffic drops from O(n²) to O(n × d), which for long sequences is a 10–100× reduction. The result: 2–4× faster attention at n=2048 and increasingly faster at longer sequences. Since the mathematical result is identical to standard attention, there is no quality tradeoff — FlashAttention is a pure performance optimization.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q3. What is the “lost in the middle” problem and why does it matter?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The “lost in the middle” problem refers to a systematic failure in long-context LLMs where the model reliably uses information at the beginning and end of a long context but significantly underperforms when the relevant information is located in the middle section. In experiments, models given 20 documents in context (where the answer is in one of them) show highest accuracy when the answer document is the first or last in the list, and worst accuracy when it is document 10 or 11.</p>
+<p>The problem arises from how transformers handle long sequences. Attention naturally has a recency bias (the last few tokens tend to have high attention weights in causal models) and a primacy bias (the first tokens set context strongly). Middle positions compete with many other positions for attention weight and often receive proportionally less attention, especially in long contexts where the softmax distribution spreads across many options. Fine-tuning on long-context tasks helps, but does not fully eliminate the effect.</p>
+<p>It matters practically because when you stuff a 64k-token context window with documents, the ordering of those documents affects answer quality — an important document buried in the middle may effectively be invisible to the model. For RAG and long-document tasks, placing the most relevant content at the beginning or end of the context is a simple heuristic that consistently improves quality. More broadly, it is a reminder that a model’s nominal context window is not the same as its effective context: “supports 128k tokens” does not mean “reliably uses all 128k tokens equally.”</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q4. Walk through why standard attention requires O(n²) memory and how FlashAttention avoids materializing the full attention matrix.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Standard attention computes: S = QK^T / √d (shape n×n), P = softmax(S) (shape n×n), O = PV (shape n×d). The bottleneck is the intermediate S and P matrices of shape n×n.&nbsp;At n=32,768 and FP16, that is 32768² × 2 bytes ≈ 4GB per head — and the model has many heads. Standard PyTorch writes S and P to HBM because they exceed on-chip SRAM capacity, then reads them back for subsequent operations. This O(n²) HBM traffic is the binding bottleneck for long sequences.</p>
+<p>FlashAttention avoids materializing S and P by tiling Q into blocks of size B_r rows and iterating over tiles of K and V of size B_c columns. For each (Q_tile, K_tile) pair, compute partial scores S_tile = Q_tile × K_tile^T / √d (shape B_r × B_c, fits in SRAM). Use an online softmax update: maintain running row-wise maximum m_i and normalizer l_i for each query row. For each new K tile, update m_i = max(m_i, row_max(S_tile)) and l_i = e^{m_i_old - m_i_new} × l_i + row_sum(exp(S_tile - m_i)), then update the output accumulator O_i = e^{m_i_old - m_i_new} × O_i + exp(S_tile - m_i) × V_tile. After all K/V tiles are processed, finalize each output row as O_i / l_i.</p>
+<p>This algorithm computes the exact softmax without storing the full S or P matrices — only B_r × B_c tiles ever exist simultaneously, and they live in SRAM. HBM reads: Q, K, V once each — O(nd). HBM writes: O once — O(nd). The n×n dependency is computed through tile loops but never stored. Memory complexity drops from O(n²) to O(n), and HBM traffic from O(n²d) to O(nd), at identical arithmetic output.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q5. Explain RoPE position interpolation — why does a model trained at 4k context struggle with 32k without fine-tuning?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-10-contents" aria-controls="callout-10" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-10" class="callout-10-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>RoPE encodes position m by rotating query and key vectors by angles θ_i^{(m)} = m × b^{-2i/d} for each dimension pair i. These angles span a geometric range: the lowest frequency dimension has angle that cycles once over the full training length, while the highest frequency dimension cycles many more times. The model’s attention weights learned during training capture the meaningful range of angle differences Δθ = (m-n) × b^{-2i/d} for |m-n| ≤ n_max.</p>
+<p>At position m &gt; n_max (e.g., m = 20,000 in a model trained to n_max = 4,096), high-frequency dimension pairs produce rotation angles far outside any difference they were trained to handle. A query at position 20,000 and a key at position 19,990 (relative distance 10) should have a small, familiar angle difference. But the absolute rotation angles at those positions are enormous and were never seen during training. The dot product Q_m · K_n depends on the cosine of the angle difference: if the frequencies and phases are within training distribution, the model handles them correctly. Outside that distribution, dot products become erratic — sometimes too large, sometimes near zero — degrading the attention pattern and producing incoherent outputs.</p>
+<p>Position Interpolation fixes this by scaling all position indices by n_max / n_target before applying RoPE: position 20,000 in a 32k extension maps to 20,000 × (4096/32768) = 2,500, which is well within the training distribution. Every position the model sees is now in [0, n_max] regardless of the actual sequence length. The compression of position encodings (two nearby tokens get closer position angles) slightly degrades local position discrimination, which is why fine-tuning for a few hundred steps on long-context data recovers nearly all the quality.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q6. Compare GQA vs MQA vs MHA: what does each optimize and at what cost?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-12-contents" aria-controls="callout-12" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-12" class="callout-12-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>All three variants represent different points on the KV cache size vs.&nbsp;representation quality tradeoff for the attention mechanism’s key-value projections.</p>
+<p>MHA (Multi-Head Attention): h query heads, h key-value head pairs. Each head learns independent Q, K, V projections. KV cache size: 2 × n_layers × h × n × d_head × 2 bytes. Maximum representational richness — each head can attend to different aspects independently. Baseline for quality comparisons.</p>
+<p>MQA (Multi-Query Attention): h query heads, but all share a single K and V projection. KV cache size: 2 × n_layers × 1 × n × d_head × 2 bytes — reduced by factor h compared to MHA. Quality penalty: measurable on complex multi-hop reasoning (where different heads attending to different information sources is important), small for simpler tasks. Inference speedup comes from reduced KV cache bandwidth — at long context, fetching the KV cache from HBM per decode step is a bandwidth bottleneck; smaller cache = faster decode. Used in: early Falcon models, some Google models.</p>
+<p>GQA (Grouped Query Attention): h query heads divided into g groups (g &lt; h), each group shares one K and one V head. KV cache size: 2 × n_layers × g × n × d_head × 2 bytes — reduced by factor h/g. Each group of h/g query heads attends to shared K/V for that group. With g=8 and h=32, KV cache is 4× smaller than MHA; each group of 4 heads shares K/V. Quality is between MHA and MQA: small groups mean some independence between head groups. Used in: Llama-3 (h=32, g=8), Gemma, Mistral. GQA is now the standard — it captures most of MQA’s memory/speed benefit with minimal quality penalty over MHA.</p>
+<p>Practical implication: at 128k context, switching from MHA to GQA with g=8 reduces KV cache from ~50GB to ~12.5GB for Llama-3-8B, enabling more concurrent users per GPU and longer effective context windows within a fixed memory budget.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Forward Deployed Engineer
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q7. A customer’s RAG system uses 8k context windows but their contracts are 50k tokens. Should you extend context or chunk?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-14-contents" aria-controls="callout-14" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-14" class="callout-14-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The right answer depends on the query types, but for legal contracts, chunked retrieval with careful chunking strategy is usually better than naive 50k context extension, while a hybrid approach often works best.</p>
+<p>For contracts, the key question is: does the customer need holistic cross-document reasoning (e.g., “does clause 7 conflict with clause 23?”) or targeted factual retrieval (“what is the governing law?”). For targeted retrieval, semantic chunking + embedding-based retrieval at 8k context outperforms 50k context because the relevant passage is small and easily retrievable, while 50k context adds cost and latency without quality benefit. For holistic reasoning, long context is genuinely needed — cross-clause dependencies cannot be resolved by any retrieval system that never sees both clauses simultaneously.</p>
+<p>Practical recommendation: 1. Implement hierarchical chunking: chunk at the section level (typically 500-2k tokens per section), embed section summaries plus full text. For simple factual queries, retrieve relevant sections and answer at 8k context. 2. For cross-clause reasoning queries, use a 32k or 50k context model (Llama-3-70B supports 128k, Gemini 1.5 Pro supports 1M). The cost per query is higher but these queries are less frequent. 3. Identify query types in advance: a classifier at the router level can direct simple queries to the cheap RAG path and complex cross-document queries to the expensive long-context path. 4. Do NOT upgrade the entire system to 50k context to handle the 10% of queries that need it — 10x cost increase for the whole system is unjustifiable. Use tiered routing.</p>
+<p>For the 50k context model choice: at 50k tokens, attention compute is 2,500× more expensive than at 1k tokens. First-token latency on a well-optimized 8B model will be 5–15 seconds on a single A100. Ensure the customer’s use case can tolerate this latency before committing.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Forward Deployed Engineer
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q8. What are the real-world latency and cost implications of using a 128k context model vs.&nbsp;a chunked RAG pipeline?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-16-contents" aria-controls="callout-16" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-16" class="callout-16-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The latency and cost gap between these approaches is significant and often underestimated when teams prototype with small document sets.</p>
+<p>Latency comparison at 128k context vs.&nbsp;8k RAG pipeline on identical hardware (single A100 80GB): - 128k context prefill (filling the context with the document): 15–45 seconds for a 7-8B model. This is the dominant latency term. FlashAttention helps but O(n²) prefill compute at 128k is fundamentally slow. - 8k RAG pipeline prefill (embedding lookup + retrieval + 8k context model): 200-500ms total including embedding inference, vector search, and the model prefill. A 100× latency reduction. - Decode (generating the answer, typically 200-500 tokens) is similar for both — decode is token-count-bound, not context-length-bound once prefill is complete.</p>
+<p>Cost comparison on AWS, approximate: - 128k context via API (GPT-4o or Claude 3.5): $10–15 per 128k-token context at standard input token pricing. At 1000 queries/day: $10,000–$15,000/day. - 8k RAG pipeline via API: $0.15–0.30 per query (embedding + 8k context model query). At 1000 queries/day: $150–$300/day. - Cost ratio: 50–100× in favor of chunked RAG for the same throughput.</p>
+<p>Self-hosted comparison: 128k context requires 2× A100 80GB minimum (KV cache + weights). 8k context can run on 1× A100 40GB. Infrastructure cost per GPU is ~$3/hour on reserved instances; 128k context uses 2 GPUs vs.&nbsp;1 GPU for 8k, plus lower throughput per GPU due to longer prefill.</p>
+<p>Recommendation: reserve 128k context for genuinely irreducible long-context tasks. For everything else, chunked RAG with 8k context windows provides 50–100× cost reduction and 10–50× latency reduction with comparable or better quality (since relevant chunks are selected, not buried in a long context suffering from lost-in-the-middle degradation).</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+
+<!-- -->
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const disableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'prefetch';
+    }
+  }
+  const enableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'stylesheet';
+    }
+  }
+  const manageTransitions = (selector, allowTransitions) => {
+    const els = window.document.querySelectorAll(selector);
+    for (let i=0; i < els.length; i++) {
+      const el = els[i];
+      if (allowTransitions) {
+        el.classList.remove('notransition');
+      } else {
+        el.classList.add('notransition');
+      }
+    }
+  }
+  const toggleGiscusIfUsed = (isAlternate, darkModeDefault) => {
+    const baseTheme = document.querySelector('#giscus-base-theme')?.value ?? 'light';
+    const alternateTheme = document.querySelector('#giscus-alt-theme')?.value ?? 'dark';
+    let newTheme = '';
+    if(darkModeDefault) {
+      newTheme = isAlternate ? baseTheme : alternateTheme;
+    } else {
+      newTheme = isAlternate ? alternateTheme : baseTheme;
+    }
+    const changeGiscusTheme = () => {
+      // From: https://github.com/giscus/giscus/issues/336
+      const sendMessage = (message) => {
+        const iframe = document.querySelector('iframe.giscus-frame');
+        if (!iframe) return;
+        iframe.contentWindow.postMessage({ giscus: message }, 'https://giscus.app');
+      }
+      sendMessage({
+        setConfig: {
+          theme: newTheme
+        }
+      });
+    }
+    const isGiscussLoaded = window.document.querySelector('iframe.giscus-frame') !== null;
+    if (isGiscussLoaded) {
+      changeGiscusTheme();
+    }
+  }
+  const toggleColorMode = (alternate) => {
+    // Switch the stylesheets
+    const alternateStylesheets = window.document.querySelectorAll('link.quarto-color-scheme.quarto-color-alternate');
+    manageTransitions('#quarto-margin-sidebar .nav-link', false);
+    if (alternate) {
+      enableStylesheet(alternateStylesheets);
+      for (const sheetNode of alternateStylesheets) {
+        if (sheetNode.id === "quarto-bootstrap") {
+          toggleBodyColorMode(sheetNode);
+        }
+      }
+    } else {
+      disableStylesheet(alternateStylesheets);
+      toggleBodyColorPrimary();
+    }
+    manageTransitions('#quarto-margin-sidebar .nav-link', true);
+    // Switch the toggles
+    const toggles = window.document.querySelectorAll('.quarto-color-scheme-toggle');
+    for (let i=0; i < toggles.length; i++) {
+      const toggle = toggles[i];
+      if (toggle) {
+        if (alternate) {
+          toggle.classList.add("alternate");     
+        } else {
+          toggle.classList.remove("alternate");
+        }
+      }
+    }
+    // Hack to workaround the fact that safari doesn't
+    // properly recolor the scrollbar when toggling (#1455)
+    if (navigator.userAgent.indexOf('Safari') > 0 && navigator.userAgent.indexOf('Chrome') == -1) {
+      manageTransitions("body", false);
+      window.scrollTo(0, 1);
+      setTimeout(() => {
+        window.scrollTo(0, 0);
+        manageTransitions("body", true);
+      }, 40);  
+    }
+  }
+  const isFileUrl = () => { 
+    return window.location.protocol === 'file:';
+  }
+  const hasAlternateSentinel = () => {  
+    let styleSentinel = getColorSchemeSentinel();
+    if (styleSentinel !== null) {
+      return styleSentinel === "alternate";
+    } else {
+      return false;
+    }
+  }
+  const setStyleSentinel = (alternate) => {
+    const value = alternate ? "alternate" : "default";
+    if (!isFileUrl()) {
+      window.localStorage.setItem("quarto-color-scheme", value);
+    } else {
+      localAlternateSentinel = value;
+    }
+  }
+  const getColorSchemeSentinel = () => {
+    if (!isFileUrl()) {
+      const storageValue = window.localStorage.getItem("quarto-color-scheme");
+      return storageValue != null ? storageValue : localAlternateSentinel;
+    } else {
+      return localAlternateSentinel;
+    }
+  }
+  const darkModeDefault = false;
+  let localAlternateSentinel = darkModeDefault ? 'alternate' : 'default';
+  // Dark / light mode switch
+  window.quartoToggleColorScheme = () => {
+    // Read the current dark / light value 
+    let toAlternate = !hasAlternateSentinel();
+    toggleColorMode(toAlternate);
+    setStyleSentinel(toAlternate);
+    toggleGiscusIfUsed(toAlternate, darkModeDefault);
+  };
+  // Ensure there is a toggle, if there isn't float one in the top right
+  if (window.document.querySelector('.quarto-color-scheme-toggle') === null) {
+    const a = window.document.createElement('a');
+    a.classList.add('top-right');
+    a.classList.add('quarto-color-scheme-toggle');
+    a.href = "";
+    a.onclick = function() { try { window.quartoToggleColorScheme(); } catch {} return false; };
+    const i = window.document.createElement("i");
+    i.classList.add('bi');
+    a.appendChild(i);
+    window.document.body.appendChild(a);
+  }
+  // Switch to dark mode if need be
+  if (hasAlternateSentinel()) {
+    toggleColorMode(true);
+  } else {
+    toggleColorMode(false);
+  }
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const onCopySuccess = function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  }
+  const getTextToCopy = function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+    text: getTextToCopy
+  });
+  clipboard.on('success', onCopySuccess);
+  if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+    const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+      text: getTextToCopy,
+      container: window.document.getElementById('quarto-embedded-source-code-modal')
+    });
+    clipboardModal.on('success', onCopySuccess);
+  }
+  const viewSource = window.document.getElementById('quarto-view-source') ||
+                     window.document.getElementById('quarto-code-tools-source');
+  if (viewSource) {
+    const sourceUrl = viewSource.getAttribute("data-quarto-source-url");
+    viewSource.addEventListener("click", function(e) {
+      if (sourceUrl) {
+        // rstudio viewer pane
+        if (/\bcapabilities=\b/.test(window.location)) {
+          window.open(sourceUrl);
+        } else {
+          window.location.href = sourceUrl;
+        }
+      } else {
+        const modal = new bootstrap.Modal(document.getElementById('quarto-embedded-source-code-modal'));
+        modal.show();
+      }
+      return false;
+    });
+  }
+  function toggleCodeHandler(show) {
+    return function(e) {
+      const detailsSrc = window.document.querySelectorAll(".cell > details > .sourceCode");
+      for (let i=0; i<detailsSrc.length; i++) {
+        const details = detailsSrc[i].parentElement;
+        if (show) {
+          details.open = true;
+        } else {
+          details.removeAttribute("open");
+        }
+      }
+      const cellCodeDivs = window.document.querySelectorAll(".cell > .sourceCode");
+      const fromCls = show ? "hidden" : "unhidden";
+      const toCls = show ? "unhidden" : "hidden";
+      for (let i=0; i<cellCodeDivs.length; i++) {
+        const codeDiv = cellCodeDivs[i];
+        if (codeDiv.classList.contains(fromCls)) {
+          codeDiv.classList.remove(fromCls);
+          codeDiv.classList.add(toCls);
+        } 
+      }
+      return false;
+    }
+  }
+  const hideAllCode = window.document.getElementById("quarto-hide-all-code");
+  if (hideAllCode) {
+    hideAllCode.addEventListener("click", toggleCodeHandler(false));
+  }
+  const showAllCode = window.document.getElementById("quarto-show-all-code");
+  if (showAllCode) {
+    showAllCode.addEventListener("click", toggleCodeHandler(true));
+  }
+    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+    var mailtoRegex = new RegExp(/^mailto:/);
+      var filterRegex = new RegExp("https:\/\/akhileshpothuri\.github\.io\/learnwithakhilesh");
+    var isInternal = (href) => {
+        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+    }
+    // Inspect non-navigation links and adorn them if external
+ 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+    for (var i=0; i<links.length; i++) {
+      const link = links[i];
+      if (!isInternal(link.href)) {
+        // undo the damage that might have been done by quarto-nav.js in the case of
+        // links that we want to consider external
+        if (link.dataset.originalHref !== undefined) {
+          link.href = link.dataset.originalHref;
+        }
+      }
+    }
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      if (note) {
+        return note.innerHTML;
+      } else {
+        return "";
+      }
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../chapters/20-ssm-mamba.html" class="pagination-link" aria-label="State Space Models: Mamba &amp; Beyond">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../chapters/22-speculative-decoding.html" class="pagination-link" aria-label="Speculative Decoding">
+        <span class="nav-page-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
+<div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># Long Context &amp; Efficient Attention {#sec-21}</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>::: {.callout-note}</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>**Who this chapter is for:** Mid / FDE</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>**What you'll be able to answer after reading this:**</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Why the O(n²) attention bottleneck matters in practice and where it bites hardest</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How FlashAttention achieves the same mathematical result as standard attention while avoiding HBM bottlenecks</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Why models fail to extrapolate beyond their training context length and what RoPE extension methods actually do</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The practical tradeoffs of sparse attention variants: GQA, MQA, sliding window</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>When extending context is the right answer versus chunked retrieval</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="fu">## The Context Window Problem</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>Transformer attention is quadratic in sequence length in both time and memory. The raw computation of QK^T produces an n×n matrix requiring O(n²) multiplications and O(n²) storage. At n=4,096 (a typical base context), the attention matrix is ~64M elements — manageable. At n=32,768, it is ~4B elements per head (~8GB at FP16 for a single attention head, times the number of heads times batch size). At n=131,072, storing the attention matrix for a single head in FP16 requires 128GB. Standard attention implementation writes the full n×n matrix to GPU HBM (high-bandwidth memory) for the softmax computation, making long context not just expensive but physically impossible without algorithmic intervention. This is the hard ceiling that all long-context techniques attempt to work around.</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>The KV cache problem at inference is distinct from but related to the training attention problem. During autoregressive generation, each new token must attend to all previous tokens' keys and values. Those K and V tensors must be stored and retrieved for every generation step. The KV cache size scales as 2 × n × n_layers × n_heads × d_head × precision_bytes. For Llama-3-8B (32 layers, 8 KV heads in GQA, d_head=128, FP16): the KV cache is 2 × n × 32 × 8 × 128 × 2 = 131,072 × n bytes. At n=128k tokens, the KV cache is ~16.7GB for a single sequence. Serving a batch of 8 concurrent 128k-context users requires 134GB of KV cache — exceeding an A100 80GB GPU's total memory. This KV cache pressure is why long-context serving is so expensive and why GQA (grouped-query attention) exists: by reducing the number of KV heads, GQA reduces KV cache size proportionally.</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>Positional encodings introduce a qualitatively different problem: generalization. A model trained with sinusoidal absolute positional encodings at maximum length n_max simply has no learned representation for positions &gt; n_max. The positional embedding lookup table has no entry beyond position n_max. RoPE (Rotary Position Embedding) and ALiBi (Attention with Linear Biases) handle positions more flexibly, but RoPE's rotational frequencies are calibrated to the training length. Tokens at positions far beyond the training distribution produce rotation angles that the model's attention weights have never been trained to handle — the dot products between query and key vectors become erratic and the softmax distribution degrades. This is the extrapolation problem: even if you can fit the KV cache, the model may produce garbage outputs because its positional reasoning breaks down.</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>The gap between a model's nominal context window and its effective context window is practically significant. "Effective context" is the portion of the context from which the model reliably retrieves and uses information. Research on the "lost-in-the-middle" phenomenon demonstrates that long-context transformers, despite supporting up to n_max tokens, show a characteristic retrieval pattern: information at the very start and very end of the context is retrieved accurately, while information in the middle of long contexts is systematically underutilized. For a 128k-token context, relevant information buried in positions 20k–100k may effectively be invisible to the model. This means that a "128k context" model and a model that reliably uses all 128k tokens are not the same thing. When the relevant content will land in the middle of a long context, chunked retrieval can outperform naive long-context stuffing.</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a><span class="fu">## FlashAttention</span></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>The standard attention implementation has a memory bottleneck that is not the O(n²) computation itself but the O(n²) HBM reads and writes that computation requires. GPUs have a memory hierarchy: fast on-chip SRAM (shared memory and registers, ~20MB on A100), slow off-chip HBM (the "GPU memory" visible to users, ~80GB on A100), connected by a bandwidth-limited bus (~2 TB/s HBM bandwidth). Standard attention must write the n×n attention matrix S = QK^T/√d to HBM, read it back for softmax, write the softmax result P to HBM, read P back again for the PV multiplication to produce output. Each of these HBM round trips costs precious bandwidth. The actual FLOP arithmetic — matrix multiplications and the softmax — is not the bottleneck; the data movement is. Profiling shows that standard attention is HBM-bandwidth-bound, not compute-bound.</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>FlashAttention's core algorithmic insight is to compute attention output without ever materializing the full n×n matrix in HBM. The approach is tiling: divide the Q, K, V matrices into blocks that fit in SRAM (~128 or 256 rows at a time). For each tile of Q rows, iterate over tiles of K and V columns, computing partial attention scores, running an online softmax to track the running maximum and normalizer needed for numerically stable softmax, and accumulating partial output sums. When the tile-level loops complete, the running statistics are sufficient to produce the exact same output as standard attention — no approximation. The n×n attention matrix is computed implicitly in tiles and never written to HBM in full. HBM reads/writes are reduced from O(n²) to O(n × d) — reading Q, K, V once and writing the output once, proportional to the total number of elements in the input and output, not their pairwise products.</span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>The IO complexity improvement is the key metric. Standard attention performs O(n²) HBM reads/writes regardless of d. FlashAttention performs O(n × d / M) passes over the HBM, where M is the SRAM capacity, but each pass reads O(n × d) total — so the total HBM IO is O(n² d / M × d) which reduces to O(n × d) when M ≥ d. For practical d=128 and M=20MB, the reduction is roughly 100–200× fewer HBM accesses for long sequences. This translates directly to wall-clock speedup: FlashAttention is 2–4× faster than PyTorch's standard attention implementation at n=2k and increasingly faster at longer sequences. The mathematical equivalence to standard attention means no quality degradation — outputs are bitwise identical (up to floating-point associativity differences).</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>FlashAttention-2 (2023) improved the implementation in three ways: better parallelism by assigning different query blocks to different thread blocks (rather than different KV blocks), reducing synchronization overhead; reduced non-matmul FLOPs in the inner loop, bringing the attention kernel closer to the theoretical peak FLOP efficiency; and improved handling of causal masking to avoid wasteful computation on the lower triangle. The practical result was approximately 2× speedup over FlashAttention-1 and utilization above 70% of A100 peak FLOPS for head dimension 128. FlashAttention-3 (2024, targeting H100) adds asynchronous pipeline execution that overlaps softmax computation (on CUDA cores) with matrix multiplication (on Tensor Cores), exploits H100's FP8 Tensor Cores for the matrix multiplications, and uses a warp-specialization technique to eliminate idle cycles. FlashAttention-3 achieves approximately 740 TFLOPS/s on H100, out of the theoretical peak of 989 TFLOPS/s — 75% utilization.</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a><span class="fu">## Extending Context with RoPE</span></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>RoPE (Rotary Position Embedding) encodes position by rotating query and key vectors in pairs of dimensions by angles that depend on position. For position m, the rotation angle for the i-th dimension pair is θ_i = m × b^{-2i/d}, where b is the base (typically 10,000 and d is the head dimension. The dot product Q_m · K_n becomes a function of only the relative position (m-n), giving RoPE relative position semantics without needing to explicitly compute relative position indices. Critically, the angles θ_i span a geometric range: low frequency for large dimension indices (slowly varying, captures long-range position distinctions), high frequency for small indices (rapidly varying, captures fine-grained position distinctions). The high-frequency dimensions cycle many times within the training context length and "know" how to handle positions up to n_max. Beyond n_max, those high-frequency dimensions enter positions they were never trained for, producing anomalous dot products.</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>Position Interpolation (PI) (Chen et al., 2023) addresses the extrapolation problem by rescaling the position indices before applying RoPE rotations. If the model was trained with n_max=4k and you want to extend to 32k, interpolate positions by dividing all position indices by a scale factor s = 32k/4k = 8. Position index 32,000 is mapped to 32,000/8 = 4,000, which is within the training distribution. The model never sees positions outside <span class="co">[</span><span class="ot">0, n_max</span><span class="co">]</span> after rescaling. The cost: positions that previously had distinct absolute encodings are now compressed — position 4,000 and position 3,992 map to 500 and 499, much closer together than before. This reduces the model's ability to distinguish nearby positions precisely, which typically requires fine-tuning of a few hundred steps to recover. PI requires fine-tuning on long-context data but dramatically less than training from scratch.</span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a>NTK-aware interpolation (Neural Tangent Kernel-aware scaling) improves on PI by recognizing that high-frequency and low-frequency RoPE dimensions have different sensitivity to the scaling. Rather than applying a uniform scaling factor, NTK-aware interpolation changes the base b from 10,000 to a larger value b' = b × s^{d/(d-2)}, where s is the target context extension factor. A larger base stretches the frequency spectrum of all dimensions, preserving high-frequency resolution while naturally extending the effective range. In practice, NTK interpolation requires less fine-tuning than PI to recover quality at long contexts, and often works zero-shot (without any fine-tuning) for moderate extension factors (up to 4–8×). For larger extension factors, fine-tuning on long-context data remains beneficial.</span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a>YaRN (Yet another RoPE extensioN) combines NTK-aware interpolation with an attention scaling correction. As context length extends and positions interpolate, the attention logit magnitude distribution shifts — token entropy (how spread out the attention softmax distribution is) changes in ways that hurt model performance. YaRN introduces a temperature factor t applied to the attention logits: attention(Q,K,V) = softmax(QK^T/(√d × t)) V. The temperature t is set to compensate for the distribution shift induced by the positional interpolation, keeping the softmax sharpness similar to what the model experienced during training. YaRN also applies dimension-dependent interpolation: high-frequency dimensions get less scaling (they handle short-range structure well already) and low-frequency dimensions get more scaling (they need to extend their range). Llama-3 models use a variant of RoPE extension for their extended context versions, and many open-source long-context models (Qwen2, Mistral NeMo, etc.) use YaRN or similar methods.</span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a>The distinction between "supports 64k context" and "effectively uses 64k context" has practical implications for system design. A model trained on 4k tokens and extended to 64k via RoPE interpolation will show degraded quality on tasks that require retrieving information from positions 40k–60k, even if the model technically runs without error. Proper long-context capability requires either training on data sequences with length up to the target context from the start, or fine-tuning on carefully constructed long-context datasets with retrieval tasks spread across the full target length. Models that advertise 64k or 128k context windows but were extended with only moderate fine-tuning often have the "lost-in-the-middle" problem amplified: the interpolated positions may be attended to even less consistently than the natural positional drift in models trained to their advertised length.</span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a><span class="fu">## Sparse &amp; Efficient Attention Variants</span></span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>Sliding window attention (SWA), used in Mistral-7B and Gemma models, restricts each token's attention to a window of the w most recent tokens rather than attending to all previous tokens. A token at position t attends only to positions <span class="co">[</span><span class="ot">t-w, t</span><span class="co">]</span>. With a window size w=4096, compute per token is O(w × d) instead of O(n × d), and the full forward pass is O(n × w) instead of O(n²). For sequences shorter than w, SWA is equivalent to full attention. For sequences longer than w, SWA is an approximation that can miss long-range dependencies. Mistral-7B (original) uses SWA with a 4096-token window in alternating layers — every other attention layer is full attention, providing some long-range coverage. The KV cache in SWA only needs to store the last w positions, reducing memory proportionally. Mistral-7B-v0.2 and later revisions extended to longer full-attention context.</span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a>Multi-head attention (MHA), multi-query attention (MQA), and grouped-query attention (GQA) represent a design axis controlling KV cache size versus model quality. Standard MHA has h query heads and h independent key-value head pairs: each head maintains separate K and V projections. The KV cache stores h_kv = h key-value tensors per layer. MQA (Shazeer, 2019) uses a single shared K and V projection across all h query heads: every query head attends to the same K and V, reducing KV cache storage by a factor of h. The quality penalty from MQA is measurable but small — empirically, Falcons and early code models that used MQA maintained competitive benchmark scores. GQA (Ainslie et al., 2023) generalizes: divide h query heads into g groups; each group shares one K and one V head. KV cache scales by factor g/h. Llama-3 uses g=8 KV heads for h=32 query heads — a 4× KV cache reduction with minimal quality penalty. GQA is now the dominant attention variant in production LLMs because it provides most of MQA's memory savings with better quality (the grouping allows some per-group specialization that all-shared MQA cannot).</span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>The Longformer global+local attention pattern addresses documents where most tokens need local context (sentences, clauses) but a small number of special tokens — document markers, question tokens, summaries — need global attention to every position. Longformer uses sliding window attention for most positions (O(n×w) cost) plus full attention from designated global tokens to all positions (O(n×n_global) cost). For n_global much smaller than n, total cost is O(n×w + n×n_global) ≈ O(n×w). This enables processing very long documents (book-length, up to 32k tokens in the original paper) while retaining the ability for key positions to aggregate global information. The limitation is that the global token designation must be known at inference time — Longformer is most natural for tasks with well-defined global context (QA where the question is a natural "global" token, document classification where a CLS token attends globally).</span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>Practical guidance on when you actually need &gt;32k context: most enterprise tasks that claim to need very long context can be handled with chunked retrieval at 8k–16k chunks, with semantic retrieval selecting the most relevant chunks. The cases where long context genuinely outperforms chunked retrieval are: tasks requiring holistic reasoning across the full document (legal contract analysis where clauses in different sections modify each other, code bases where calling code and callee code are far apart, longitudinal dialogue where early conversation context influences late responses), and tasks where the relevant information is unpredictable ahead of time (you do not know which parts of a 200k-token document will be relevant to a query, so you cannot preselect chunks). For straightforward factual extraction — "what was the revenue in Q3?" — a 4k-chunk semantic retrieval pipeline at 10ms latency beats a 200k-context model at 2000ms latency.</span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
+<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a>**Q1. Why does processing a 100k-token document in an LLM cost so much more than a 10k-token document?**</span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a>Transformer attention scales quadratically in time and memory with sequence length. Going from 10k to 100k tokens (a 10× increase in length) increases attention computation by 100× (10² = 100), not 10×. The attention mechanism computes pairwise relationships between every position pair: for a 10k-token sequence, that is 100M pairs; for 100k tokens, it is 10B pairs — 100 times more computation.</span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a>Memory scales the same way. The attention matrix for 100k tokens at FP16 requires approximately 40GB per attention head — far exceeding what fits in GPU memory for standard attention. Even with FlashAttention (which avoids storing the full matrix), the KV cache that accumulates during generation grows linearly: at 100k tokens for a 32-layer model with 32 KV heads, the KV cache alone is roughly 50GB per sequence. This limits how many concurrent users can be served on a given GPU cluster and dramatically increases inference cost.</span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a>In practice, doubling context from 64k to 128k roughly quadruples the attention compute cost (for full attention) and roughly doubles the KV cache memory requirement (since KV cache is linear in n). The combined effect on dollar-cost-per-query is typically a 5–10× increase from 8k to 128k context for the same model.</span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-70"><a href="#cb1-70" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-71"><a href="#cb1-71" aria-hidden="true" tabindex="-1"></a>**Q2. What is FlashAttention and what problem does it solve?**</span>
+<span id="cb1-72"><a href="#cb1-72" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-74"><a href="#cb1-74" aria-hidden="true" tabindex="-1"></a>FlashAttention is an attention algorithm that computes the exact same output as standard attention but reorganizes computation to avoid writing the n×n attention matrix to GPU memory, making attention much faster and more memory-efficient at long sequence lengths.</span>
+<span id="cb1-75"><a href="#cb1-75" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-76"><a href="#cb1-76" aria-hidden="true" tabindex="-1"></a>Standard attention must write the n×n matrix (QK^T / √d) to GPU HBM (the main GPU memory), read it back for softmax, write the softmax probabilities, and read them again for the weighted sum of values. These HBM read-write operations are slow — GPU HBM bandwidth is limited to ~2 TB/s while on-chip SRAM runs at ~20 TB/s. For long sequences, the attention implementation becomes bottlenecked by this data movement, not by the actual arithmetic.</span>
+<span id="cb1-77"><a href="#cb1-77" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-78"><a href="#cb1-78" aria-hidden="true" tabindex="-1"></a>FlashAttention tiles the computation: it processes small blocks of Q, K, V that fit in on-chip SRAM (the fast memory), maintains running softmax statistics per tile, and accumulates the output incrementally. The full n×n matrix is never written to HBM. Total HBM traffic drops from O(n²) to O(n × d), which for long sequences is a 10–100× reduction. The result: 2–4× faster attention at n=2048 and increasingly faster at longer sequences. Since the mathematical result is identical to standard attention, there is no quality tradeoff — FlashAttention is a pure performance optimization.</span>
+<span id="cb1-79"><a href="#cb1-79" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-80"><a href="#cb1-80" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-81"><a href="#cb1-81" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-82"><a href="#cb1-82" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-83"><a href="#cb1-83" aria-hidden="true" tabindex="-1"></a>**Q3. What is the "lost in the middle" problem and why does it matter?**</span>
+<span id="cb1-84"><a href="#cb1-84" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-85"><a href="#cb1-85" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-86"><a href="#cb1-86" aria-hidden="true" tabindex="-1"></a>The "lost in the middle" problem refers to a systematic failure in long-context LLMs where the model reliably uses information at the beginning and end of a long context but significantly underperforms when the relevant information is located in the middle section. In experiments, models given 20 documents in context (where the answer is in one of them) show highest accuracy when the answer document is the first or last in the list, and worst accuracy when it is document 10 or 11.</span>
+<span id="cb1-87"><a href="#cb1-87" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a>The problem arises from how transformers handle long sequences. Attention naturally has a recency bias (the last few tokens tend to have high attention weights in causal models) and a primacy bias (the first tokens set context strongly). Middle positions compete with many other positions for attention weight and often receive proportionally less attention, especially in long contexts where the softmax distribution spreads across many options. Fine-tuning on long-context tasks helps, but does not fully eliminate the effect.</span>
+<span id="cb1-89"><a href="#cb1-89" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a>It matters practically because when you stuff a 64k-token context window with documents, the ordering of those documents affects answer quality — an important document buried in the middle may effectively be invisible to the model. For RAG and long-document tasks, placing the most relevant content at the beginning or end of the context is a simple heuristic that consistently improves quality. More broadly, it is a reminder that a model's nominal context window is not the same as its effective context: "supports 128k tokens" does not mean "reliably uses all 128k tokens equally."</span>
+<span id="cb1-91"><a href="#cb1-91" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-92"><a href="#cb1-92" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-93"><a href="#cb1-93" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-94"><a href="#cb1-94" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-95"><a href="#cb1-95" aria-hidden="true" tabindex="-1"></a>**Q4. Walk through why standard attention requires O(n²) memory and how FlashAttention avoids materializing the full attention matrix.**</span>
+<span id="cb1-96"><a href="#cb1-96" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-97"><a href="#cb1-97" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-98"><a href="#cb1-98" aria-hidden="true" tabindex="-1"></a>Standard attention computes: S = QK^T / √d (shape n×n), P = softmax(S) (shape n×n), O = PV (shape n×d). The bottleneck is the intermediate S and P matrices of shape n×n. At n=32,768 and FP16, that is 32768² × 2 bytes ≈ 4GB per head — and the model has many heads. Standard PyTorch writes S and P to HBM because they exceed on-chip SRAM capacity, then reads them back for subsequent operations. This O(n²) HBM traffic is the binding bottleneck for long sequences.</span>
+<span id="cb1-99"><a href="#cb1-99" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-100"><a href="#cb1-100" aria-hidden="true" tabindex="-1"></a>FlashAttention avoids materializing S and P by tiling Q into blocks of size B_r rows and iterating over tiles of K and V of size B_c columns. For each (Q_tile, K_tile) pair, compute partial scores S_tile = Q_tile × K_tile^T / √d (shape B_r × B_c, fits in SRAM). Use an online softmax update: maintain running row-wise maximum m_i and normalizer l_i for each query row. For each new K tile, update m_i = max(m_i, row_max(S_tile)) and l_i = e^{m_i_old - m_i_new} × l_i + row_sum(exp(S_tile - m_i)), then update the output accumulator O_i = e^{m_i_old - m_i_new} × O_i + exp(S_tile - m_i) × V_tile. After all K/V tiles are processed, finalize each output row as O_i / l_i.</span>
+<span id="cb1-101"><a href="#cb1-101" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-102"><a href="#cb1-102" aria-hidden="true" tabindex="-1"></a>This algorithm computes the exact softmax without storing the full S or P matrices — only B_r × B_c tiles ever exist simultaneously, and they live in SRAM. HBM reads: Q, K, V once each — O(nd). HBM writes: O once — O(nd). The n×n dependency is computed through tile loops but never stored. Memory complexity drops from O(n²) to O(n), and HBM traffic from O(n²d) to O(nd), at identical arithmetic output.</span>
+<span id="cb1-103"><a href="#cb1-103" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-104"><a href="#cb1-104" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-105"><a href="#cb1-105" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-106"><a href="#cb1-106" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-107"><a href="#cb1-107" aria-hidden="true" tabindex="-1"></a>**Q5. Explain RoPE position interpolation — why does a model trained at 4k context struggle with 32k without fine-tuning?**</span>
+<span id="cb1-108"><a href="#cb1-108" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-109"><a href="#cb1-109" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-110"><a href="#cb1-110" aria-hidden="true" tabindex="-1"></a>RoPE encodes position m by rotating query and key vectors by angles θ_i^{(m)} = m × b^{-2i/d} for each dimension pair i. These angles span a geometric range: the lowest frequency dimension has angle that cycles once over the full training length, while the highest frequency dimension cycles many more times. The model's attention weights learned during training capture the meaningful range of angle differences Δθ = (m-n) × b^{-2i/d} for |m-n| ≤ n_max.</span>
+<span id="cb1-111"><a href="#cb1-111" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-112"><a href="#cb1-112" aria-hidden="true" tabindex="-1"></a>At position m &gt; n_max (e.g., m = 20,000 in a model trained to n_max = 4,096), high-frequency dimension pairs produce rotation angles far outside any difference they were trained to handle. A query at position 20,000 and a key at position 19,990 (relative distance 10) should have a small, familiar angle difference. But the absolute rotation angles at those positions are enormous and were never seen during training. The dot product Q_m · K_n depends on the cosine of the angle difference: if the frequencies and phases are within training distribution, the model handles them correctly. Outside that distribution, dot products become erratic — sometimes too large, sometimes near zero — degrading the attention pattern and producing incoherent outputs.</span>
+<span id="cb1-113"><a href="#cb1-113" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-114"><a href="#cb1-114" aria-hidden="true" tabindex="-1"></a>Position Interpolation fixes this by scaling all position indices by n_max / n_target before applying RoPE: position 20,000 in a 32k extension maps to 20,000 × (4096/32768) = 2,500, which is well within the training distribution. Every position the model sees is now in <span class="co">[</span><span class="ot">0, n_max</span><span class="co">]</span> regardless of the actual sequence length. The compression of position encodings (two nearby tokens get closer position angles) slightly degrades local position discrimination, which is why fine-tuning for a few hundred steps on long-context data recovers nearly all the quality.</span>
+<span id="cb1-115"><a href="#cb1-115" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-116"><a href="#cb1-116" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-117"><a href="#cb1-117" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-118"><a href="#cb1-118" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-119"><a href="#cb1-119" aria-hidden="true" tabindex="-1"></a>**Q6. Compare GQA vs MQA vs MHA: what does each optimize and at what cost?**</span>
+<span id="cb1-120"><a href="#cb1-120" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-121"><a href="#cb1-121" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-122"><a href="#cb1-122" aria-hidden="true" tabindex="-1"></a>All three variants represent different points on the KV cache size vs. representation quality tradeoff for the attention mechanism's key-value projections.</span>
+<span id="cb1-123"><a href="#cb1-123" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-124"><a href="#cb1-124" aria-hidden="true" tabindex="-1"></a>MHA (Multi-Head Attention): h query heads, h key-value head pairs. Each head learns independent Q, K, V projections. KV cache size: 2 × n_layers × h × n × d_head × 2 bytes. Maximum representational richness — each head can attend to different aspects independently. Baseline for quality comparisons.</span>
+<span id="cb1-125"><a href="#cb1-125" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-126"><a href="#cb1-126" aria-hidden="true" tabindex="-1"></a>MQA (Multi-Query Attention): h query heads, but all share a single K and V projection. KV cache size: 2 × n_layers × 1 × n × d_head × 2 bytes — reduced by factor h compared to MHA. Quality penalty: measurable on complex multi-hop reasoning (where different heads attending to different information sources is important), small for simpler tasks. Inference speedup comes from reduced KV cache bandwidth — at long context, fetching the KV cache from HBM per decode step is a bandwidth bottleneck; smaller cache = faster decode. Used in: early Falcon models, some Google models.</span>
+<span id="cb1-127"><a href="#cb1-127" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-128"><a href="#cb1-128" aria-hidden="true" tabindex="-1"></a>GQA (Grouped Query Attention): h query heads divided into g groups (g &lt; h), each group shares one K and one V head. KV cache size: 2 × n_layers × g × n × d_head × 2 bytes — reduced by factor h/g. Each group of h/g query heads attends to shared K/V for that group. With g=8 and h=32, KV cache is 4× smaller than MHA; each group of 4 heads shares K/V. Quality is between MHA and MQA: small groups mean some independence between head groups. Used in: Llama-3 (h=32, g=8), Gemma, Mistral. GQA is now the standard — it captures most of MQA's memory/speed benefit with minimal quality penalty over MHA.</span>
+<span id="cb1-129"><a href="#cb1-129" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-130"><a href="#cb1-130" aria-hidden="true" tabindex="-1"></a>Practical implication: at 128k context, switching from MHA to GQA with g=8 reduces KV cache from ~50GB to ~12.5GB for Llama-3-8B, enabling more concurrent users per GPU and longer effective context windows within a fixed memory budget.</span>
+<span id="cb1-131"><a href="#cb1-131" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-132"><a href="#cb1-132" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-133"><a href="#cb1-133" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-134"><a href="#cb1-134" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb1-135"><a href="#cb1-135" aria-hidden="true" tabindex="-1"></a>**Q7. A customer's RAG system uses 8k context windows but their contracts are 50k tokens. Should you extend context or chunk?**</span>
+<span id="cb1-136"><a href="#cb1-136" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-137"><a href="#cb1-137" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-138"><a href="#cb1-138" aria-hidden="true" tabindex="-1"></a>The right answer depends on the query types, but for legal contracts, chunked retrieval with careful chunking strategy is usually better than naive 50k context extension, while a hybrid approach often works best.</span>
+<span id="cb1-139"><a href="#cb1-139" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-140"><a href="#cb1-140" aria-hidden="true" tabindex="-1"></a>For contracts, the key question is: does the customer need holistic cross-document reasoning (e.g., "does clause 7 conflict with clause 23?") or targeted factual retrieval ("what is the governing law?"). For targeted retrieval, semantic chunking + embedding-based retrieval at 8k context outperforms 50k context because the relevant passage is small and easily retrievable, while 50k context adds cost and latency without quality benefit. For holistic reasoning, long context is genuinely needed — cross-clause dependencies cannot be resolved by any retrieval system that never sees both clauses simultaneously.</span>
+<span id="cb1-141"><a href="#cb1-141" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-142"><a href="#cb1-142" aria-hidden="true" tabindex="-1"></a>Practical recommendation:</span>
+<span id="cb1-143"><a href="#cb1-143" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>Implement hierarchical chunking: chunk at the section level (typically 500-2k tokens per section), embed section summaries plus full text. For simple factual queries, retrieve relevant sections and answer at 8k context.</span>
+<span id="cb1-144"><a href="#cb1-144" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>For cross-clause reasoning queries, use a 32k or 50k context model (Llama-3-70B supports 128k, Gemini 1.5 Pro supports 1M). The cost per query is higher but these queries are less frequent.</span>
+<span id="cb1-145"><a href="#cb1-145" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>Identify query types in advance: a classifier at the router level can direct simple queries to the cheap RAG path and complex cross-document queries to the expensive long-context path.</span>
+<span id="cb1-146"><a href="#cb1-146" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>Do NOT upgrade the entire system to 50k context to handle the 10% of queries that need it — 10x cost increase for the whole system is unjustifiable. Use tiered routing.</span>
+<span id="cb1-147"><a href="#cb1-147" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-148"><a href="#cb1-148" aria-hidden="true" tabindex="-1"></a>For the 50k context model choice: at 50k tokens, attention compute is 2,500× more expensive than at 1k tokens. First-token latency on a well-optimized 8B model will be 5–15 seconds on a single A100. Ensure the customer's use case can tolerate this latency before committing.</span>
+<span id="cb1-149"><a href="#cb1-149" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-150"><a href="#cb1-150" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-151"><a href="#cb1-151" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-152"><a href="#cb1-152" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb1-153"><a href="#cb1-153" aria-hidden="true" tabindex="-1"></a>**Q8. What are the real-world latency and cost implications of using a 128k context model vs. a chunked RAG pipeline?**</span>
+<span id="cb1-154"><a href="#cb1-154" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-155"><a href="#cb1-155" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-156"><a href="#cb1-156" aria-hidden="true" tabindex="-1"></a>The latency and cost gap between these approaches is significant and often underestimated when teams prototype with small document sets.</span>
+<span id="cb1-157"><a href="#cb1-157" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-158"><a href="#cb1-158" aria-hidden="true" tabindex="-1"></a>Latency comparison at 128k context vs. 8k RAG pipeline on identical hardware (single A100 80GB):</span>
+<span id="cb1-159"><a href="#cb1-159" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>128k context prefill (filling the context with the document): 15–45 seconds for a 7-8B model. This is the dominant latency term. FlashAttention helps but O(n²) prefill compute at 128k is fundamentally slow.</span>
+<span id="cb1-160"><a href="#cb1-160" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>8k RAG pipeline prefill (embedding lookup + retrieval + 8k context model): 200-500ms total including embedding inference, vector search, and the model prefill. A 100× latency reduction.</span>
+<span id="cb1-161"><a href="#cb1-161" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Decode (generating the answer, typically 200-500 tokens) is similar for both — decode is token-count-bound, not context-length-bound once prefill is complete.</span>
+<span id="cb1-162"><a href="#cb1-162" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-163"><a href="#cb1-163" aria-hidden="true" tabindex="-1"></a>Cost comparison on AWS, approximate:</span>
+<span id="cb1-164"><a href="#cb1-164" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>128k context via API (GPT-4o or Claude 3.5): $10–15 per 128k-token context at standard input token pricing. At 1000 queries/day: $10,000–$15,000/day.</span>
+<span id="cb1-165"><a href="#cb1-165" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>8k RAG pipeline via API: $0.15–0.30 per query (embedding + 8k context model query). At 1000 queries/day: $150–$300/day.</span>
+<span id="cb1-166"><a href="#cb1-166" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Cost ratio: 50–100× in favor of chunked RAG for the same throughput.</span>
+<span id="cb1-167"><a href="#cb1-167" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-168"><a href="#cb1-168" aria-hidden="true" tabindex="-1"></a>Self-hosted comparison: 128k context requires 2× A100 80GB minimum (KV cache + weights). 8k context can run on 1× A100 40GB. Infrastructure cost per GPU is ~$3/hour on reserved instances; 128k context uses 2 GPUs vs. 1 GPU for 8k, plus lower throughput per GPU due to longer prefill.</span>
+<span id="cb1-169"><a href="#cb1-169" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-170"><a href="#cb1-170" aria-hidden="true" tabindex="-1"></a>Recommendation: reserve 128k context for genuinely irreducible long-context tasks. For everything else, chunked RAG with 8k context windows provides 50–100× cost reduction and 10–50× latency reduction with comparable or better quality (since relevant chunks are selected, not buried in a long context suffering from lost-in-the-middle degradation).</span>
+<span id="cb1-171"><a href="#cb1-171" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-172"><a href="#cb1-172" aria-hidden="true" tabindex="-1"></a>:::</span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+</div></div></div></div></div>
+</div> <!-- /content -->
+
+
+
+
+<footer class="footer"><div class="nav-footer"><div class="nav-footer-center"><div class="toc-actions d-sm-block d-md-none"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/21-long-context.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></div></div></footer></body></html>

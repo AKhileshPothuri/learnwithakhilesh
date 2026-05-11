@@ -2,86 +2,142 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/index.html</loc>
-    <lastmod>2026-05-10T15:15:49.819Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.993Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/01-intro.html</loc>
-    <lastmod>2026-05-10T15:15:49.816Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.987Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/02-neural-networks.html</loc>
-    <lastmod>2026-05-10T15:15:49.816Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/03-transformers.html</loc>
-    <lastmod>2026-05-10T15:15:49.816Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/04-llm-pretraining.html</loc>
-    <lastmod>2026-05-10T15:15:49.816Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/05-embeddings.html</loc>
-    <lastmod>2026-05-10T15:15:49.816Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/06-inference.html</loc>
-    <lastmod>2026-05-10T15:15:49.817Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/07-prompting.html</loc>
-    <lastmod>2026-05-10T15:15:49.817Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/08-finetuning.html</loc>
-    <lastmod>2026-05-10T15:15:49.817Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.988Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/09-peft-lora.html</loc>
-    <lastmod>2026-05-10T15:15:49.817Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.989Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/10-rlhf-alignment.html</loc>
-    <lastmod>2026-05-10T15:15:49.817Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.989Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/11-rag.html</loc>
-    <lastmod>2026-05-10T15:15:49.817Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.989Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/12-agents.html</loc>
-    <lastmod>2026-05-10T15:15:49.818Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.989Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/13-evaluation.html</loc>
-    <lastmod>2026-05-10T15:15:49.818Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.989Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/14-deployment.html</loc>
-    <lastmod>2026-05-10T15:15:49.818Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.990Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/15-fde-overview.html</loc>
-    <lastmod>2026-05-10T15:15:49.818Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.990Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/16-customer-scenarios.html</loc>
-    <lastmod>2026-05-10T15:15:49.818Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.990Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/17-integration.html</loc>
-    <lastmod>2026-05-10T15:15:49.819Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.990Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/18-safety-production.html</loc>
-    <lastmod>2026-05-10T15:15:49.819Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.990Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/19-moe.html</loc>
+    <lastmod>2026-05-11T16:37:03.991Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/20-ssm-mamba.html</loc>
+    <lastmod>2026-05-11T16:37:03.991Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/21-long-context.html</loc>
+    <lastmod>2026-05-11T16:37:03.991Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/22-speculative-decoding.html</loc>
+    <lastmod>2026-05-11T16:37:03.991Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/23-reasoning-models.html</loc>
+    <lastmod>2026-05-11T16:37:03.991Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/24-multimodal.html</loc>
+    <lastmod>2026-05-11T16:37:03.992Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/25-diffusion.html</loc>
+    <lastmod>2026-05-11T16:37:03.992Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/26-modern-alignment.html</loc>
+    <lastmod>2026-05-11T16:37:03.992Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/27-synthetic-data.html</loc>
+    <lastmod>2026-05-11T16:37:03.992Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/28-advanced-rag.html</loc>
+    <lastmod>2026-05-11T16:37:03.992Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/29-advanced-agents.html</loc>
+    <lastmod>2026-05-11T16:37:03.993Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/30-prompt-optimization.html</loc>
+    <lastmod>2026-05-11T16:37:03.993Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/31-interpretability.html</loc>
+    <lastmod>2026-05-11T16:37:03.993Z</lastmod>
+  </url>
+  <url>
+    <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/32-observability.html</loc>
+    <lastmod>2026-05-11T16:37:03.993Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/chapters/appendix-ml-fundamentals.html</loc>
-    <lastmod>2026-05-10T15:15:49.819Z</lastmod>
+    <lastmod>2026-05-11T16:37:03.993Z</lastmod>
   </url>
   <url>
     <loc>https://akhileshpothuri.github.io/learnwithakhilesh/GenAI-Interview-Prep.pdf</loc>
-    <lastmod>2026-05-10T15:17:29.346Z</lastmod>
+    <lastmod>2026-05-11T16:39:55.203Z</lastmod>
   </url>
 </urlset>

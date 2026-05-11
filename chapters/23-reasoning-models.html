@@ -1,0 +1,1637 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.6.43">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="A depth-first interview preparation guide covering Generative AI foundations, large language models, fine-tuning, GenAI systems architecture, and a dedicated track for Forward Deployed Engineers.">
+
+<title>23&nbsp; Reasoning Models &amp; Test-Time Compute – GenAI Interview Prep</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../chapters/24-multimodal.html" rel="next">
+<link href="../chapters/22-speculative-decoding.html" rel="prev">
+<script src="../site_libs/quarto-html/quarto.js"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-7fd0fe4245b865325b8ce8dccb604d59.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-dc95f10abd972b9c41a78ec8992004fc.css" rel="prefetch" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-ccd92d5b9cd3e64de80ef7f1ead5b3e1.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-375668ddd5fab82322274c16a79adfb4.min.css" rel="prefetch" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-sidebar docked nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">GenAI Interview Prep</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/AKhileshPothuri/learnwithakhilesh"> <i class="bi bi-github" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+    <a href="https://github.com/AKhileshPothuri/learnwithakhilesh" title="Source Code" class="quarto-navigation-tool px-1" aria-label="Source Code"><i class="bi bi-github"></i></a>
+  <a href="" class="quarto-color-scheme-toggle quarto-navigation-tool  px-1" onclick="window.quartoToggleColorScheme(); return false;" title="Toggle dark mode"><i class="bi"></i></a>
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/23-reasoning-models.html">Part VII — Reasoning &amp; Multimodal</a></li><li class="breadcrumb-item"><a href="../chapters/23-reasoning-models.html"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation docked overflow-auto">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Preface</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part I — Foundations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/01-intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">What Is Generative AI?</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/03-transformers.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">The Transformer Architecture</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part II — Large Language Models</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/04-llm-pretraining.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">LLM Pretraining — Data, Scale, and Paradigms</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/05-embeddings.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Embeddings — Representations That Encode Meaning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/06-inference.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Inference &amp; Decoding Strategies</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part III — Adapting &amp; Aligning LLMs</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/07-prompting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Prompt Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/08-finetuning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Fine-Tuning LLMs</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/09-peft-lora.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">PEFT, LoRA &amp; QLoRA</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/10-rlhf-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">RLHF &amp; Alignment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IV — GenAI Systems &amp; Architecture</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/11-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Retrieval-Augmented Generation (RAG)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/12-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Agents &amp; Tool Use</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/13-evaluation.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Evaluation — Measuring What Matters</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/14-deployment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Deployment &amp; Optimization</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part V — Forward Deployed Engineer Track</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/15-fde-overview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">The Forward Deployed Engineer Role</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/16-customer-scenarios.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Common GenAI Customer Use Cases</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/17-integration.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Enterprise Integration Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/18-safety-production.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Safety &amp; Responsible Deployment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VI — Modern Architectures &amp; Efficiency</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/19-moe.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Mixture of Experts (MoE)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/20-ssm-mamba.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/21-long-context.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/22-speculative-decoding.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VII — Reasoning &amp; Multimodal</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/23-reasoning-models.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/24-multimodal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/25-diffusion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VIII — Advanced Training &amp; Alignment</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/26-modern-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/27-synthetic-data.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Synthetic Data &amp; Data-Centric AI</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IX — Advanced Production Systems</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/28-advanced-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Advanced RAG Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/29-advanced-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Advanced Agents: MCP, Computer Use &amp; GUI Agents</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/30-prompt-optimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Prompt Optimization &amp; DSPy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/31-interpretability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Mechanistic Interpretability &amp; Sparse Autoencoders</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/32-observability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/appendix-ml-fundamentals.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">ML Fundamentals Refresher</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#what-reasoning-models-are" id="toc-what-reasoning-models-are" class="nav-link active" data-scroll-target="#what-reasoning-models-are"><span class="header-section-number">23.1</span> What Reasoning Models Are</a></li>
+  <li><a href="#how-it-works-chain-of-thought-at-inference-scale" id="toc-how-it-works-chain-of-thought-at-inference-scale" class="nav-link" data-scroll-target="#how-it-works-chain-of-thought-at-inference-scale"><span class="header-section-number">23.2</span> How It Works — Chain-of-Thought at Inference Scale</a></li>
+  <li><a href="#grpo-rl-based-reasoning-training" id="toc-grpo-rl-based-reasoning-training" class="nav-link" data-scroll-target="#grpo-rl-based-reasoning-training"><span class="header-section-number">23.3</span> GRPO &amp; RL-Based Reasoning Training</a></li>
+  <li><a href="#test-time-compute-scaling" id="toc-test-time-compute-scaling" class="nav-link" data-scroll-target="#test-time-compute-scaling"><span class="header-section-number">23.4</span> Test-Time Compute Scaling</a></li>
+  <li><a href="#practical-use" id="toc-practical-use" class="nav-link" data-scroll-target="#practical-use"><span class="header-section-number">23.5</span> Practical Use</a></li>
+  <li><a href="#interview-questions" id="toc-interview-questions" class="nav-link" data-scroll-target="#interview-questions"><span class="header-section-number">23.6</span> Interview Questions</a></li>
+  </ul>
+<div class="toc-actions"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/23-reasoning-models.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/23-reasoning-models.html">Part VII — Reasoning &amp; Multimodal</a></li><li class="breadcrumb-item"><a href="../chapters/23-reasoning-models.html"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></a></li></ol></nav>
+<div class="quarto-title">
+<div class="quarto-title-block"><div><h1 class="title"><span id="sec-23" class="quarto-section-identifier"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Note
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Who this chapter is for:</strong> Mid Level → FDE <strong>What you’ll be able to answer after reading this:</strong></p>
+<ul>
+<li>What distinguishes reasoning models from standard LLMs and why the distinction matters</li>
+<li>How extended thinking / chain-of-thought is trained and executed at inference time</li>
+<li>The mechanics of GRPO, process reward models, and RL-based reasoning training</li>
+<li>How test-time compute scaling works and when it pays off</li>
+<li>When to deploy reasoning models vs.&nbsp;standard models — and how to justify the cost</li>
+</ul>
+</div>
+</div>
+<section id="what-reasoning-models-are" class="level2" data-number="23.1">
+<h2 data-number="23.1" class="anchored" data-anchor-id="what-reasoning-models-are"><span class="header-section-number">23.1</span> What Reasoning Models Are</h2>
+<p>Standard language models are trained to predict the most probable next token given a context. At inference time, they produce an answer in a single forward-pass sequence — each token conditioned on what came before, but with no structured deliberation step between reading the question and emitting the answer. This works well for tasks where a fluent continuation of the prompt is a correct answer. It breaks down on tasks that require multi-step logical deduction, constraint satisfaction, or long chains of arithmetic where an early error compounds into an entirely wrong final answer.</p>
+<p>Reasoning models solve this by inserting a structured thinking phase between input and output. Before producing the visible answer, the model generates thousands of reasoning tokens in a hidden scratchpad — sometimes called an “extended thinking” trace or “chain-of-thought” trace. These tokens are not returned to the user but are consumed by the model itself during generation. The practical effect is that the model has more opportunities to catch its own errors, explore alternative solution paths, and verify intermediate conclusions before committing to an answer.</p>
+<p>The key architectural insight is that this is not primarily a model-size phenomenon. A smaller model spending many reasoning tokens can outperform a larger model that answers immediately. This is the test-time compute hypothesis: the amount of compute available at inference time, not just the number of parameters or the quality of pretraining, determines the ceiling of reasoning performance. OpenAI’s o1/o3/o4 family, DeepSeek-R1, and Claude 3.7 Sonnet with extended thinking all embody this approach, though they differ in training methodology and how much of the reasoning trace is exposed to users.</p>
+</section>
+<section id="how-it-works-chain-of-thought-at-inference-scale" class="level2" data-number="23.2">
+<h2 data-number="23.2" class="anchored" data-anchor-id="how-it-works-chain-of-thought-at-inference-scale"><span class="header-section-number">23.2</span> How It Works — Chain-of-Thought at Inference Scale</h2>
+<p>The reasoning trace is not a post-hoc explanation — it is causally upstream of the final answer. The model generates the scratchpad autoregressively, and those scratchpad tokens appear in the context when the final answer tokens are generated. This means a mistake corrected mid-reasoning does not propagate to the answer, which is fundamentally different from a standard model that cannot revisit an implicit intermediate step buried in its hidden states.</p>
+<p>Training a reasoning model requires teaching the model to generate useful reasoning traces, not just any verbose output. Two approaches exist for supervising this. An <strong>Outcome Reward Model (ORM)</strong> scores only the final answer — correct answer gets a positive reward, wrong answer gets none or a penalty. ORMs are easy to apply whenever ground-truth answers exist (math problems, code execution results) but they provide no signal about whether the reasoning path was sound. A model can arrive at the right answer through flawed reasoning, and the ORM will reinforce the flawed path.</p>
+<p>A <strong>Process Reward Model (PRM)</strong> scores individual reasoning steps. A human annotator (or a trained verifier) labels each step in a chain as correct or incorrect, and the PRM learns to predict these step-level labels. This gives the training signal needed to distinguish “correct answer, wrong reasoning path” from “correct answer, correct reasoning path.” PRMs are significantly more expensive to build — they require dense step-level annotation — but they produce more robust and generalizable reasoning behavior. OpenAI’s o1 training reportedly relied heavily on process supervision. The tradeoff is annotation cost: step-level labels require mathematical or domain expertise and scale poorly to open-ended tasks.</p>
+</section>
+<section id="grpo-rl-based-reasoning-training" class="level2" data-number="23.3">
+<h2 data-number="23.3" class="anchored" data-anchor-id="grpo-rl-based-reasoning-training"><span class="header-section-number">23.3</span> GRPO &amp; RL-Based Reasoning Training</h2>
+<p>Training reasoning models requires reinforcement learning because the reward signal (is the final answer correct?) is not differentiable with respect to the model’s token-level outputs. The standard approach in RLHF — PPO with a value network — requires training a separate critic model that estimates the expected future reward for each partial sequence. This critic is expensive in memory and compute, must be kept in sync with the policy, and introduces significant training instability.</p>
+<p>DeepSeek-R1 introduced <strong>Group Relative Policy Optimization (GRPO)</strong> as a lighter alternative. Instead of training a separate value network, GRPO generates a group of G candidate completions for each prompt, computes the reward for each completion (via a verifiable reward: does the math answer match?), and uses the group’s average reward as the baseline. The policy gradient update pushes the model toward completions that scored above the group average and away from those that scored below. Because the baseline is computed from the model’s own outputs rather than a learned critic, GRPO eliminates the memory and stability costs of PPO’s critic while retaining the core optimization signal.</p>
+<p>The <strong>“aha moment”</strong> refers to an emergent behavior observed during DeepSeek-R1 training: mid-training, the model began spontaneously generating self-correction tokens (“Wait, that’s wrong. Let me reconsider…”) without being explicitly trained to do so. This suggests that RL training on verifiable reward signals can elicit structured self-reflection from a model that had no explicit supervision for that behavior. The policy simply discovered that backtracking and correcting intermediate steps increased the probability of reaching a correct final answer.</p>
+<p>The <strong>cold-start problem</strong> is the challenge of initializing RL training when the model has no prior behavior resembling structured reasoning. If the initial policy generates random chains that rarely lead to correct answers, the reward signal is too sparse for learning to begin. DeepSeek solved this with a two-phase approach: first, use supervised fine-tuning (SFT) on a small set of human-curated reasoning chain examples to warm-start the model into a regime where it occasionally produces correct multi-step solutions; then apply GRPO to refine and extend that behavior at scale. This SFT warm-up acts as a curriculum that bootstraps the policy into the reward basin.</p>
+</section>
+<section id="test-time-compute-scaling" class="level2" data-number="23.4">
+<h2 data-number="23.4" class="anchored" data-anchor-id="test-time-compute-scaling"><span class="header-section-number">23.4</span> Test-Time Compute Scaling</h2>
+<p>The conventional scaling law says: more parameters + more training tokens = better model. The test-time compute scaling law says: given a fixed trained model, more inference-time computation can raise performance on hard tasks, and this additional compute can be more cost-effective than training a larger model.</p>
+<p>The simplest form is <strong>Best-of-N sampling</strong>: generate N independent answers and return the one that scores highest according to a verifier (e.g., a math-checking script or an ORM). If each attempt has probability p of being correct, the probability that at least one of N attempts is correct is 1-(1-p)^N. For hard problems with low per-attempt accuracy, this grows quickly. The cost is linear in N.</p>
+<p>More sophisticated approaches use <strong>tree search over reasoning paths</strong>. At each step in the reasoning chain, the model branches into multiple continuations; a PRM scores the partial traces; branches with low scores are pruned. This concentrates compute on promising reasoning directions rather than independent restarts. Beam search, Monte Carlo Tree Search (MCTS), and best-first search have all been applied in this framing.</p>
+<p><strong>Compute-optimal vs.&nbsp;token-optimal inference</strong> is a real engineering tradeoff. Reasoning models are not always the right tool. They excel on tasks with a well-defined correct answer, high sensitivity to intermediate step errors, and where user latency tolerance is high: complex mathematics, multi-step code debugging, constraint satisfaction, legal or financial reasoning with explicit rules. They are overkill — and expensive — for tasks where a standard model is already near-ceiling: factual lookup, simple summarization, conversational replies, or tasks where chain-of-thought doesn’t generalize (e.g., common-sense questions where slow deliberation can introduce overthinking artifacts).</p>
+</section>
+<section id="practical-use" class="level2" data-number="23.5">
+<h2 data-number="23.5" class="anchored" data-anchor-id="practical-use"><span class="header-section-number">23.5</span> Practical Use</h2>
+<p>Reasoning model latency is fundamentally different from standard model latency. A standard <code>gpt-4o</code> call generating 200 output tokens might return in 2-3 seconds. An <code>o3</code> call on a hard problem might generate 4,000 reasoning tokens before the 200-token answer, adding 30-60 seconds of wait time. This is not a bug — it is the model doing useful work — but it is a deployment reality that must be designed around. Strategies include: showing a “thinking…” spinner with partial reasoning tokens streamed to the user, offloading reasoning-heavy tasks to background jobs, and reserving reasoning models for the subset of queries where the accuracy gain justifies latency.</p>
+<p>The OpenAI API exposes a <code>reasoning_effort</code> parameter for o3/o4-mini that lets callers trade off latency and cost against accuracy: <code>low</code> uses fewer reasoning tokens and responds faster; <code>high</code> uses more. This allows applications to tune dynamically — use <code>high</code> for a user explicitly requesting deep analysis, <code>low</code> for a quick check. Anthropic’s extended thinking API for Claude 3.7 exposes a <code>budget_tokens</code> parameter that caps reasoning token spend per call. Both designs reflect the same insight: reasoning compute is a knob, not a binary.</p>
+<p>Cost is significant. Reasoning tokens are billed at the same rate as output tokens, and a single o3 call on a hard problem can generate 5,000–20,000 reasoning tokens. This makes reasoning models 10-100x more expensive per task than calling a standard model with a single pass. Architecture guidance: use reasoning models as a last resort or as an elevated tier triggered by task complexity signals (detected by a cheaper classifier), not as the default handler for every user request.</p>
+<hr>
+</section>
+<section id="interview-questions" class="level2" data-number="23.6">
+<h2 data-number="23.6" class="anchored" data-anchor-id="interview-questions"><span class="header-section-number">23.6</span> Interview Questions</h2>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. What is the difference between a standard LLM and a reasoning model like o1?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>A standard LLM generates an answer token-by-token in a single forward pass, with no explicit deliberation between reading a question and emitting the answer. Each token is conditioned on the prompt and previous outputs, but the model has no mechanism to revisit or correct an intermediate step it has already emitted.</p>
+<p>A reasoning model like o1 generates a hidden reasoning trace — sometimes called a scratchpad or “extended thinking” — before producing the visible answer. This trace can be thousands of tokens long and allows the model to try multiple approaches, catch its own errors, and verify intermediate conclusions before committing to a final response.</p>
+<p>The practical difference shows up on hard tasks: on complex math or multi-step code problems, a standard GPT-4-class model answers quickly but makes errors at intermediate steps that cascade into wrong final answers. o1 uses the scratchpad to work through the problem step-by-step and self-correct, achieving dramatically higher accuracy at the cost of higher latency and inference cost.</p>
+<p>The key insight is that the improvement comes from compute at inference time, not a larger or differently trained base model.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. Why does “thinking longer” help a model solve harder problems?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Each token a model generates becomes part of the context for subsequent tokens. When a model generates a scratchpad before answering, those intermediate tokens serve as working memory — the model can write down sub-results, verify them, and build on them, just as a human working through a math problem on paper can catch a multiplication error before it corrupts the rest of the solution.</p>
+<p>Without a scratchpad, a model answering a multi-step problem must compress all intermediate reasoning into its hidden states across a fixed number of transformer layers. For complex problems, the hidden state dimensionality is insufficient to hold all necessary intermediate values accurately. The scratchpad offloads this computation into explicit tokens, where it can be checked and corrected.</p>
+<p>There is also a probabilistic argument: harder problems require longer correct reasoning chains. At each step, there is some probability of an error. Longer chains without correction accumulate more errors. A scratchpad allows the model to detect and recover from local errors rather than letting them propagate, so the probability of reaching a correct final answer on a hard problem improves substantially with additional reasoning tokens.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q3. What is test-time compute scaling and how does it differ from training-time scaling?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Training-time scaling means using more parameters, more training data, or more training compute to build a better model. The standard scaling laws (Chinchilla) tell us that model quality improves predictably with model size and training tokens. But after training, the model is fixed — its weights do not change at inference.</p>
+<p>Test-time compute scaling means spending more computation during inference — on a fixed, trained model — to get better answers. The simplest version is generating multiple answers and picking the best (best-of-N). More sophisticated versions generate long reasoning chains, branch into multiple reasoning paths, and use verifiers to prune bad branches. All of this happens at inference time, not training time.</p>
+<p>The practical implication is that you can trade latency and inference cost for accuracy on a per-query basis, without retraining anything. A hard problem gets more compute; a simple question gets less. This is fundamentally different from training-time scaling, where you pay the compute cost once but it applies uniformly to all future queries. Test-time scaling is dynamic and query-dependent, which is what makes it useful for production applications with mixed workloads.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. Explain the difference between a Process Reward Model (PRM) and an Outcome Reward Model (ORM) in the context of reasoning model training.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>An Outcome Reward Model scores only the final answer of a reasoning chain. A correct final answer receives a positive reward; incorrect answers receive zero or a penalty. ORMs are cheap to build whenever ground-truth answers are automatically verifiable — math problems have exact numerical answers, code problems can be tested against unit tests. The limitation is that ORMs cannot distinguish between a correct answer reached by valid reasoning and a correct answer reached by a flawed shortcut. The model can be reinforced for reasoning patterns that happen to get right answers but will generalize poorly to harder problems.</p>
+<p>A Process Reward Model scores individual steps in the reasoning chain. Annotators — human experts or a separately trained PRM — label each step as correct, incorrect, or uncertain. The RL training signal rewards step-level correctness, not just final-answer correctness. This forces the model to learn valid reasoning processes, not just answer-producing heuristics. PRMs produce more robust reasoning behavior and can identify where in a chain a model goes wrong, which is also useful for debugging.</p>
+<p>The tradeoff is cost. Step-level annotation for mathematical proofs or code debugging requires domain expertise and is orders of magnitude more expensive than collecting final-answer labels. PRMs also require defining what constitutes a “step,” which is non-trivial for free-form reasoning. In practice, most production reasoning models use a combination: ORM for cheap large-scale training signal and PRM for high-quality fine-grained supervision on a smaller dataset.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. How does GRPO differ from PPO and why did DeepSeek choose it for DeepSeek-R1?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-10-contents" aria-controls="callout-10" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-10" class="callout-10-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>PPO (Proximal Policy Optimization) requires a critic network — a separate model that estimates the expected future reward (value function) for each state in the sequence. The policy gradient update uses the advantage estimate from the critic: how much better was this action than the critic expected? Training PPO means running two large models in lockstep: the policy (the LLM being trained) and the critic (typically as large as the policy). This doubles memory requirements and introduces instability when the critic’s value estimates lag behind rapid policy changes.</p>
+<p>GRPO (Group Relative Policy Optimization) eliminates the critic by estimating the baseline from the model’s own group of outputs. For each prompt, the model generates G completions. The group average reward serves as the baseline. Individual completions are rewarded proportionally to how much better than average they scored. No separate value network is needed — the baseline is computed on-the-fly from inference outputs.</p>
+<p>DeepSeek chose GRPO for three practical reasons: it halves the GPU memory requirements during training (no second model), it is more stable because the baseline is always current (computed from the latest policy’s outputs), and it integrates naturally with verifiable reward functions like mathematical answer checking. For DeepSeek-R1’s training setup — large-scale RL on mathematical reasoning with automated reward verification — GRPO provided equivalent learning signal to PPO at significantly lower infrastructure cost.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q3. What are the failure modes of reasoning models — when do they “think” more but get worse?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-12-contents" aria-controls="callout-12" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-12" class="callout-12-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p><strong>Overthinking on simple tasks.</strong> On tasks with obvious answers, forcing the model into extended reasoning can introduce spurious considerations that shift the answer away from the correct simple response. The model may convince itself that a straightforward factual question has hidden complexity and hedge or overqualify an answer that should be direct.</p>
+<p><strong>Reasoning trace length mismatch.</strong> If the model is trained primarily on mathematical reasoning, it may not know how to budget reasoning tokens correctly for other task types. It can generate very long reasoning traces that loop or repeat without making progress — a form of “reasoning thrashing” that wastes tokens without improving accuracy.</p>
+<p><strong>Confident wrong conclusions.</strong> A convincing-looking reasoning chain can be internally consistent but built on a wrong premise in the first step. Because the chain appears coherent, the final answer arrives with high apparent confidence. This is more dangerous than a standard model’s wrong answer because the reasoning trace can mislead users who try to audit it.</p>
+<p><strong>Instruction following degradation.</strong> Reasoning models trained primarily on problem-solving tasks can show weaker instruction-following behavior on format-sensitive tasks compared to RLHF-tuned standard models. They may ignore formatting requirements or output constraints that appear at the end of the prompt because the reasoning trace has shifted the model’s context far from the original instruction.</p>
+<p><strong>Cost explosion on easy workloads.</strong> Applying reasoning models to a mixed workload that includes many simple queries generates reasoning traces that add latency and cost without accuracy benefit on the simple queries.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Forward Deployed Engineer
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. A customer needs to solve complex multi-step financial calculations — when would you recommend o3 vs.&nbsp;Claude Sonnet vs.&nbsp;a fine-tuned smaller model?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-14-contents" aria-controls="callout-14" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-14" class="callout-14-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The decision turns on three factors: accuracy requirements, latency tolerance, and call volume/cost.</p>
+<p><strong>Use o3</strong> when the calculations are genuinely multi-step with compounding dependencies — think portfolio risk calculations requiring dozens of sequential formula applications, or regulatory capital calculations with nested conditional rules. o3’s extended reasoning excels when an error at step 3 would make the final answer wrong and there’s no short-circuit to the answer. Accept the latency (10-60s per call) and cost (~$15-60 per million output tokens for reasoning tokens). For low-volume high-stakes decisions — end-of-day risk reports, not real-time pricing — this is the right call.</p>
+<p><strong>Use Claude Sonnet or GPT-4o</strong> when calculations are structured but not deeply chained — filling a financial model template, extracting and transforming data from documents, or questions where a correct formula applied once gives the answer. These models are 10-20x cheaper, 10x faster, and near-ceiling accurate on well-structured financial tasks. Most enterprise financial automation falls in this bucket.</p>
+<p><strong>Fine-tune a smaller model</strong> (e.g., Llama 3.1 8B or Mistral) when you have a narrow, well-defined calculation type (e.g., loan amortization schedules, specific regulatory ratio formulas), high call volume (millions/day), and strict latency or cost constraints. The fine-tuned model can match or exceed larger models on its specific task while running on much cheaper infrastructure. The risk is brittleness — it will fail on edge cases outside its training distribution.</p>
+<p>My recommendation for a new customer: prototype with Claude Sonnet, measure accuracy on their real test cases, escalate only the failing cases to o3, and benchmark whether a fine-tuned model can replace o3 at scale once you understand the failure modes.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Forward Deployed Engineer
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. A customer is shocked by the latency of reasoning models. How do you explain the latency tradeoff and what alternatives do you propose?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-16-contents" aria-controls="callout-16" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-16" class="callout-16-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>The framing I use: reasoning model latency is not wasted time — it is the model doing the work that a human expert would do before answering a hard question. A human financial analyst doesn’t answer “what is our regulatory capital requirement?” in two seconds; they spend time checking formulas, looking up rules, and verifying their arithmetic. The reasoning model is doing the same thing in its scratchpad. The latency is the computation, not the wait.</p>
+<p>That said, there are concrete alternatives depending on what the customer actually needs:</p>
+<p><strong>Async / background processing:</strong> For queries that don’t need a real-time response — batch document analysis, overnight reports, analysis runs — reasoning model latency is irrelevant. Move these to background jobs with a webhook or polling mechanism. The user submits a request and gets notified when results are ready.</p>
+<p><strong>Routing:</strong> Use a cheap fast classifier (GPT-4o-mini or a fine-tuned classifier) to distinguish easy from hard queries. Route easy queries to Claude Sonnet (1-3s); only route genuinely hard queries to o3 (30-60s). This gives the customer fast responses on 80-90% of queries.</p>
+<p><strong>Streaming reasoning tokens:</strong> OpenAI and Anthropic both support streaming reasoning traces. Show the customer a “thinking…” indicator with partial reasoning steps. Perceived latency is dramatically lower when users see progress versus staring at a spinner. For many users, watching the model reason is itself informative.</p>
+<p><strong>Reasoning effort tuning:</strong> Use <code>reasoning_effort=low</code> or a lower <code>budget_tokens</code> cap for queries where near-perfect accuracy isn’t critical. This can cut latency 3-5x with modest accuracy reduction.</p>
+<p><strong>Model-level alternative:</strong> If the accuracy gap between o3 and Sonnet is acceptable for the use case, move back to a standard model. Always start with empirical accuracy benchmarking on the customer’s actual workload — many customers discover Sonnet is sufficient once they measure it properly.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+
+<!-- -->
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const disableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'prefetch';
+    }
+  }
+  const enableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'stylesheet';
+    }
+  }
+  const manageTransitions = (selector, allowTransitions) => {
+    const els = window.document.querySelectorAll(selector);
+    for (let i=0; i < els.length; i++) {
+      const el = els[i];
+      if (allowTransitions) {
+        el.classList.remove('notransition');
+      } else {
+        el.classList.add('notransition');
+      }
+    }
+  }
+  const toggleGiscusIfUsed = (isAlternate, darkModeDefault) => {
+    const baseTheme = document.querySelector('#giscus-base-theme')?.value ?? 'light';
+    const alternateTheme = document.querySelector('#giscus-alt-theme')?.value ?? 'dark';
+    let newTheme = '';
+    if(darkModeDefault) {
+      newTheme = isAlternate ? baseTheme : alternateTheme;
+    } else {
+      newTheme = isAlternate ? alternateTheme : baseTheme;
+    }
+    const changeGiscusTheme = () => {
+      // From: https://github.com/giscus/giscus/issues/336
+      const sendMessage = (message) => {
+        const iframe = document.querySelector('iframe.giscus-frame');
+        if (!iframe) return;
+        iframe.contentWindow.postMessage({ giscus: message }, 'https://giscus.app');
+      }
+      sendMessage({
+        setConfig: {
+          theme: newTheme
+        }
+      });
+    }
+    const isGiscussLoaded = window.document.querySelector('iframe.giscus-frame') !== null;
+    if (isGiscussLoaded) {
+      changeGiscusTheme();
+    }
+  }
+  const toggleColorMode = (alternate) => {
+    // Switch the stylesheets
+    const alternateStylesheets = window.document.querySelectorAll('link.quarto-color-scheme.quarto-color-alternate');
+    manageTransitions('#quarto-margin-sidebar .nav-link', false);
+    if (alternate) {
+      enableStylesheet(alternateStylesheets);
+      for (const sheetNode of alternateStylesheets) {
+        if (sheetNode.id === "quarto-bootstrap") {
+          toggleBodyColorMode(sheetNode);
+        }
+      }
+    } else {
+      disableStylesheet(alternateStylesheets);
+      toggleBodyColorPrimary();
+    }
+    manageTransitions('#quarto-margin-sidebar .nav-link', true);
+    // Switch the toggles
+    const toggles = window.document.querySelectorAll('.quarto-color-scheme-toggle');
+    for (let i=0; i < toggles.length; i++) {
+      const toggle = toggles[i];
+      if (toggle) {
+        if (alternate) {
+          toggle.classList.add("alternate");     
+        } else {
+          toggle.classList.remove("alternate");
+        }
+      }
+    }
+    // Hack to workaround the fact that safari doesn't
+    // properly recolor the scrollbar when toggling (#1455)
+    if (navigator.userAgent.indexOf('Safari') > 0 && navigator.userAgent.indexOf('Chrome') == -1) {
+      manageTransitions("body", false);
+      window.scrollTo(0, 1);
+      setTimeout(() => {
+        window.scrollTo(0, 0);
+        manageTransitions("body", true);
+      }, 40);  
+    }
+  }
+  const isFileUrl = () => { 
+    return window.location.protocol === 'file:';
+  }
+  const hasAlternateSentinel = () => {  
+    let styleSentinel = getColorSchemeSentinel();
+    if (styleSentinel !== null) {
+      return styleSentinel === "alternate";
+    } else {
+      return false;
+    }
+  }
+  const setStyleSentinel = (alternate) => {
+    const value = alternate ? "alternate" : "default";
+    if (!isFileUrl()) {
+      window.localStorage.setItem("quarto-color-scheme", value);
+    } else {
+      localAlternateSentinel = value;
+    }
+  }
+  const getColorSchemeSentinel = () => {
+    if (!isFileUrl()) {
+      const storageValue = window.localStorage.getItem("quarto-color-scheme");
+      return storageValue != null ? storageValue : localAlternateSentinel;
+    } else {
+      return localAlternateSentinel;
+    }
+  }
+  const darkModeDefault = false;
+  let localAlternateSentinel = darkModeDefault ? 'alternate' : 'default';
+  // Dark / light mode switch
+  window.quartoToggleColorScheme = () => {
+    // Read the current dark / light value 
+    let toAlternate = !hasAlternateSentinel();
+    toggleColorMode(toAlternate);
+    setStyleSentinel(toAlternate);
+    toggleGiscusIfUsed(toAlternate, darkModeDefault);
+  };
+  // Ensure there is a toggle, if there isn't float one in the top right
+  if (window.document.querySelector('.quarto-color-scheme-toggle') === null) {
+    const a = window.document.createElement('a');
+    a.classList.add('top-right');
+    a.classList.add('quarto-color-scheme-toggle');
+    a.href = "";
+    a.onclick = function() { try { window.quartoToggleColorScheme(); } catch {} return false; };
+    const i = window.document.createElement("i");
+    i.classList.add('bi');
+    a.appendChild(i);
+    window.document.body.appendChild(a);
+  }
+  // Switch to dark mode if need be
+  if (hasAlternateSentinel()) {
+    toggleColorMode(true);
+  } else {
+    toggleColorMode(false);
+  }
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const onCopySuccess = function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  }
+  const getTextToCopy = function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+    text: getTextToCopy
+  });
+  clipboard.on('success', onCopySuccess);
+  if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+    const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+      text: getTextToCopy,
+      container: window.document.getElementById('quarto-embedded-source-code-modal')
+    });
+    clipboardModal.on('success', onCopySuccess);
+  }
+  const viewSource = window.document.getElementById('quarto-view-source') ||
+                     window.document.getElementById('quarto-code-tools-source');
+  if (viewSource) {
+    const sourceUrl = viewSource.getAttribute("data-quarto-source-url");
+    viewSource.addEventListener("click", function(e) {
+      if (sourceUrl) {
+        // rstudio viewer pane
+        if (/\bcapabilities=\b/.test(window.location)) {
+          window.open(sourceUrl);
+        } else {
+          window.location.href = sourceUrl;
+        }
+      } else {
+        const modal = new bootstrap.Modal(document.getElementById('quarto-embedded-source-code-modal'));
+        modal.show();
+      }
+      return false;
+    });
+  }
+  function toggleCodeHandler(show) {
+    return function(e) {
+      const detailsSrc = window.document.querySelectorAll(".cell > details > .sourceCode");
+      for (let i=0; i<detailsSrc.length; i++) {
+        const details = detailsSrc[i].parentElement;
+        if (show) {
+          details.open = true;
+        } else {
+          details.removeAttribute("open");
+        }
+      }
+      const cellCodeDivs = window.document.querySelectorAll(".cell > .sourceCode");
+      const fromCls = show ? "hidden" : "unhidden";
+      const toCls = show ? "unhidden" : "hidden";
+      for (let i=0; i<cellCodeDivs.length; i++) {
+        const codeDiv = cellCodeDivs[i];
+        if (codeDiv.classList.contains(fromCls)) {
+          codeDiv.classList.remove(fromCls);
+          codeDiv.classList.add(toCls);
+        } 
+      }
+      return false;
+    }
+  }
+  const hideAllCode = window.document.getElementById("quarto-hide-all-code");
+  if (hideAllCode) {
+    hideAllCode.addEventListener("click", toggleCodeHandler(false));
+  }
+  const showAllCode = window.document.getElementById("quarto-show-all-code");
+  if (showAllCode) {
+    showAllCode.addEventListener("click", toggleCodeHandler(true));
+  }
+    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+    var mailtoRegex = new RegExp(/^mailto:/);
+      var filterRegex = new RegExp("https:\/\/akhileshpothuri\.github\.io\/learnwithakhilesh");
+    var isInternal = (href) => {
+        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+    }
+    // Inspect non-navigation links and adorn them if external
+ 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+    for (var i=0; i<links.length; i++) {
+      const link = links[i];
+      if (!isInternal(link.href)) {
+        // undo the damage that might have been done by quarto-nav.js in the case of
+        // links that we want to consider external
+        if (link.dataset.originalHref !== undefined) {
+          link.href = link.dataset.originalHref;
+        }
+      }
+    }
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      if (note) {
+        return note.innerHTML;
+      } else {
+        return "";
+      }
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../chapters/22-speculative-decoding.html" class="pagination-link" aria-label="Speculative Decoding">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../chapters/24-multimodal.html" class="pagination-link" aria-label="Multimodal AI: Vision, Audio &amp; Video">
+        <span class="nav-page-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
+<div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># Reasoning Models &amp; Test-Time Compute {#sec-23}</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>::: {.callout-note}</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>**Who this chapter is for:** Mid Level → FDE</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>**What you'll be able to answer after reading this:**</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>What distinguishes reasoning models from standard LLMs and why the distinction matters</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How extended thinking / chain-of-thought is trained and executed at inference time</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The mechanics of GRPO, process reward models, and RL-based reasoning training</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How test-time compute scaling works and when it pays off</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>When to deploy reasoning models vs. standard models — and how to justify the cost</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="fu">## What Reasoning Models Are</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>Standard language models are trained to predict the most probable next token given a context. At inference time, they produce an answer in a single forward-pass sequence — each token conditioned on what came before, but with no structured deliberation step between reading the question and emitting the answer. This works well for tasks where a fluent continuation of the prompt is a correct answer. It breaks down on tasks that require multi-step logical deduction, constraint satisfaction, or long chains of arithmetic where an early error compounds into an entirely wrong final answer.</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>Reasoning models solve this by inserting a structured thinking phase between input and output. Before producing the visible answer, the model generates thousands of reasoning tokens in a hidden scratchpad — sometimes called an "extended thinking" trace or "chain-of-thought" trace. These tokens are not returned to the user but are consumed by the model itself during generation. The practical effect is that the model has more opportunities to catch its own errors, explore alternative solution paths, and verify intermediate conclusions before committing to an answer.</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>The key architectural insight is that this is not primarily a model-size phenomenon. A smaller model spending many reasoning tokens can outperform a larger model that answers immediately. This is the test-time compute hypothesis: the amount of compute available at inference time, not just the number of parameters or the quality of pretraining, determines the ceiling of reasoning performance. OpenAI's o1/o3/o4 family, DeepSeek-R1, and Claude 3.7 Sonnet with extended thinking all embody this approach, though they differ in training methodology and how much of the reasoning trace is exposed to users.</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a><span class="fu">## How It Works — Chain-of-Thought at Inference Scale</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>The reasoning trace is not a post-hoc explanation — it is causally upstream of the final answer. The model generates the scratchpad autoregressively, and those scratchpad tokens appear in the context when the final answer tokens are generated. This means a mistake corrected mid-reasoning does not propagate to the answer, which is fundamentally different from a standard model that cannot revisit an implicit intermediate step buried in its hidden states.</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>Training a reasoning model requires teaching the model to generate useful reasoning traces, not just any verbose output. Two approaches exist for supervising this. An **Outcome Reward Model (ORM)** scores only the final answer — correct answer gets a positive reward, wrong answer gets none or a penalty. ORMs are easy to apply whenever ground-truth answers exist (math problems, code execution results) but they provide no signal about whether the reasoning path was sound. A model can arrive at the right answer through flawed reasoning, and the ORM will reinforce the flawed path.</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>A **Process Reward Model (PRM)** scores individual reasoning steps. A human annotator (or a trained verifier) labels each step in a chain as correct or incorrect, and the PRM learns to predict these step-level labels. This gives the training signal needed to distinguish "correct answer, wrong reasoning path" from "correct answer, correct reasoning path." PRMs are significantly more expensive to build — they require dense step-level annotation — but they produce more robust and generalizable reasoning behavior. OpenAI's o1 training reportedly relied heavily on process supervision. The tradeoff is annotation cost: step-level labels require mathematical or domain expertise and scale poorly to open-ended tasks.</span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a><span class="fu">## GRPO &amp; RL-Based Reasoning Training</span></span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>Training reasoning models requires reinforcement learning because the reward signal (is the final answer correct?) is not differentiable with respect to the model's token-level outputs. The standard approach in RLHF — PPO with a value network — requires training a separate critic model that estimates the expected future reward for each partial sequence. This critic is expensive in memory and compute, must be kept in sync with the policy, and introduces significant training instability.</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>DeepSeek-R1 introduced **Group Relative Policy Optimization (GRPO)** as a lighter alternative. Instead of training a separate value network, GRPO generates a group of G candidate completions for each prompt, computes the reward for each completion (via a verifiable reward: does the math answer match?), and uses the group's average reward as the baseline. The policy gradient update pushes the model toward completions that scored above the group average and away from those that scored below. Because the baseline is computed from the model's own outputs rather than a learned critic, GRPO eliminates the memory and stability costs of PPO's critic while retaining the core optimization signal.</span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>The **"aha moment"** refers to an emergent behavior observed during DeepSeek-R1 training: mid-training, the model began spontaneously generating self-correction tokens ("Wait, that's wrong. Let me reconsider...") without being explicitly trained to do so. This suggests that RL training on verifiable reward signals can elicit structured self-reflection from a model that had no explicit supervision for that behavior. The policy simply discovered that backtracking and correcting intermediate steps increased the probability of reaching a correct final answer.</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>The **cold-start problem** is the challenge of initializing RL training when the model has no prior behavior resembling structured reasoning. If the initial policy generates random chains that rarely lead to correct answers, the reward signal is too sparse for learning to begin. DeepSeek solved this with a two-phase approach: first, use supervised fine-tuning (SFT) on a small set of human-curated reasoning chain examples to warm-start the model into a regime where it occasionally produces correct multi-step solutions; then apply GRPO to refine and extend that behavior at scale. This SFT warm-up acts as a curriculum that bootstraps the policy into the reward basin.</span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a><span class="fu">## Test-Time Compute Scaling</span></span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a>The conventional scaling law says: more parameters + more training tokens = better model. The test-time compute scaling law says: given a fixed trained model, more inference-time computation can raise performance on hard tasks, and this additional compute can be more cost-effective than training a larger model.</span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a>The simplest form is **Best-of-N sampling**: generate N independent answers and return the one that scores highest according to a verifier (e.g., a math-checking script or an ORM). If each attempt has probability p of being correct, the probability that at least one of N attempts is correct is 1-(1-p)^N. For hard problems with low per-attempt accuracy, this grows quickly. The cost is linear in N.</span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a>More sophisticated approaches use **tree search over reasoning paths**. At each step in the reasoning chain, the model branches into multiple continuations; a PRM scores the partial traces; branches with low scores are pruned. This concentrates compute on promising reasoning directions rather than independent restarts. Beam search, Monte Carlo Tree Search (MCTS), and best-first search have all been applied in this framing.</span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>**Compute-optimal vs. token-optimal inference** is a real engineering tradeoff. Reasoning models are not always the right tool. They excel on tasks with a well-defined correct answer, high sensitivity to intermediate step errors, and where user latency tolerance is high: complex mathematics, multi-step code debugging, constraint satisfaction, legal or financial reasoning with explicit rules. They are overkill — and expensive — for tasks where a standard model is already near-ceiling: factual lookup, simple summarization, conversational replies, or tasks where chain-of-thought doesn't generalize (e.g., common-sense questions where slow deliberation can introduce overthinking artifacts).</span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a><span class="fu">## Practical Use</span></span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>Reasoning model latency is fundamentally different from standard model latency. A standard <span class="in">`gpt-4o`</span> call generating 200 output tokens might return in 2-3 seconds. An <span class="in">`o3`</span> call on a hard problem might generate 4,000 reasoning tokens before the 200-token answer, adding 30-60 seconds of wait time. This is not a bug — it is the model doing useful work — but it is a deployment reality that must be designed around. Strategies include: showing a "thinking..." spinner with partial reasoning tokens streamed to the user, offloading reasoning-heavy tasks to background jobs, and reserving reasoning models for the subset of queries where the accuracy gain justifies latency.</span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>The OpenAI API exposes a <span class="in">`reasoning_effort`</span> parameter for o3/o4-mini that lets callers trade off latency and cost against accuracy: <span class="in">`low`</span> uses fewer reasoning tokens and responds faster; <span class="in">`high`</span> uses more. This allows applications to tune dynamically — use <span class="in">`high`</span> for a user explicitly requesting deep analysis, <span class="in">`low`</span> for a quick check. Anthropic's extended thinking API for Claude 3.7 exposes a <span class="in">`budget_tokens`</span> parameter that caps reasoning token spend per call. Both designs reflect the same insight: reasoning compute is a knob, not a binary.</span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>Cost is significant. Reasoning tokens are billed at the same rate as output tokens, and a single o3 call on a hard problem can generate 5,000–20,000 reasoning tokens. This makes reasoning models 10-100x more expensive per task than calling a standard model with a single pass. Architecture guidance: use reasoning models as a last resort or as an elevated tier triggered by task complexity signals (detected by a cheaper classifier), not as the default handler for every user request.</span>
+<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a>**Q1. What is the difference between a standard LLM and a reasoning model like o1?**</span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a>A standard LLM generates an answer token-by-token in a single forward pass, with no explicit deliberation between reading a question and emitting the answer. Each token is conditioned on the prompt and previous outputs, but the model has no mechanism to revisit or correct an intermediate step it has already emitted.</span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a>A reasoning model like o1 generates a hidden reasoning trace — sometimes called a scratchpad or "extended thinking" — before producing the visible answer. This trace can be thousands of tokens long and allows the model to try multiple approaches, catch its own errors, and verify intermediate conclusions before committing to a final response.</span>
+<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-70"><a href="#cb1-70" aria-hidden="true" tabindex="-1"></a>The practical difference shows up on hard tasks: on complex math or multi-step code problems, a standard GPT-4-class model answers quickly but makes errors at intermediate steps that cascade into wrong final answers. o1 uses the scratchpad to work through the problem step-by-step and self-correct, achieving dramatically higher accuracy at the cost of higher latency and inference cost.</span>
+<span id="cb1-71"><a href="#cb1-71" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-72"><a href="#cb1-72" aria-hidden="true" tabindex="-1"></a>The key insight is that the improvement comes from compute at inference time, not a larger or differently trained base model.</span>
+<span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-74"><a href="#cb1-74" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-75"><a href="#cb1-75" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-76"><a href="#cb1-76" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-77"><a href="#cb1-77" aria-hidden="true" tabindex="-1"></a>**Q2. Why does "thinking longer" help a model solve harder problems?**</span>
+<span id="cb1-78"><a href="#cb1-78" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-79"><a href="#cb1-79" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-80"><a href="#cb1-80" aria-hidden="true" tabindex="-1"></a>Each token a model generates becomes part of the context for subsequent tokens. When a model generates a scratchpad before answering, those intermediate tokens serve as working memory — the model can write down sub-results, verify them, and build on them, just as a human working through a math problem on paper can catch a multiplication error before it corrupts the rest of the solution.</span>
+<span id="cb1-81"><a href="#cb1-81" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-82"><a href="#cb1-82" aria-hidden="true" tabindex="-1"></a>Without a scratchpad, a model answering a multi-step problem must compress all intermediate reasoning into its hidden states across a fixed number of transformer layers. For complex problems, the hidden state dimensionality is insufficient to hold all necessary intermediate values accurately. The scratchpad offloads this computation into explicit tokens, where it can be checked and corrected.</span>
+<span id="cb1-83"><a href="#cb1-83" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-84"><a href="#cb1-84" aria-hidden="true" tabindex="-1"></a>There is also a probabilistic argument: harder problems require longer correct reasoning chains. At each step, there is some probability of an error. Longer chains without correction accumulate more errors. A scratchpad allows the model to detect and recover from local errors rather than letting them propagate, so the probability of reaching a correct final answer on a hard problem improves substantially with additional reasoning tokens.</span>
+<span id="cb1-85"><a href="#cb1-85" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-86"><a href="#cb1-86" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-87"><a href="#cb1-87" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-89"><a href="#cb1-89" aria-hidden="true" tabindex="-1"></a>**Q3. What is test-time compute scaling and how does it differ from training-time scaling?**</span>
+<span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-91"><a href="#cb1-91" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-92"><a href="#cb1-92" aria-hidden="true" tabindex="-1"></a>Training-time scaling means using more parameters, more training data, or more training compute to build a better model. The standard scaling laws (Chinchilla) tell us that model quality improves predictably with model size and training tokens. But after training, the model is fixed — its weights do not change at inference.</span>
+<span id="cb1-93"><a href="#cb1-93" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-94"><a href="#cb1-94" aria-hidden="true" tabindex="-1"></a>Test-time compute scaling means spending more computation during inference — on a fixed, trained model — to get better answers. The simplest version is generating multiple answers and picking the best (best-of-N). More sophisticated versions generate long reasoning chains, branch into multiple reasoning paths, and use verifiers to prune bad branches. All of this happens at inference time, not training time.</span>
+<span id="cb1-95"><a href="#cb1-95" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-96"><a href="#cb1-96" aria-hidden="true" tabindex="-1"></a>The practical implication is that you can trade latency and inference cost for accuracy on a per-query basis, without retraining anything. A hard problem gets more compute; a simple question gets less. This is fundamentally different from training-time scaling, where you pay the compute cost once but it applies uniformly to all future queries. Test-time scaling is dynamic and query-dependent, which is what makes it useful for production applications with mixed workloads.</span>
+<span id="cb1-97"><a href="#cb1-97" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-98"><a href="#cb1-98" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-99"><a href="#cb1-99" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-100"><a href="#cb1-100" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-101"><a href="#cb1-101" aria-hidden="true" tabindex="-1"></a>**Q1. Explain the difference between a Process Reward Model (PRM) and an Outcome Reward Model (ORM) in the context of reasoning model training.**</span>
+<span id="cb1-102"><a href="#cb1-102" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-103"><a href="#cb1-103" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-104"><a href="#cb1-104" aria-hidden="true" tabindex="-1"></a>An Outcome Reward Model scores only the final answer of a reasoning chain. A correct final answer receives a positive reward; incorrect answers receive zero or a penalty. ORMs are cheap to build whenever ground-truth answers are automatically verifiable — math problems have exact numerical answers, code problems can be tested against unit tests. The limitation is that ORMs cannot distinguish between a correct answer reached by valid reasoning and a correct answer reached by a flawed shortcut. The model can be reinforced for reasoning patterns that happen to get right answers but will generalize poorly to harder problems.</span>
+<span id="cb1-105"><a href="#cb1-105" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-106"><a href="#cb1-106" aria-hidden="true" tabindex="-1"></a>A Process Reward Model scores individual steps in the reasoning chain. Annotators — human experts or a separately trained PRM — label each step as correct, incorrect, or uncertain. The RL training signal rewards step-level correctness, not just final-answer correctness. This forces the model to learn valid reasoning processes, not just answer-producing heuristics. PRMs produce more robust reasoning behavior and can identify where in a chain a model goes wrong, which is also useful for debugging.</span>
+<span id="cb1-107"><a href="#cb1-107" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-108"><a href="#cb1-108" aria-hidden="true" tabindex="-1"></a>The tradeoff is cost. Step-level annotation for mathematical proofs or code debugging requires domain expertise and is orders of magnitude more expensive than collecting final-answer labels. PRMs also require defining what constitutes a "step," which is non-trivial for free-form reasoning. In practice, most production reasoning models use a combination: ORM for cheap large-scale training signal and PRM for high-quality fine-grained supervision on a smaller dataset.</span>
+<span id="cb1-109"><a href="#cb1-109" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-110"><a href="#cb1-110" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-111"><a href="#cb1-111" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-112"><a href="#cb1-112" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-113"><a href="#cb1-113" aria-hidden="true" tabindex="-1"></a>**Q2. How does GRPO differ from PPO and why did DeepSeek choose it for DeepSeek-R1?**</span>
+<span id="cb1-114"><a href="#cb1-114" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-115"><a href="#cb1-115" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-116"><a href="#cb1-116" aria-hidden="true" tabindex="-1"></a>PPO (Proximal Policy Optimization) requires a critic network — a separate model that estimates the expected future reward (value function) for each state in the sequence. The policy gradient update uses the advantage estimate from the critic: how much better was this action than the critic expected? Training PPO means running two large models in lockstep: the policy (the LLM being trained) and the critic (typically as large as the policy). This doubles memory requirements and introduces instability when the critic's value estimates lag behind rapid policy changes.</span>
+<span id="cb1-117"><a href="#cb1-117" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-118"><a href="#cb1-118" aria-hidden="true" tabindex="-1"></a>GRPO (Group Relative Policy Optimization) eliminates the critic by estimating the baseline from the model's own group of outputs. For each prompt, the model generates G completions. The group average reward serves as the baseline. Individual completions are rewarded proportionally to how much better than average they scored. No separate value network is needed — the baseline is computed on-the-fly from inference outputs.</span>
+<span id="cb1-119"><a href="#cb1-119" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-120"><a href="#cb1-120" aria-hidden="true" tabindex="-1"></a>DeepSeek chose GRPO for three practical reasons: it halves the GPU memory requirements during training (no second model), it is more stable because the baseline is always current (computed from the latest policy's outputs), and it integrates naturally with verifiable reward functions like mathematical answer checking. For DeepSeek-R1's training setup — large-scale RL on mathematical reasoning with automated reward verification — GRPO provided equivalent learning signal to PPO at significantly lower infrastructure cost.</span>
+<span id="cb1-121"><a href="#cb1-121" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-122"><a href="#cb1-122" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-123"><a href="#cb1-123" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-124"><a href="#cb1-124" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-125"><a href="#cb1-125" aria-hidden="true" tabindex="-1"></a>**Q3. What are the failure modes of reasoning models — when do they "think" more but get worse?**</span>
+<span id="cb1-126"><a href="#cb1-126" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-127"><a href="#cb1-127" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-128"><a href="#cb1-128" aria-hidden="true" tabindex="-1"></a>**Overthinking on simple tasks.** On tasks with obvious answers, forcing the model into extended reasoning can introduce spurious considerations that shift the answer away from the correct simple response. The model may convince itself that a straightforward factual question has hidden complexity and hedge or overqualify an answer that should be direct.</span>
+<span id="cb1-129"><a href="#cb1-129" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-130"><a href="#cb1-130" aria-hidden="true" tabindex="-1"></a>**Reasoning trace length mismatch.** If the model is trained primarily on mathematical reasoning, it may not know how to budget reasoning tokens correctly for other task types. It can generate very long reasoning traces that loop or repeat without making progress — a form of "reasoning thrashing" that wastes tokens without improving accuracy.</span>
+<span id="cb1-131"><a href="#cb1-131" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-132"><a href="#cb1-132" aria-hidden="true" tabindex="-1"></a>**Confident wrong conclusions.** A convincing-looking reasoning chain can be internally consistent but built on a wrong premise in the first step. Because the chain appears coherent, the final answer arrives with high apparent confidence. This is more dangerous than a standard model's wrong answer because the reasoning trace can mislead users who try to audit it.</span>
+<span id="cb1-133"><a href="#cb1-133" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-134"><a href="#cb1-134" aria-hidden="true" tabindex="-1"></a>**Instruction following degradation.** Reasoning models trained primarily on problem-solving tasks can show weaker instruction-following behavior on format-sensitive tasks compared to RLHF-tuned standard models. They may ignore formatting requirements or output constraints that appear at the end of the prompt because the reasoning trace has shifted the model's context far from the original instruction.</span>
+<span id="cb1-135"><a href="#cb1-135" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-136"><a href="#cb1-136" aria-hidden="true" tabindex="-1"></a>**Cost explosion on easy workloads.** Applying reasoning models to a mixed workload that includes many simple queries generates reasoning traces that add latency and cost without accuracy benefit on the simple queries.</span>
+<span id="cb1-137"><a href="#cb1-137" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-138"><a href="#cb1-138" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-139"><a href="#cb1-139" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-140"><a href="#cb1-140" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb1-141"><a href="#cb1-141" aria-hidden="true" tabindex="-1"></a>**Q1. A customer needs to solve complex multi-step financial calculations — when would you recommend o3 vs. Claude Sonnet vs. a fine-tuned smaller model?**</span>
+<span id="cb1-142"><a href="#cb1-142" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-143"><a href="#cb1-143" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-144"><a href="#cb1-144" aria-hidden="true" tabindex="-1"></a>The decision turns on three factors: accuracy requirements, latency tolerance, and call volume/cost.</span>
+<span id="cb1-145"><a href="#cb1-145" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-146"><a href="#cb1-146" aria-hidden="true" tabindex="-1"></a>**Use o3** when the calculations are genuinely multi-step with compounding dependencies — think portfolio risk calculations requiring dozens of sequential formula applications, or regulatory capital calculations with nested conditional rules. o3's extended reasoning excels when an error at step 3 would make the final answer wrong and there's no short-circuit to the answer. Accept the latency (10-60s per call) and cost (~$15-60 per million output tokens for reasoning tokens). For low-volume high-stakes decisions — end-of-day risk reports, not real-time pricing — this is the right call.</span>
+<span id="cb1-147"><a href="#cb1-147" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-148"><a href="#cb1-148" aria-hidden="true" tabindex="-1"></a>**Use Claude Sonnet or GPT-4o** when calculations are structured but not deeply chained — filling a financial model template, extracting and transforming data from documents, or questions where a correct formula applied once gives the answer. These models are 10-20x cheaper, 10x faster, and near-ceiling accurate on well-structured financial tasks. Most enterprise financial automation falls in this bucket.</span>
+<span id="cb1-149"><a href="#cb1-149" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-150"><a href="#cb1-150" aria-hidden="true" tabindex="-1"></a>**Fine-tune a smaller model** (e.g., Llama 3.1 8B or Mistral) when you have a narrow, well-defined calculation type (e.g., loan amortization schedules, specific regulatory ratio formulas), high call volume (millions/day), and strict latency or cost constraints. The fine-tuned model can match or exceed larger models on its specific task while running on much cheaper infrastructure. The risk is brittleness — it will fail on edge cases outside its training distribution.</span>
+<span id="cb1-151"><a href="#cb1-151" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-152"><a href="#cb1-152" aria-hidden="true" tabindex="-1"></a>My recommendation for a new customer: prototype with Claude Sonnet, measure accuracy on their real test cases, escalate only the failing cases to o3, and benchmark whether a fine-tuned model can replace o3 at scale once you understand the failure modes.</span>
+<span id="cb1-153"><a href="#cb1-153" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-154"><a href="#cb1-154" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-155"><a href="#cb1-155" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-156"><a href="#cb1-156" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb1-157"><a href="#cb1-157" aria-hidden="true" tabindex="-1"></a>**Q2. A customer is shocked by the latency of reasoning models. How do you explain the latency tradeoff and what alternatives do you propose?**</span>
+<span id="cb1-158"><a href="#cb1-158" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-159"><a href="#cb1-159" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-160"><a href="#cb1-160" aria-hidden="true" tabindex="-1"></a>The framing I use: reasoning model latency is not wasted time — it is the model doing the work that a human expert would do before answering a hard question. A human financial analyst doesn't answer "what is our regulatory capital requirement?" in two seconds; they spend time checking formulas, looking up rules, and verifying their arithmetic. The reasoning model is doing the same thing in its scratchpad. The latency is the computation, not the wait.</span>
+<span id="cb1-161"><a href="#cb1-161" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-162"><a href="#cb1-162" aria-hidden="true" tabindex="-1"></a>That said, there are concrete alternatives depending on what the customer actually needs:</span>
+<span id="cb1-163"><a href="#cb1-163" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-164"><a href="#cb1-164" aria-hidden="true" tabindex="-1"></a>**Async / background processing:** For queries that don't need a real-time response — batch document analysis, overnight reports, analysis runs — reasoning model latency is irrelevant. Move these to background jobs with a webhook or polling mechanism. The user submits a request and gets notified when results are ready.</span>
+<span id="cb1-165"><a href="#cb1-165" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-166"><a href="#cb1-166" aria-hidden="true" tabindex="-1"></a>**Routing:** Use a cheap fast classifier (GPT-4o-mini or a fine-tuned classifier) to distinguish easy from hard queries. Route easy queries to Claude Sonnet (1-3s); only route genuinely hard queries to o3 (30-60s). This gives the customer fast responses on 80-90% of queries.</span>
+<span id="cb1-167"><a href="#cb1-167" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-168"><a href="#cb1-168" aria-hidden="true" tabindex="-1"></a>**Streaming reasoning tokens:** OpenAI and Anthropic both support streaming reasoning traces. Show the customer a "thinking..." indicator with partial reasoning steps. Perceived latency is dramatically lower when users see progress versus staring at a spinner. For many users, watching the model reason is itself informative.</span>
+<span id="cb1-169"><a href="#cb1-169" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-170"><a href="#cb1-170" aria-hidden="true" tabindex="-1"></a>**Reasoning effort tuning:** Use <span class="in">`reasoning_effort=low`</span> or a lower <span class="in">`budget_tokens`</span> cap for queries where near-perfect accuracy isn't critical. This can cut latency 3-5x with modest accuracy reduction.</span>
+<span id="cb1-171"><a href="#cb1-171" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-172"><a href="#cb1-172" aria-hidden="true" tabindex="-1"></a>**Model-level alternative:** If the accuracy gap between o3 and Sonnet is acceptable for the use case, move back to a standard model. Always start with empirical accuracy benchmarking on the customer's actual workload — many customers discover Sonnet is sufficient once they measure it properly.</span>
+<span id="cb1-173"><a href="#cb1-173" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-174"><a href="#cb1-174" aria-hidden="true" tabindex="-1"></a>:::</span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+</div></div></div></div></div>
+</div> <!-- /content -->
+
+
+
+
+<footer class="footer"><div class="nav-footer"><div class="nav-footer-center"><div class="toc-actions d-sm-block d-md-none"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/23-reasoning-models.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></div></div></footer></body></html>

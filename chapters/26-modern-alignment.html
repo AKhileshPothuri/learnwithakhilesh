@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.6.43">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="A depth-first interview preparation guide covering Generative AI foundations, large language models, fine-tuning, GenAI systems architecture, and a dedicated track for Forward Deployed Engineers.">
+
+<title>26&nbsp; Modern Alignment: DPO Variants, GRPO &amp; Beyond – GenAI Interview Prep</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../chapters/27-synthetic-data.html" rel="next">
+<link href="../chapters/25-diffusion.html" rel="prev">
+<script src="../site_libs/quarto-html/quarto.js"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-7fd0fe4245b865325b8ce8dccb604d59.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-dc95f10abd972b9c41a78ec8992004fc.css" rel="prefetch" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-ccd92d5b9cd3e64de80ef7f1ead5b3e1.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-375668ddd5fab82322274c16a79adfb4.min.css" rel="prefetch" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="nav-sidebar docked nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">GenAI Interview Prep</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/AKhileshPothuri/learnwithakhilesh"> <i class="bi bi-github" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+    <a href="https://github.com/AKhileshPothuri/learnwithakhilesh" title="Source Code" class="quarto-navigation-tool px-1" aria-label="Source Code"><i class="bi bi-github"></i></a>
+  <a href="" class="quarto-color-scheme-toggle quarto-navigation-tool  px-1" onclick="window.quartoToggleColorScheme(); return false;" title="Toggle dark mode"><i class="bi"></i></a>
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/26-modern-alignment.html">Part VIII — Advanced Training &amp; Alignment</a></li><li class="breadcrumb-item"><a href="../chapters/26-modern-alignment.html"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation docked overflow-auto">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Preface</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part I — Foundations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/01-intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">What Is Generative AI?</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/03-transformers.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">The Transformer Architecture</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part II — Large Language Models</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/04-llm-pretraining.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">LLM Pretraining — Data, Scale, and Paradigms</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/05-embeddings.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Embeddings — Representations That Encode Meaning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/06-inference.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Inference &amp; Decoding Strategies</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part III — Adapting &amp; Aligning LLMs</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/07-prompting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Prompt Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/08-finetuning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Fine-Tuning LLMs</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/09-peft-lora.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">PEFT, LoRA &amp; QLoRA</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/10-rlhf-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">RLHF &amp; Alignment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IV — GenAI Systems &amp; Architecture</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/11-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Retrieval-Augmented Generation (RAG)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/12-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Agents &amp; Tool Use</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/13-evaluation.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Evaluation — Measuring What Matters</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/14-deployment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Deployment &amp; Optimization</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part V — Forward Deployed Engineer Track</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/15-fde-overview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">The Forward Deployed Engineer Role</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/16-customer-scenarios.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Common GenAI Customer Use Cases</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/17-integration.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Enterprise Integration Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/18-safety-production.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Safety &amp; Responsible Deployment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VI — Modern Architectures &amp; Efficiency</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/19-moe.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Mixture of Experts (MoE)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/20-ssm-mamba.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/21-long-context.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/22-speculative-decoding.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VII — Reasoning &amp; Multimodal</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/23-reasoning-models.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/24-multimodal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/25-diffusion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VIII — Advanced Training &amp; Alignment</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/26-modern-alignment.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/27-synthetic-data.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Synthetic Data &amp; Data-Centric AI</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IX — Advanced Production Systems</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/28-advanced-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Advanced RAG Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/29-advanced-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Advanced Agents: MCP, Computer Use &amp; GUI Agents</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/30-prompt-optimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Prompt Optimization &amp; DSPy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/31-interpretability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Mechanistic Interpretability &amp; Sparse Autoencoders</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/32-observability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/appendix-ml-fundamentals.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">ML Fundamentals Refresher</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#dpo-recap-and-its-limitations" id="toc-dpo-recap-and-its-limitations" class="nav-link active" data-scroll-target="#dpo-recap-and-its-limitations"><span class="header-section-number">26.1</span> DPO Recap and Its Limitations</a></li>
+  <li><a href="#dpo-variants" id="toc-dpo-variants" class="nav-link" data-scroll-target="#dpo-variants"><span class="header-section-number">26.2</span> DPO Variants</a>
+  <ul class="collapse">
+  <li><a href="#ipo-identity-preference-optimization" id="toc-ipo-identity-preference-optimization" class="nav-link" data-scroll-target="#ipo-identity-preference-optimization"><span class="header-section-number">26.2.1</span> IPO: Identity Preference Optimization</a></li>
+  <li><a href="#kto-kahneman-tversky-optimization" id="toc-kto-kahneman-tversky-optimization" class="nav-link" data-scroll-target="#kto-kahneman-tversky-optimization"><span class="header-section-number">26.2.2</span> KTO: Kahneman-Tversky Optimization</a></li>
+  <li><a href="#orpo-odds-ratio-preference-optimization" id="toc-orpo-odds-ratio-preference-optimization" class="nav-link" data-scroll-target="#orpo-odds-ratio-preference-optimization"><span class="header-section-number">26.2.3</span> ORPO: Odds Ratio Preference Optimization</a></li>
+  <li><a href="#simpo-simple-preference-optimization" id="toc-simpo-simple-preference-optimization" class="nav-link" data-scroll-target="#simpo-simple-preference-optimization"><span class="header-section-number">26.2.4</span> SimPO: Simple Preference Optimization</a></li>
+  </ul></li>
+  <li><a href="#grpo-group-relative-policy-optimization" id="toc-grpo-group-relative-policy-optimization" class="nav-link" data-scroll-target="#grpo-group-relative-policy-optimization"><span class="header-section-number">26.3</span> GRPO: Group Relative Policy Optimization</a></li>
+  <li><a href="#online-vs.-offline-preference-learning" id="toc-online-vs.-offline-preference-learning" class="nav-link" data-scroll-target="#online-vs.-offline-preference-learning"><span class="header-section-number">26.4</span> Online vs.&nbsp;Offline Preference Learning</a></li>
+  <li><a href="#the-practical-alignment-stack-in-2025" id="toc-the-practical-alignment-stack-in-2025" class="nav-link" data-scroll-target="#the-practical-alignment-stack-in-2025"><span class="header-section-number">26.5</span> The Practical Alignment Stack in 2025</a></li>
+  <li><a href="#interview-questions" id="toc-interview-questions" class="nav-link" data-scroll-target="#interview-questions"><span class="header-section-number">26.6</span> Interview Questions</a></li>
+  </ul>
+<div class="toc-actions"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/26-modern-alignment.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/26-modern-alignment.html">Part VIII — Advanced Training &amp; Alignment</a></li><li class="breadcrumb-item"><a href="../chapters/26-modern-alignment.html"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></a></li></ol></nav>
+<div class="quarto-title">
+<div class="quarto-title-block"><div><h1 class="title"><span id="sec-26" class="quarto-section-identifier"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Note
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Who this chapter is for:</strong> Mid Level / Forward Deployed Engineer</p>
+<p><strong>What you’ll be able to answer after reading this:</strong></p>
+<ul>
+<li>Why DPO has a length bias and a distribution constraint that variants like IPO, KTO, SimPO, and ORPO are designed to fix</li>
+<li>How GRPO replaces both the critic model and the reference model with intra-group advantage estimation</li>
+<li>The practical difference between offline and online preference learning, and when distribution gap matters</li>
+<li>Which alignment technique to reach for given a specific production constraint (paired data, unpaired data, compute budget, conciseness requirement)</li>
+<li>Why PPO is rarely used in production fine-tuning pipelines despite being the canonical RL algorithm</li>
+</ul>
+</div>
+</div>
+<section id="dpo-recap-and-its-limitations" class="level2" data-number="26.1">
+<h2 data-number="26.1" class="anchored" data-anchor-id="dpo-recap-and-its-limitations"><span class="header-section-number">26.1</span> DPO Recap and Its Limitations</h2>
+<p>Direct Preference Optimization, covered in the prior alignment chapter, eliminates the separate reward model and RL training loop of PPO-based RLHF by deriving a closed-form supervised objective directly from the Bradley-Terry preference model. The key insight is that a reward function and a policy are related by the KL-regularized objective, allowing the reward to be expressed entirely in terms of the policy itself. The resulting DPO loss trains the policy to increase the log-likelihood ratio between the chosen and rejected responses, weighted implicitly by the KL penalty against a frozen reference model.</p>
+<p>This is elegant and efficient, but the derivation carries forward several constraints that show up as practical failure modes at production scale. The first is the distribution constraint: DPO is an offline algorithm. It trains on a static dataset of (prompt, chosen, rejected) triples collected before training begins. The distribution of prompts in the dataset — and the responses generated by whatever model produced the rejected samples — is fixed. As the policy drifts during training, the responses it would now generate for those prompts become increasingly different from the responses that were actually labeled. The model is optimizing a loss defined over a distribution it is no longer sampling from. This distribution gap is mild early in training but compounds as alignment improves, causing the later stages of training to be less effective.</p>
+<p>The second limitation is the length bias. DPO objective naturally increases the probability of chosen responses and decreases the probability of rejected responses. Human preference annotations, collected without controlling for length, strongly favor longer responses — annotators perceive length as thoroughness even when the added length contains no new information. Because longer responses are systematically chosen, the DPO loss pushes the model toward generating longer outputs. This is measurable: models aligned with vanilla DPO produce responses 20-40% longer on average than the SFT baseline for the same prompts. In production settings where token cost matters — customer service bots, API-facing deployments — this is a direct operational cost, not just an aesthetic concern.</p>
+<p>The third limitation is that DPO’s KL term provides only implicit regularization. The KL divergence between the policy and the reference model is controlled indirectly through the β hyperparameter in the objective, but in practice the policy can move arbitrarily far from the reference model on responses not well covered by the training data. Overfit models develop degenerate behavior on inputs not similar to the preference dataset. IPO and subsequent variants address each of these constraints through different mechanisms, representing a research trajectory from DPO’s elegant-but-constrained formulation toward more robust offline and online alignment objectives.</p>
+</section>
+<section id="dpo-variants" class="level2" data-number="26.2">
+<h2 data-number="26.2" class="anchored" data-anchor-id="dpo-variants"><span class="header-section-number">26.2</span> DPO Variants</h2>
+<section id="ipo-identity-preference-optimization" class="level3" data-number="26.2.1">
+<h3 data-number="26.2.1" class="anchored" data-anchor-id="ipo-identity-preference-optimization"><span class="header-section-number">26.2.1</span> IPO: Identity Preference Optimization</h3>
+<p>IPO addresses the overfitting problem in DPO by replacing the implicit KL regularization with an explicit regularization term. In DPO, the reference model enters through the log-ratio terms: the loss encourages the policy to assign higher probability to chosen responses relative to the reference and lower probability to rejected responses. When the policy has seen a preference pair many times, it can drive the log-ratio to large values — saturating the sigmoid in the loss — without incurring any additional penalty. This is DPO’s overfitting failure mode: the model perfectly memorizes the preference dataset while generalizing poorly.</p>
+<p>IPO modifies the objective to directly penalize deviations from a target log-ratio. Formally, rather than minimizing cross-entropy over a Bradley-Terry model, IPO minimizes the squared difference between the policy’s log-ratio and a target value of 1/(2τ), where τ is the regularization strength. This keeps the log-ratios bounded throughout training and prevents the saturation problem. The practical effect: IPO is significantly more stable on small preference datasets where DPO would overfit aggressively. When you have fewer than 10,000 preference pairs, IPO will generally produce a more robust model. The tradeoff is a hyperparameter τ that requires tuning; DPO’s β is also a hyperparameter but is less sensitive to its precise value.</p>
+</section>
+<section id="kto-kahneman-tversky-optimization" class="level3" data-number="26.2.2">
+<h3 data-number="26.2.2" class="anchored" data-anchor-id="kto-kahneman-tversky-optimization"><span class="header-section-number">26.2.2</span> KTO: Kahneman-Tversky Optimization</h3>
+<p>KTO takes a fundamentally different angle: it abandons the requirement for paired (chosen, rejected) comparisons entirely. Instead of training on response pairs, KTO trains on individual examples each labeled with a binary signal — desirable or undesirable. The theoretical grounding is Kahneman and Tversky’s prospect theory, which models human decision-making as an asymmetric value function: losses are perceived as more impactful than equivalent gains. KTO translates this into an alignment objective where the utility of a model output is measured against a reference point (the KL-penalized expected value of the policy’s outputs), and where undesirable outputs are penalized more sharply than desirable outputs are rewarded.</p>
+<p>The practical advantage is data efficiency in a specific sense: you can use any labeled data you have, whether or not it comes in matched pairs. A dataset of 10,000 individual annotations (“this response was good,” “this response was bad”) is unusable by DPO, which requires the good and bad responses to come from the same prompt. KTO can train directly on these unpaired annotations, effectively doubling the usable data from a given annotation budget. In production settings where preference annotation is expensive and response-pair collection requires coordinated labeling workflows, KTO lowers the operational bar substantially. The empirical tradeoff: on datasets where paired comparisons are available, DPO still holds a slight edge because the paired structure provides a stronger learning signal per example. KTO’s advantage is specifically on unpaired or partially-paired annotation corpora.</p>
+</section>
+<section id="orpo-odds-ratio-preference-optimization" class="level3" data-number="26.2.3">
+<h3 data-number="26.2.3" class="anchored" data-anchor-id="orpo-odds-ratio-preference-optimization"><span class="header-section-number">26.2.3</span> ORPO: Odds Ratio Preference Optimization</h3>
+<p>ORPO removes the reference model entirely and fuses SFT and alignment into a single training pass. The key observation is that the reference model in DPO serves as an anchor: it prevents the policy from drifting too far from the SFT baseline. But this anchor is already implicit in a combined SFT+alignment loss — the SFT term pulls the model toward the chosen responses, serving the same regularization function. ORPO’s loss adds an odds ratio penalty term to the standard SFT cross-entropy loss. The odds ratio measures how much more likely the model is to generate the chosen response than the rejected response, and the penalty increases this ratio. Because SFT and alignment happen simultaneously, there is no reference model checkpoint to store or load during training.</p>
+<p>The compute savings are meaningful: eliminating the reference model forward pass reduces peak GPU memory by roughly 50% for a given batch. This makes ORPO practical for alignment runs on hardware without high memory bandwidth — a 70B model that would require 8 A100s for DPO can be aligned with 4 A100s using ORPO with the same batch size. The limitation is that ORPO assumes the SFT data distribution is close to the preferred response distribution, which is typically true when fine-tuning on a curated instruction dataset but may not hold when adapting a general base model to a narrow domain with preferences that differ substantially from the pretraining distribution.</p>
+</section>
+<section id="simpo-simple-preference-optimization" class="level3" data-number="26.2.4">
+<h3 data-number="26.2.4" class="anchored" data-anchor-id="simpo-simple-preference-optimization"><span class="header-section-number">26.2.4</span> SimPO: Simple Preference Optimization</h3>
+<p>SimPO removes the reference model by a different mechanism: it replaces the log-ratio against the reference with the average log-probability of the response under the current policy, normalized by sequence length. This normalization directly addresses DPO’s length bias. In DPO, longer chosen responses contribute more total probability mass to the numerator of the log-ratio, which biases the gradient toward length. SimPO normalizes by length, making the reward signal a per-token average log-probability. A concise, high-quality response and a verbose, padded response of equal per-token quality receive equal reward.</p>
+<p>SimPO also introduces a target reward margin γ: the objective requires the chosen response’s average log-probability to exceed the rejected response’s average log-probability by at least γ, rather than merely being higher. This margin creates a safety buffer that improves calibration — the model does not just prefer chosen over rejected, it prefers them by a specified amount. In practice, γ is a hyperparameter typically set between 0.5 and 2.0. Models trained with SimPO consistently produce shorter, more concise responses than DPO-trained models on the same preference data, making it the preferred choice when deployment latency and token cost are primary concerns.</p>
+</section>
+</section>
+<section id="grpo-group-relative-policy-optimization" class="level2" data-number="26.3">
+<h2 data-number="26.3" class="anchored" data-anchor-id="grpo-group-relative-policy-optimization"><span class="header-section-number">26.3</span> GRPO: Group Relative Policy Optimization</h2>
+<p>GRPO is the alignment algorithm used in DeepSeek-R1 and represents a departure from both the DPO family (offline, no RL loop) and classic PPO-based RLHF (online, requires critic model). The core idea: instead of estimating the advantage of a response by comparing it to a learned value function (PPO) or to a reference model (DPO), compare responses within a group sampled from the current policy for the same prompt.</p>
+<p>For each training prompt, GRPO samples a group of G responses from the current policy — typically G between 4 and 16. It then computes a reward for each response using a reward function, and normalizes the rewards within the group. The normalized reward becomes the advantage estimate: a response that is better than the group average has a positive advantage; one that is worse has a negative advantage. The policy gradient update uses these within-group advantages to reinforce better-than-average responses and suppress worse-than-average ones.</p>
+<p><span class="math display">\[\mathcal{L}_{GRPO} = -\mathbb{E}\left[\sum_{i=1}^{G} \frac{\hat{A}_i}{\sigma_A} \log \pi_\theta(y_i | x)\right] + \beta \cdot D_{KL}(\pi_\theta \| \pi_{ref})\]</span></p>
+<p>where <span class="math inline">\(\hat{A}_i = r_i - \bar{r}\)</span> is the centered advantage for response <span class="math inline">\(i\)</span> within the group.</p>
+<p>The advantage of this design: no critic model (value function) is required. In PPO, the critic model — typically another copy of the LLM — estimates the value of being in a state and is used to compute advantage via generalized advantage estimation. Training the critic adds memory and compute overhead, introduces a separate optimization problem that must be solved stably alongside the actor, and requires careful hyperparameter tuning for the value loss coefficient. GRPO sidesteps all of this by using empirical within-group statistics. The advantage estimate is noisier than a well-trained critic would produce, but it is unbiased and does not require a separate model.</p>
+<p>The reward signal in GRPO, as used in DeepSeek-R1, is rule-based rather than a learned reward model: mathematical correctness (verified against ground-truth answers), format compliance (did the model produce a correctly structured chain-of-thought inside <code>&lt;think&gt;</code> tags), and length penalties. Rule-based rewards are deterministic and do not suffer from reward model hacking — the failure mode where a policy exploits quirks in a learned reward model to achieve high reward without actually improving in the desired way. For tasks where correctness is verifiable (math, code, structured outputs), rule-based GRPO is both simpler and more reliable than learned reward model approaches.</p>
+</section>
+<section id="online-vs.-offline-preference-learning" class="level2" data-number="26.4">
+<h2 data-number="26.4" class="anchored" data-anchor-id="online-vs.-offline-preference-learning"><span class="header-section-number">26.4</span> Online vs.&nbsp;Offline Preference Learning</h2>
+<p>All DPO variants discussed above are offline algorithms: they train on a fixed dataset of preference pairs that was collected before training began. The model never generates its own responses during training; it only adjusts its probabilities over responses that already exist in the dataset. This creates a structural limitation — as the model improves, the rejected responses in the training set become increasingly easy to distinguish from the model’s current outputs. The learning signal weakens. Later training steps are spent optimizing over pairs that no longer represent the model’s typical failure modes.</p>
+<p>Online DPO closes this gap by generating new responses during training. The training loop runs as follows: sample a batch of prompts; generate two responses from the current policy; score both responses using a reward model or rule-based judge; label the higher-scoring response as chosen and the lower-scoring as rejected; add the fresh pair to the training batch; update the policy. Because the rejected responses come from the current policy rather than from a static dataset, they are always on the current model’s distribution. The gradient signal is always diagnostic — it shows the model examples of mistakes it is currently making rather than mistakes it made in a previous iteration.</p>
+<p>Iterative DPO is a lightweight approximation to fully online DPO: alternate between (1) running the current policy on all training prompts to generate fresh responses, (2) scoring responses with a reward model, (3) building a new preference dataset, (4) running one epoch of offline DPO on the new dataset. Each outer iteration of this loop costs one full generation pass plus one training pass, so the compute overhead is roughly 2x offline DPO. The distribution gap is substantially reduced because the preference dataset is regenerated periodically. Fully online DPO, where responses are generated continuously during training, eliminates the distribution gap entirely but requires careful engineering to maintain training stability when the policy and the data distribution are co-evolving.</p>
+</section>
+<section id="the-practical-alignment-stack-in-2025" class="level2" data-number="26.5">
+<h2 data-number="26.5" class="anchored" data-anchor-id="the-practical-alignment-stack-in-2025"><span class="header-section-number">26.5</span> The Practical Alignment Stack in 2025</h2>
+<p>Production alignment pipelines in 2025 have largely converged on SFT followed by an offline or iterative DPO variant, with PPO reserved for narrow use cases. The reasons PPO fell out of favor are practical rather than theoretical. PPO requires running the actor, critic, reference model, and reward model simultaneously during training — for a 70B model, this can require 16+ A100 GPUs just for a single training step. The training loop is sensitive to hyperparameter choices (clip ratio, KL coefficient, GAE parameters), and instability manifests as reward hacking or policy collapse rather than obvious training failures. Debugging PPO runs at scale requires specialized expertise. By contrast, DPO variants are just supervised learning with a modified loss — they are stable, debuggable with standard tooling, and do not require a critic or reward model in training.</p>
+<p>Constitutional AI and RLAIF (Reinforcement Learning from AI Feedback) address the scalability bottleneck of human annotation. Instead of hiring annotators to rank responses, you use a strong model (Claude, GPT-4) to apply a set of principles (the constitution) to critique and revise responses, and to generate preference labels on (chosen, rejected) pairs. The resulting preference dataset can be generated at a scale and cost that human annotation cannot match. The quality of the preference labels depends on the quality of the judge model and the clarity of the constitutional principles, but for most production use cases RLAIF-generated labels are indistinguishable from human labels on standard preference benchmarks.</p>
+<p>Self-play fine-tuning (SPIN) represents another direction: eliminate the preference dataset entirely by training the model to distinguish its own current outputs from the outputs of a previous version of itself. The “winner” in each pair is always the human-written reference response; the “loser” is whatever the current policy generates. This formulation does not require any new annotation — the human-written SFT data is reused as the chosen response, and the model’s own generations serve as rejected responses. SPIN converges when the policy matches the SFT data distribution well enough that the discriminator cannot distinguish them, at which point the policy is effectively aligned with the human demonstrations. It is less capable than reward-model-based alignment at instilling values not represented in the SFT data, but it requires zero additional annotation.</p>
+</section>
+<section id="interview-questions" class="level2" data-number="26.6">
+<h2 data-number="26.6" class="anchored" data-anchor-id="interview-questions"><span class="header-section-number">26.6</span> Interview Questions</h2>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. What is the difference between DPO and RLHF/PPO in plain terms?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>RLHF with PPO is a three-stage process: first, fine-tune the model on demonstrations (SFT); second, train a separate reward model on human preference pairs; third, use PPO — a reinforcement learning algorithm — to update the policy so it generates responses the reward model scores highly, while staying close to the original SFT model. The policy, the reward model, and a reference copy of the policy all need to be in memory simultaneously during PPO training.</p>
+<p>DPO achieves the same goal with a single supervised training step. The mathematical insight is that the PPO objective with a KL penalty has a closed-form optimal policy, and that optimal policy can be expressed as the ratio between the policy and the reference model times a reward function. By rearranging this relationship, DPO rewrites the reward as a function of log-probability ratios, which means you can train the policy directly to prefer chosen responses over rejected responses without ever computing a reward model explicitly. The loss is a binary cross-entropy over preference pairs, which is just supervised learning.</p>
+<p>The practical difference: DPO needs the frozen reference model (one forward pass per example) but no reward model, no value function, and no RL loop. Training is far more stable, requires less GPU memory, and converges predictably. The tradeoff is that DPO is offline — it only trains on examples in the dataset and cannot explore new responses during training the way PPO can.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. What does KTO offer that DPO doesn’t?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>DPO requires preference pairs: for a given prompt, you need one “good” response and one “bad” response collected together. This means annotation workflows must produce matched pairs — an annotator sees two responses to the same prompt and marks one as better. If you have collected individual binary labels (“this response was acceptable,” “this response was unacceptable”) without pairing them, you cannot use DPO.</p>
+<p>KTO trains directly on individual binary labels without pairing. Each training example is a single (prompt, response, label) triple where the label is simply desirable or undesirable. This matches a much more common annotation pattern: log a large number of real user interactions, have annotators rate each response independently, and train on the resulting dataset. No coordinated pairing workflow is needed.</p>
+<p>The theoretical basis for KTO is prospect theory’s asymmetric value function — the model is trained with a utility function where undesirable responses are penalized more sharply than desirable responses are rewarded, mirroring how humans experience losses more strongly than gains. In practice, on a fixed annotation budget, KTO can use roughly 2x as many labeled examples as DPO because unpaired annotations are cheaper to collect. The learning signal per example is weaker than a paired comparison, but the larger dataset often compensates.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Entry Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q3. What is online DPO and why is it better than standard offline DPO?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>Standard offline DPO trains on a preference dataset collected before training starts. The rejected responses in the dataset were generated by some earlier version of the model (or a different model entirely). As training proceeds and the model improves, the distribution gap grows: the model no longer makes the same mistakes that are represented in the training data. The learning signal weakens because the training examples are no longer representative of the model’s current failure modes.</p>
+<p>Online DPO generates new responses during training using the current policy. For each training batch, the model generates responses to the prompts, a reward model scores them, the higher-scoring response is labeled as chosen and the lower as rejected, and the model is immediately trained on this fresh preference pair. Because the rejected responses come from the current policy, the training data always reflects what the model is currently doing wrong. The gradient is always informative.</p>
+<p>The practical result: online DPO achieves higher final alignment quality for the same number of training steps, especially in the later stages of training where offline DPO stagnates. The cost is the overhead of running generation and scoring during training, which roughly doubles the compute per step. Iterative DPO is a middle ground: regenerate the preference dataset every few hundred steps rather than continuously, balancing the distribution gap against the extra computation.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. Explain GRPO and why it doesn’t need a critic model, unlike PPO.</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>In PPO, the advantage of taking action a in state s is estimated as the actual reward received minus the value function V(s) — the expected reward from state s under the current policy. Computing V(s) requires a separate critic model, typically another copy of the LLM, that is trained to predict expected rewards. This doubles the model count in memory and introduces a second optimization loop that must remain stable and synchronized with the actor’s updates.</p>
+<p>GRPO eliminates the critic by estimating advantage empirically within a group. For each training prompt, GRPO samples G responses from the current policy, computes a reward for each (using a rule-based verifier or a learned reward model), and then computes the advantage of each response as its reward minus the group mean, divided by the group standard deviation. This is a within-group z-score. Responses that score better than the group average get positive advantage; those that score worse get negative advantage.</p>
+<p>The key property: this within-group normalization is an unbiased estimator of the advantage without requiring any learned value function. The intuition is that the group of G responses to the same prompt is a sample from the policy’s output distribution for that prompt, so the sample mean is an empirical estimate of the expected reward — exactly what a critic would compute. For G=8 or G=16, the estimate is noisy but sufficient for a stable policy gradient. No critic training, no value loss hyperparameter, no worry about the critic lagging the actor. The tradeoff is higher variance in the advantage estimates compared to a well-trained critic, which means GRPO may need more training samples to achieve the same update quality.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. Compare IPO vs.&nbsp;DPO — what specific overfitting problem does IPO address?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-10-contents" aria-controls="callout-10" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-10" class="callout-10-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>DPO’s loss is a binary cross-entropy of the form <span class="math inline">\(-\log\sigma(\beta \cdot (r_\theta(y_c) - r_\theta(y_r)))\)</span>, where <span class="math inline">\(r_\theta\)</span> is the log-ratio of the policy to the reference model for each response. As training progresses, the model can drive this log-ratio difference to very large values — the sigmoid approaches 1, the gradient approaches 0, and the loss flattens out near zero. The model has “memorized” the preference pair in the sense that it assigns arbitrarily higher probability to the chosen response over the rejected one. On a small dataset, this happens quickly, and the model begins to overfit: it correctly handles prompts that appear in the preference dataset but generalizes poorly to similar prompts not in the dataset.</p>
+<p>IPO replaces the saturating sigmoid objective with a squared loss that penalizes the log-ratio being different from a constant target value <span class="math inline">\(1/(2\tau)\)</span>. Because the loss is a squared error around a fixed target, it does not saturate — there is always a non-zero gradient pulling the log-ratio toward the target, preventing the extreme values that cause DPO’s overfitting. The regularization is explicit and direct rather than depending on the KL term to indirectly keep probabilities bounded.</p>
+<p>Practically: IPO is preferred over DPO when the preference dataset is small (under ~10,000 pairs) or when training for many epochs on the same data. On large datasets where overfitting is less of a concern, DPO and IPO perform similarly. The hyperparameter τ in IPO controls the strength of regularization and needs tuning — too small a τ leads to underfitting; too large allows the same saturation problem as DPO.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-warning callout-titled" title="Mid Level">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Mid Level
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q3. Why does DPO have a length bias and how do SimPO and other variants address it?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-12-contents" aria-controls="callout-12" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-12" class="callout-12-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>DPO’s loss operates on the total log-probability of a response sequence — the sum of log-probabilities over all tokens. Longer sequences have more tokens contributing to this sum, so a longer response contributes more probability mass to the log-ratio term in the DPO objective. When human annotators consistently prefer longer responses (which they do — length is a strong proxy for perceived quality in blind annotation), the DPO loss systematically reinforces length as a reward-correlated feature. The model learns that generating more tokens is reliably rewarded, independent of whether those tokens add content.</p>
+<p>SimPO addresses this directly by normalizing the log-probability by sequence length: the reward signal for a response is its average log-probability per token, not the total log-probability. Under this normalization, a concise high-quality response and a verbose padded response of the same per-token quality receive identical reward signals. The length bias is removed at the reward level rather than through post-hoc regularization. SimPO also adds a target margin γ between chosen and rejected rewards, which further improves calibration.</p>
+<p>ORPO addresses length bias differently: by combining the SFT objective with an odds ratio penalty in a single loss, it keeps the SFT cross-entropy on the chosen response as the primary learning signal. The SFT loss is token-averaged, not summed, so length does not compound the gradient. The odds ratio penalty provides relative preference between chosen and rejected without length-weighting. Length-normalization at the loss level (SimPO) is more explicit and controllable; the combined SFT+alignment signal (ORPO) achieves a similar effect indirectly.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Forward Deployed Engineer
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q1. A customer is fine-tuning a model for a customer support use case and wants the model to be more concise. Which alignment technique would you recommend and why?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-14-contents" aria-controls="callout-14" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-14" class="callout-14-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>SimPO is the most targeted solution for a conciseness requirement. The core problem is that vanilla DPO produces longer responses because human preference annotations favor length, and DPO’s loss amplifies this bias through un-normalized total log-probabilities. SimPO normalizes the reward by sequence length, making the alignment signal per-token rather than per-sequence, which directly removes the incentive to generate more tokens. The target margin γ (typically 0.5-1.5) provides an additional calibration buffer.</p>
+<p>The implementation strategy: collect preference data for the customer support domain, keeping it realistic by including actual support queries and model responses. Label shorter, accurate responses as preferred over longer ones that contain the same information plus filler language. Use SimPO with γ tuned so the model consistently produces responses in the 50-150 token range appropriate for support interactions. Monitor average response length as a primary training metric alongside preference accuracy.</p>
+<p>If the customer has budget constraints and wants to avoid running a separate reference model, ORPO is a strong alternative — no reference model checkpoint is needed, compute is lower, and the combined SFT+alignment objective naturally controls length through the token-averaged SFT loss. However, SimPO is the more direct intervention for the conciseness problem specifically.</p>
+<p>Two things to validate before deployment: run an evaluation comparing response quality (correct resolution, customer satisfaction proxy) across length buckets to confirm conciseness is not being achieved at the cost of resolution quality; and ensure the preference dataset contains examples where the correct answer genuinely requires a longer response (multi-step troubleshooting), so the model does not become pathologically brief on legitimately complex queries.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout callout-style-default callout-important callout-titled" title="Forward Deployed Engineer">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Forward Deployed Engineer
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Q2. A team has a dataset of 10,000 individual “good response” / “bad response” labels but no paired comparisons — which alignment approach is most practical?</strong></p>
+<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
+<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-16-contents" aria-controls="callout-16" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Model Answer
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-16" class="callout-16-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>KTO is the direct fit here. It is explicitly designed for unpaired binary preference labels — individual (prompt, response, label) triples where the label is desirable or undesirable, with no requirement that good and bad responses come from the same prompt. DPO, IPO, and SimPO all require matched pairs and cannot be applied to this dataset directly.</p>
+<p>The practical path: structure the dataset as KTO expects — each row is (prompt, response, boolean label). Verify that the class balance is reasonable; KTO is theoretically grounded in the asymmetric value function of prospect theory, which expects undesirable examples to carry more weight, but extreme imbalance (90%+ good or 90%+ bad) will bias the objective. Aim for roughly 50-70% desirable labels if the data can be filtered.</p>
+<p>If the team later wants to run DPO-style training, KTO can serve as a warmup: run KTO first to move the model in the right direction using the unpaired data, then collect a smaller set of paired comparisons (perhaps 1,000-2,000 pairs) targeting the remaining failure modes. This hybrid strategy is more data-efficient than trying to collect 10,000 paired comparisons from scratch.</p>
+<p>One practical caution: audit the labeling criteria before training. Individual binary labels are often collected with weaker annotator guidance than paired comparisons, because annotators making pairwise judgments are forced to compare and contrast, which surfaces inconsistencies. If the labeling criteria were loose (e.g., “was this response acceptable?”), the resulting KTO model may have a calibration ceiling lower than what a clean paired dataset would produce. A calibration audit on a held-out sample before committing to a full training run is worth the investment.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+
+<!-- -->
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const disableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'prefetch';
+    }
+  }
+  const enableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'stylesheet';
+    }
+  }
+  const manageTransitions = (selector, allowTransitions) => {
+    const els = window.document.querySelectorAll(selector);
+    for (let i=0; i < els.length; i++) {
+      const el = els[i];
+      if (allowTransitions) {
+        el.classList.remove('notransition');
+      } else {
+        el.classList.add('notransition');
+      }
+    }
+  }
+  const toggleGiscusIfUsed = (isAlternate, darkModeDefault) => {
+    const baseTheme = document.querySelector('#giscus-base-theme')?.value ?? 'light';
+    const alternateTheme = document.querySelector('#giscus-alt-theme')?.value ?? 'dark';
+    let newTheme = '';
+    if(darkModeDefault) {
+      newTheme = isAlternate ? baseTheme : alternateTheme;
+    } else {
+      newTheme = isAlternate ? alternateTheme : baseTheme;
+    }
+    const changeGiscusTheme = () => {
+      // From: https://github.com/giscus/giscus/issues/336
+      const sendMessage = (message) => {
+        const iframe = document.querySelector('iframe.giscus-frame');
+        if (!iframe) return;
+        iframe.contentWindow.postMessage({ giscus: message }, 'https://giscus.app');
+      }
+      sendMessage({
+        setConfig: {
+          theme: newTheme
+        }
+      });
+    }
+    const isGiscussLoaded = window.document.querySelector('iframe.giscus-frame') !== null;
+    if (isGiscussLoaded) {
+      changeGiscusTheme();
+    }
+  }
+  const toggleColorMode = (alternate) => {
+    // Switch the stylesheets
+    const alternateStylesheets = window.document.querySelectorAll('link.quarto-color-scheme.quarto-color-alternate');
+    manageTransitions('#quarto-margin-sidebar .nav-link', false);
+    if (alternate) {
+      enableStylesheet(alternateStylesheets);
+      for (const sheetNode of alternateStylesheets) {
+        if (sheetNode.id === "quarto-bootstrap") {
+          toggleBodyColorMode(sheetNode);
+        }
+      }
+    } else {
+      disableStylesheet(alternateStylesheets);
+      toggleBodyColorPrimary();
+    }
+    manageTransitions('#quarto-margin-sidebar .nav-link', true);
+    // Switch the toggles
+    const toggles = window.document.querySelectorAll('.quarto-color-scheme-toggle');
+    for (let i=0; i < toggles.length; i++) {
+      const toggle = toggles[i];
+      if (toggle) {
+        if (alternate) {
+          toggle.classList.add("alternate");     
+        } else {
+          toggle.classList.remove("alternate");
+        }
+      }
+    }
+    // Hack to workaround the fact that safari doesn't
+    // properly recolor the scrollbar when toggling (#1455)
+    if (navigator.userAgent.indexOf('Safari') > 0 && navigator.userAgent.indexOf('Chrome') == -1) {
+      manageTransitions("body", false);
+      window.scrollTo(0, 1);
+      setTimeout(() => {
+        window.scrollTo(0, 0);
+        manageTransitions("body", true);
+      }, 40);  
+    }
+  }
+  const isFileUrl = () => { 
+    return window.location.protocol === 'file:';
+  }
+  const hasAlternateSentinel = () => {  
+    let styleSentinel = getColorSchemeSentinel();
+    if (styleSentinel !== null) {
+      return styleSentinel === "alternate";
+    } else {
+      return false;
+    }
+  }
+  const setStyleSentinel = (alternate) => {
+    const value = alternate ? "alternate" : "default";
+    if (!isFileUrl()) {
+      window.localStorage.setItem("quarto-color-scheme", value);
+    } else {
+      localAlternateSentinel = value;
+    }
+  }
+  const getColorSchemeSentinel = () => {
+    if (!isFileUrl()) {
+      const storageValue = window.localStorage.getItem("quarto-color-scheme");
+      return storageValue != null ? storageValue : localAlternateSentinel;
+    } else {
+      return localAlternateSentinel;
+    }
+  }
+  const darkModeDefault = false;
+  let localAlternateSentinel = darkModeDefault ? 'alternate' : 'default';
+  // Dark / light mode switch
+  window.quartoToggleColorScheme = () => {
+    // Read the current dark / light value 
+    let toAlternate = !hasAlternateSentinel();
+    toggleColorMode(toAlternate);
+    setStyleSentinel(toAlternate);
+    toggleGiscusIfUsed(toAlternate, darkModeDefault);
+  };
+  // Ensure there is a toggle, if there isn't float one in the top right
+  if (window.document.querySelector('.quarto-color-scheme-toggle') === null) {
+    const a = window.document.createElement('a');
+    a.classList.add('top-right');
+    a.classList.add('quarto-color-scheme-toggle');
+    a.href = "";
+    a.onclick = function() { try { window.quartoToggleColorScheme(); } catch {} return false; };
+    const i = window.document.createElement("i");
+    i.classList.add('bi');
+    a.appendChild(i);
+    window.document.body.appendChild(a);
+  }
+  // Switch to dark mode if need be
+  if (hasAlternateSentinel()) {
+    toggleColorMode(true);
+  } else {
+    toggleColorMode(false);
+  }
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const onCopySuccess = function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  }
+  const getTextToCopy = function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+    text: getTextToCopy
+  });
+  clipboard.on('success', onCopySuccess);
+  if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+    const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+      text: getTextToCopy,
+      container: window.document.getElementById('quarto-embedded-source-code-modal')
+    });
+    clipboardModal.on('success', onCopySuccess);
+  }
+  const viewSource = window.document.getElementById('quarto-view-source') ||
+                     window.document.getElementById('quarto-code-tools-source');
+  if (viewSource) {
+    const sourceUrl = viewSource.getAttribute("data-quarto-source-url");
+    viewSource.addEventListener("click", function(e) {
+      if (sourceUrl) {
+        // rstudio viewer pane
+        if (/\bcapabilities=\b/.test(window.location)) {
+          window.open(sourceUrl);
+        } else {
+          window.location.href = sourceUrl;
+        }
+      } else {
+        const modal = new bootstrap.Modal(document.getElementById('quarto-embedded-source-code-modal'));
+        modal.show();
+      }
+      return false;
+    });
+  }
+  function toggleCodeHandler(show) {
+    return function(e) {
+      const detailsSrc = window.document.querySelectorAll(".cell > details > .sourceCode");
+      for (let i=0; i<detailsSrc.length; i++) {
+        const details = detailsSrc[i].parentElement;
+        if (show) {
+          details.open = true;
+        } else {
+          details.removeAttribute("open");
+        }
+      }
+      const cellCodeDivs = window.document.querySelectorAll(".cell > .sourceCode");
+      const fromCls = show ? "hidden" : "unhidden";
+      const toCls = show ? "unhidden" : "hidden";
+      for (let i=0; i<cellCodeDivs.length; i++) {
+        const codeDiv = cellCodeDivs[i];
+        if (codeDiv.classList.contains(fromCls)) {
+          codeDiv.classList.remove(fromCls);
+          codeDiv.classList.add(toCls);
+        } 
+      }
+      return false;
+    }
+  }
+  const hideAllCode = window.document.getElementById("quarto-hide-all-code");
+  if (hideAllCode) {
+    hideAllCode.addEventListener("click", toggleCodeHandler(false));
+  }
+  const showAllCode = window.document.getElementById("quarto-show-all-code");
+  if (showAllCode) {
+    showAllCode.addEventListener("click", toggleCodeHandler(true));
+  }
+    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+    var mailtoRegex = new RegExp(/^mailto:/);
+      var filterRegex = new RegExp("https:\/\/akhileshpothuri\.github\.io\/learnwithakhilesh");
+    var isInternal = (href) => {
+        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+    }
+    // Inspect non-navigation links and adorn them if external
+ 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+    for (var i=0; i<links.length; i++) {
+      const link = links[i];
+      if (!isInternal(link.href)) {
+        // undo the damage that might have been done by quarto-nav.js in the case of
+        // links that we want to consider external
+        if (link.dataset.originalHref !== undefined) {
+          link.href = link.dataset.originalHref;
+        }
+      }
+    }
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      if (note) {
+        return note.innerHTML;
+      } else {
+        return "";
+      }
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../chapters/25-diffusion.html" class="pagination-link" aria-label="Diffusion Models &amp; Generative Vision">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../chapters/27-synthetic-data.html" class="pagination-link" aria-label="Synthetic Data &amp; Data-Centric AI">
+        <span class="nav-page-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Synthetic Data &amp; Data-Centric AI</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
+<div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># Modern Alignment: DPO Variants, GRPO &amp; Beyond {#sec-26}</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>::: {.callout-note}</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>**Who this chapter is for:** Mid Level / Forward Deployed Engineer</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>**What you'll be able to answer after reading this:**</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Why DPO has a length bias and a distribution constraint that variants like IPO, KTO, SimPO, and ORPO are designed to fix</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>How GRPO replaces both the critic model and the reference model with intra-group advantage estimation</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The practical difference between offline and online preference learning, and when distribution gap matters</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Which alignment technique to reach for given a specific production constraint (paired data, unpaired data, compute budget, conciseness requirement)</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Why PPO is rarely used in production fine-tuning pipelines despite being the canonical RL algorithm</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="fu">## DPO Recap and Its Limitations</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>Direct Preference Optimization, covered in the prior alignment chapter, eliminates the separate reward model and RL training loop of PPO-based RLHF by deriving a closed-form supervised objective directly from the Bradley-Terry preference model. The key insight is that a reward function and a policy are related by the KL-regularized objective, allowing the reward to be expressed entirely in terms of the policy itself. The resulting DPO loss trains the policy to increase the log-likelihood ratio between the chosen and rejected responses, weighted implicitly by the KL penalty against a frozen reference model.</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>This is elegant and efficient, but the derivation carries forward several constraints that show up as practical failure modes at production scale. The first is the distribution constraint: DPO is an offline algorithm. It trains on a static dataset of (prompt, chosen, rejected) triples collected before training begins. The distribution of prompts in the dataset — and the responses generated by whatever model produced the rejected samples — is fixed. As the policy drifts during training, the responses it would now generate for those prompts become increasingly different from the responses that were actually labeled. The model is optimizing a loss defined over a distribution it is no longer sampling from. This distribution gap is mild early in training but compounds as alignment improves, causing the later stages of training to be less effective.</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>The second limitation is the length bias. DPO objective naturally increases the probability of chosen responses and decreases the probability of rejected responses. Human preference annotations, collected without controlling for length, strongly favor longer responses — annotators perceive length as thoroughness even when the added length contains no new information. Because longer responses are systematically chosen, the DPO loss pushes the model toward generating longer outputs. This is measurable: models aligned with vanilla DPO produce responses 20-40% longer on average than the SFT baseline for the same prompts. In production settings where token cost matters — customer service bots, API-facing deployments — this is a direct operational cost, not just an aesthetic concern.</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>The third limitation is that DPO's KL term provides only implicit regularization. The KL divergence between the policy and the reference model is controlled indirectly through the β hyperparameter in the objective, but in practice the policy can move arbitrarily far from the reference model on responses not well covered by the training data. Overfit models develop degenerate behavior on inputs not similar to the preference dataset. IPO and subsequent variants address each of these constraints through different mechanisms, representing a research trajectory from DPO's elegant-but-constrained formulation toward more robust offline and online alignment objectives.</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="fu">## DPO Variants</span></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a><span class="fu">### IPO: Identity Preference Optimization</span></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>IPO addresses the overfitting problem in DPO by replacing the implicit KL regularization with an explicit regularization term. In DPO, the reference model enters through the log-ratio terms: the loss encourages the policy to assign higher probability to chosen responses relative to the reference and lower probability to rejected responses. When the policy has seen a preference pair many times, it can drive the log-ratio to large values — saturating the sigmoid in the loss — without incurring any additional penalty. This is DPO's overfitting failure mode: the model perfectly memorizes the preference dataset while generalizing poorly.</span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>IPO modifies the objective to directly penalize deviations from a target log-ratio. Formally, rather than minimizing cross-entropy over a Bradley-Terry model, IPO minimizes the squared difference between the policy's log-ratio and a target value of 1/(2τ), where τ is the regularization strength. This keeps the log-ratios bounded throughout training and prevents the saturation problem. The practical effect: IPO is significantly more stable on small preference datasets where DPO would overfit aggressively. When you have fewer than 10,000 preference pairs, IPO will generally produce a more robust model. The tradeoff is a hyperparameter τ that requires tuning; DPO's β is also a hyperparameter but is less sensitive to its precise value.</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a><span class="fu">### KTO: Kahneman-Tversky Optimization</span></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>KTO takes a fundamentally different angle: it abandons the requirement for paired (chosen, rejected) comparisons entirely. Instead of training on response pairs, KTO trains on individual examples each labeled with a binary signal — desirable or undesirable. The theoretical grounding is Kahneman and Tversky's prospect theory, which models human decision-making as an asymmetric value function: losses are perceived as more impactful than equivalent gains. KTO translates this into an alignment objective where the utility of a model output is measured against a reference point (the KL-penalized expected value of the policy's outputs), and where undesirable outputs are penalized more sharply than desirable outputs are rewarded.</span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>The practical advantage is data efficiency in a specific sense: you can use any labeled data you have, whether or not it comes in matched pairs. A dataset of 10,000 individual annotations ("this response was good," "this response was bad") is unusable by DPO, which requires the good and bad responses to come from the same prompt. KTO can train directly on these unpaired annotations, effectively doubling the usable data from a given annotation budget. In production settings where preference annotation is expensive and response-pair collection requires coordinated labeling workflows, KTO lowers the operational bar substantially. The empirical tradeoff: on datasets where paired comparisons are available, DPO still holds a slight edge because the paired structure provides a stronger learning signal per example. KTO's advantage is specifically on unpaired or partially-paired annotation corpora.</span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a><span class="fu">### ORPO: Odds Ratio Preference Optimization</span></span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>ORPO removes the reference model entirely and fuses SFT and alignment into a single training pass. The key observation is that the reference model in DPO serves as an anchor: it prevents the policy from drifting too far from the SFT baseline. But this anchor is already implicit in a combined SFT+alignment loss — the SFT term pulls the model toward the chosen responses, serving the same regularization function. ORPO's loss adds an odds ratio penalty term to the standard SFT cross-entropy loss. The odds ratio measures how much more likely the model is to generate the chosen response than the rejected response, and the penalty increases this ratio. Because SFT and alignment happen simultaneously, there is no reference model checkpoint to store or load during training.</span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a>The compute savings are meaningful: eliminating the reference model forward pass reduces peak GPU memory by roughly 50% for a given batch. This makes ORPO practical for alignment runs on hardware without high memory bandwidth — a 70B model that would require 8 A100s for DPO can be aligned with 4 A100s using ORPO with the same batch size. The limitation is that ORPO assumes the SFT data distribution is close to the preferred response distribution, which is typically true when fine-tuning on a curated instruction dataset but may not hold when adapting a general base model to a narrow domain with preferences that differ substantially from the pretraining distribution.</span>
+<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a><span class="fu">### SimPO: Simple Preference Optimization</span></span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a>SimPO removes the reference model by a different mechanism: it replaces the log-ratio against the reference with the average log-probability of the response under the current policy, normalized by sequence length. This normalization directly addresses DPO's length bias. In DPO, longer chosen responses contribute more total probability mass to the numerator of the log-ratio, which biases the gradient toward length. SimPO normalizes by length, making the reward signal a per-token average log-probability. A concise, high-quality response and a verbose, padded response of equal per-token quality receive equal reward.</span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>SimPO also introduces a target reward margin γ: the objective requires the chosen response's average log-probability to exceed the rejected response's average log-probability by at least γ, rather than merely being higher. This margin creates a safety buffer that improves calibration — the model does not just prefer chosen over rejected, it prefers them by a specified amount. In practice, γ is a hyperparameter typically set between 0.5 and 2.0. Models trained with SimPO consistently produce shorter, more concise responses than DPO-trained models on the same preference data, making it the preferred choice when deployment latency and token cost are primary concerns.</span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a><span class="fu">## GRPO: Group Relative Policy Optimization</span></span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a>GRPO is the alignment algorithm used in DeepSeek-R1 and represents a departure from both the DPO family (offline, no RL loop) and classic PPO-based RLHF (online, requires critic model). The core idea: instead of estimating the advantage of a response by comparing it to a learned value function (PPO) or to a reference model (DPO), compare responses within a group sampled from the current policy for the same prompt.</span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a>For each training prompt, GRPO samples a group of G responses from the current policy — typically G between 4 and 16. It then computes a reward for each response using a reward function, and normalizes the rewards within the group. The normalized reward becomes the advantage estimate: a response that is better than the group average has a positive advantage; one that is worse has a negative advantage. The policy gradient update uses these within-group advantages to reinforce better-than-average responses and suppress worse-than-average ones.</span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a>$$\mathcal{L}_{GRPO} = -\mathbb{E}\left[\sum_{i=1}^{G} \frac{\hat{A}_i}{\sigma_A} \log \pi_\theta(y_i | x)\right] + \beta \cdot D_{KL}(\pi_\theta \| \pi_{ref})$$</span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a>where $\hat{A}_i = r_i - \bar{r}$ is the centered advantage for response $i$ within the group.</span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a>The advantage of this design: no critic model (value function) is required. In PPO, the critic model — typically another copy of the LLM — estimates the value of being in a state and is used to compute advantage via generalized advantage estimation. Training the critic adds memory and compute overhead, introduces a separate optimization problem that must be solved stably alongside the actor, and requires careful hyperparameter tuning for the value loss coefficient. GRPO sidesteps all of this by using empirical within-group statistics. The advantage estimate is noisier than a well-trained critic would produce, but it is unbiased and does not require a separate model.</span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a>The reward signal in GRPO, as used in DeepSeek-R1, is rule-based rather than a learned reward model: mathematical correctness (verified against ground-truth answers), format compliance (did the model produce a correctly structured chain-of-thought inside <span class="in">`&lt;think&gt;`</span> tags), and length penalties. Rule-based rewards are deterministic and do not suffer from reward model hacking — the failure mode where a policy exploits quirks in a learned reward model to achieve high reward without actually improving in the desired way. For tasks where correctness is verifiable (math, code, structured outputs), rule-based GRPO is both simpler and more reliable than learned reward model approaches.</span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a><span class="fu">## Online vs. Offline Preference Learning</span></span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a>All DPO variants discussed above are offline algorithms: they train on a fixed dataset of preference pairs that was collected before training began. The model never generates its own responses during training; it only adjusts its probabilities over responses that already exist in the dataset. This creates a structural limitation — as the model improves, the rejected responses in the training set become increasingly easy to distinguish from the model's current outputs. The learning signal weakens. Later training steps are spent optimizing over pairs that no longer represent the model's typical failure modes.</span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a>Online DPO closes this gap by generating new responses during training. The training loop runs as follows: sample a batch of prompts; generate two responses from the current policy; score both responses using a reward model or rule-based judge; label the higher-scoring response as chosen and the lower-scoring as rejected; add the fresh pair to the training batch; update the policy. Because the rejected responses come from the current policy rather than from a static dataset, they are always on the current model's distribution. The gradient signal is always diagnostic — it shows the model examples of mistakes it is currently making rather than mistakes it made in a previous iteration.</span>
+<span id="cb1-70"><a href="#cb1-70" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-71"><a href="#cb1-71" aria-hidden="true" tabindex="-1"></a>Iterative DPO is a lightweight approximation to fully online DPO: alternate between (1) running the current policy on all training prompts to generate fresh responses, (2) scoring responses with a reward model, (3) building a new preference dataset, (4) running one epoch of offline DPO on the new dataset. Each outer iteration of this loop costs one full generation pass plus one training pass, so the compute overhead is roughly 2x offline DPO. The distribution gap is substantially reduced because the preference dataset is regenerated periodically. Fully online DPO, where responses are generated continuously during training, eliminates the distribution gap entirely but requires careful engineering to maintain training stability when the policy and the data distribution are co-evolving.</span>
+<span id="cb1-72"><a href="#cb1-72" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a><span class="fu">## The Practical Alignment Stack in 2025</span></span>
+<span id="cb1-74"><a href="#cb1-74" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-75"><a href="#cb1-75" aria-hidden="true" tabindex="-1"></a>Production alignment pipelines in 2025 have largely converged on SFT followed by an offline or iterative DPO variant, with PPO reserved for narrow use cases. The reasons PPO fell out of favor are practical rather than theoretical. PPO requires running the actor, critic, reference model, and reward model simultaneously during training — for a 70B model, this can require 16+ A100 GPUs just for a single training step. The training loop is sensitive to hyperparameter choices (clip ratio, KL coefficient, GAE parameters), and instability manifests as reward hacking or policy collapse rather than obvious training failures. Debugging PPO runs at scale requires specialized expertise. By contrast, DPO variants are just supervised learning with a modified loss — they are stable, debuggable with standard tooling, and do not require a critic or reward model in training.</span>
+<span id="cb1-76"><a href="#cb1-76" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-77"><a href="#cb1-77" aria-hidden="true" tabindex="-1"></a>Constitutional AI and RLAIF (Reinforcement Learning from AI Feedback) address the scalability bottleneck of human annotation. Instead of hiring annotators to rank responses, you use a strong model (Claude, GPT-4) to apply a set of principles (the constitution) to critique and revise responses, and to generate preference labels on (chosen, rejected) pairs. The resulting preference dataset can be generated at a scale and cost that human annotation cannot match. The quality of the preference labels depends on the quality of the judge model and the clarity of the constitutional principles, but for most production use cases RLAIF-generated labels are indistinguishable from human labels on standard preference benchmarks.</span>
+<span id="cb1-78"><a href="#cb1-78" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-79"><a href="#cb1-79" aria-hidden="true" tabindex="-1"></a>Self-play fine-tuning (SPIN) represents another direction: eliminate the preference dataset entirely by training the model to distinguish its own current outputs from the outputs of a previous version of itself. The "winner" in each pair is always the human-written reference response; the "loser" is whatever the current policy generates. This formulation does not require any new annotation — the human-written SFT data is reused as the chosen response, and the model's own generations serve as rejected responses. SPIN converges when the policy matches the SFT data distribution well enough that the discriminator cannot distinguish them, at which point the policy is effectively aligned with the human demonstrations. It is less capable than reward-model-based alignment at instilling values not represented in the SFT data, but it requires zero additional annotation.</span>
+<span id="cb1-80"><a href="#cb1-80" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-81"><a href="#cb1-81" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
+<span id="cb1-82"><a href="#cb1-82" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-83"><a href="#cb1-83" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-84"><a href="#cb1-84" aria-hidden="true" tabindex="-1"></a>**Q1. What is the difference between DPO and RLHF/PPO in plain terms?**</span>
+<span id="cb1-85"><a href="#cb1-85" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-86"><a href="#cb1-86" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-87"><a href="#cb1-87" aria-hidden="true" tabindex="-1"></a>RLHF with PPO is a three-stage process: first, fine-tune the model on demonstrations (SFT); second, train a separate reward model on human preference pairs; third, use PPO — a reinforcement learning algorithm — to update the policy so it generates responses the reward model scores highly, while staying close to the original SFT model. The policy, the reward model, and a reference copy of the policy all need to be in memory simultaneously during PPO training.</span>
+<span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-89"><a href="#cb1-89" aria-hidden="true" tabindex="-1"></a>DPO achieves the same goal with a single supervised training step. The mathematical insight is that the PPO objective with a KL penalty has a closed-form optimal policy, and that optimal policy can be expressed as the ratio between the policy and the reference model times a reward function. By rearranging this relationship, DPO rewrites the reward as a function of log-probability ratios, which means you can train the policy directly to prefer chosen responses over rejected responses without ever computing a reward model explicitly. The loss is a binary cross-entropy over preference pairs, which is just supervised learning.</span>
+<span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-91"><a href="#cb1-91" aria-hidden="true" tabindex="-1"></a>The practical difference: DPO needs the frozen reference model (one forward pass per example) but no reward model, no value function, and no RL loop. Training is far more stable, requires less GPU memory, and converges predictably. The tradeoff is that DPO is offline — it only trains on examples in the dataset and cannot explore new responses during training the way PPO can.</span>
+<span id="cb1-92"><a href="#cb1-92" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-93"><a href="#cb1-93" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-94"><a href="#cb1-94" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-95"><a href="#cb1-95" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-96"><a href="#cb1-96" aria-hidden="true" tabindex="-1"></a>**Q2. What does KTO offer that DPO doesn't?**</span>
+<span id="cb1-97"><a href="#cb1-97" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-98"><a href="#cb1-98" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-99"><a href="#cb1-99" aria-hidden="true" tabindex="-1"></a>DPO requires preference pairs: for a given prompt, you need one "good" response and one "bad" response collected together. This means annotation workflows must produce matched pairs — an annotator sees two responses to the same prompt and marks one as better. If you have collected individual binary labels ("this response was acceptable," "this response was unacceptable") without pairing them, you cannot use DPO.</span>
+<span id="cb1-100"><a href="#cb1-100" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-101"><a href="#cb1-101" aria-hidden="true" tabindex="-1"></a>KTO trains directly on individual binary labels without pairing. Each training example is a single (prompt, response, label) triple where the label is simply desirable or undesirable. This matches a much more common annotation pattern: log a large number of real user interactions, have annotators rate each response independently, and train on the resulting dataset. No coordinated pairing workflow is needed.</span>
+<span id="cb1-102"><a href="#cb1-102" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-103"><a href="#cb1-103" aria-hidden="true" tabindex="-1"></a>The theoretical basis for KTO is prospect theory's asymmetric value function — the model is trained with a utility function where undesirable responses are penalized more sharply than desirable responses are rewarded, mirroring how humans experience losses more strongly than gains. In practice, on a fixed annotation budget, KTO can use roughly 2x as many labeled examples as DPO because unpaired annotations are cheaper to collect. The learning signal per example is weaker than a paired comparison, but the larger dataset often compensates.</span>
+<span id="cb1-104"><a href="#cb1-104" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-105"><a href="#cb1-105" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-106"><a href="#cb1-106" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-107"><a href="#cb1-107" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level"}</span>
+<span id="cb1-108"><a href="#cb1-108" aria-hidden="true" tabindex="-1"></a>**Q3. What is online DPO and why is it better than standard offline DPO?**</span>
+<span id="cb1-109"><a href="#cb1-109" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-110"><a href="#cb1-110" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-111"><a href="#cb1-111" aria-hidden="true" tabindex="-1"></a>Standard offline DPO trains on a preference dataset collected before training starts. The rejected responses in the dataset were generated by some earlier version of the model (or a different model entirely). As training proceeds and the model improves, the distribution gap grows: the model no longer makes the same mistakes that are represented in the training data. The learning signal weakens because the training examples are no longer representative of the model's current failure modes.</span>
+<span id="cb1-112"><a href="#cb1-112" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-113"><a href="#cb1-113" aria-hidden="true" tabindex="-1"></a>Online DPO generates new responses during training using the current policy. For each training batch, the model generates responses to the prompts, a reward model scores them, the higher-scoring response is labeled as chosen and the lower as rejected, and the model is immediately trained on this fresh preference pair. Because the rejected responses come from the current policy, the training data always reflects what the model is currently doing wrong. The gradient is always informative.</span>
+<span id="cb1-114"><a href="#cb1-114" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-115"><a href="#cb1-115" aria-hidden="true" tabindex="-1"></a>The practical result: online DPO achieves higher final alignment quality for the same number of training steps, especially in the later stages of training where offline DPO stagnates. The cost is the overhead of running generation and scoring during training, which roughly doubles the compute per step. Iterative DPO is a middle ground: regenerate the preference dataset every few hundred steps rather than continuously, balancing the distribution gap against the extra computation.</span>
+<span id="cb1-116"><a href="#cb1-116" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-117"><a href="#cb1-117" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-118"><a href="#cb1-118" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-119"><a href="#cb1-119" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-120"><a href="#cb1-120" aria-hidden="true" tabindex="-1"></a>**Q1. Explain GRPO and why it doesn't need a critic model, unlike PPO.**</span>
+<span id="cb1-121"><a href="#cb1-121" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-122"><a href="#cb1-122" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-123"><a href="#cb1-123" aria-hidden="true" tabindex="-1"></a>In PPO, the advantage of taking action a in state s is estimated as the actual reward received minus the value function V(s) — the expected reward from state s under the current policy. Computing V(s) requires a separate critic model, typically another copy of the LLM, that is trained to predict expected rewards. This doubles the model count in memory and introduces a second optimization loop that must remain stable and synchronized with the actor's updates.</span>
+<span id="cb1-124"><a href="#cb1-124" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-125"><a href="#cb1-125" aria-hidden="true" tabindex="-1"></a>GRPO eliminates the critic by estimating advantage empirically within a group. For each training prompt, GRPO samples G responses from the current policy, computes a reward for each (using a rule-based verifier or a learned reward model), and then computes the advantage of each response as its reward minus the group mean, divided by the group standard deviation. This is a within-group z-score. Responses that score better than the group average get positive advantage; those that score worse get negative advantage.</span>
+<span id="cb1-126"><a href="#cb1-126" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-127"><a href="#cb1-127" aria-hidden="true" tabindex="-1"></a>The key property: this within-group normalization is an unbiased estimator of the advantage without requiring any learned value function. The intuition is that the group of G responses to the same prompt is a sample from the policy's output distribution for that prompt, so the sample mean is an empirical estimate of the expected reward — exactly what a critic would compute. For G=8 or G=16, the estimate is noisy but sufficient for a stable policy gradient. No critic training, no value loss hyperparameter, no worry about the critic lagging the actor. The tradeoff is higher variance in the advantage estimates compared to a well-trained critic, which means GRPO may need more training samples to achieve the same update quality.</span>
+<span id="cb1-128"><a href="#cb1-128" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-129"><a href="#cb1-129" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-130"><a href="#cb1-130" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-131"><a href="#cb1-131" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-132"><a href="#cb1-132" aria-hidden="true" tabindex="-1"></a>**Q2. Compare IPO vs. DPO — what specific overfitting problem does IPO address?**</span>
+<span id="cb1-133"><a href="#cb1-133" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-134"><a href="#cb1-134" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-135"><a href="#cb1-135" aria-hidden="true" tabindex="-1"></a>DPO's loss is a binary cross-entropy of the form $-\log\sigma(\beta \cdot (r_\theta(y_c) - r_\theta(y_r)))$, where $r_\theta$ is the log-ratio of the policy to the reference model for each response. As training progresses, the model can drive this log-ratio difference to very large values — the sigmoid approaches 1, the gradient approaches 0, and the loss flattens out near zero. The model has "memorized" the preference pair in the sense that it assigns arbitrarily higher probability to the chosen response over the rejected one. On a small dataset, this happens quickly, and the model begins to overfit: it correctly handles prompts that appear in the preference dataset but generalizes poorly to similar prompts not in the dataset.</span>
+<span id="cb1-136"><a href="#cb1-136" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-137"><a href="#cb1-137" aria-hidden="true" tabindex="-1"></a>IPO replaces the saturating sigmoid objective with a squared loss that penalizes the log-ratio being different from a constant target value $1/(2\tau)$. Because the loss is a squared error around a fixed target, it does not saturate — there is always a non-zero gradient pulling the log-ratio toward the target, preventing the extreme values that cause DPO's overfitting. The regularization is explicit and direct rather than depending on the KL term to indirectly keep probabilities bounded.</span>
+<span id="cb1-138"><a href="#cb1-138" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-139"><a href="#cb1-139" aria-hidden="true" tabindex="-1"></a>Practically: IPO is preferred over DPO when the preference dataset is small (under ~10,000 pairs) or when training for many epochs on the same data. On large datasets where overfitting is less of a concern, DPO and IPO perform similarly. The hyperparameter τ in IPO controls the strength of regularization and needs tuning — too small a τ leads to underfitting; too large allows the same saturation problem as DPO.</span>
+<span id="cb1-140"><a href="#cb1-140" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-141"><a href="#cb1-141" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-142"><a href="#cb1-142" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-143"><a href="#cb1-143" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning title="Mid Level"}</span>
+<span id="cb1-144"><a href="#cb1-144" aria-hidden="true" tabindex="-1"></a>**Q3. Why does DPO have a length bias and how do SimPO and other variants address it?**</span>
+<span id="cb1-145"><a href="#cb1-145" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-146"><a href="#cb1-146" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-147"><a href="#cb1-147" aria-hidden="true" tabindex="-1"></a>DPO's loss operates on the total log-probability of a response sequence — the sum of log-probabilities over all tokens. Longer sequences have more tokens contributing to this sum, so a longer response contributes more probability mass to the log-ratio term in the DPO objective. When human annotators consistently prefer longer responses (which they do — length is a strong proxy for perceived quality in blind annotation), the DPO loss systematically reinforces length as a reward-correlated feature. The model learns that generating more tokens is reliably rewarded, independent of whether those tokens add content.</span>
+<span id="cb1-148"><a href="#cb1-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-149"><a href="#cb1-149" aria-hidden="true" tabindex="-1"></a>SimPO addresses this directly by normalizing the log-probability by sequence length: the reward signal for a response is its average log-probability per token, not the total log-probability. Under this normalization, a concise high-quality response and a verbose padded response of the same per-token quality receive identical reward signals. The length bias is removed at the reward level rather than through post-hoc regularization. SimPO also adds a target margin γ between chosen and rejected rewards, which further improves calibration.</span>
+<span id="cb1-150"><a href="#cb1-150" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-151"><a href="#cb1-151" aria-hidden="true" tabindex="-1"></a>ORPO addresses length bias differently: by combining the SFT objective with an odds ratio penalty in a single loss, it keeps the SFT cross-entropy on the chosen response as the primary learning signal. The SFT loss is token-averaged, not summed, so length does not compound the gradient. The odds ratio penalty provides relative preference between chosen and rejected without length-weighting. Length-normalization at the loss level (SimPO) is more explicit and controllable; the combined SFT+alignment signal (ORPO) achieves a similar effect indirectly.</span>
+<span id="cb1-152"><a href="#cb1-152" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-153"><a href="#cb1-153" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-154"><a href="#cb1-154" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-155"><a href="#cb1-155" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb1-156"><a href="#cb1-156" aria-hidden="true" tabindex="-1"></a>**Q1. A customer is fine-tuning a model for a customer support use case and wants the model to be more concise. Which alignment technique would you recommend and why?**</span>
+<span id="cb1-157"><a href="#cb1-157" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-158"><a href="#cb1-158" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-159"><a href="#cb1-159" aria-hidden="true" tabindex="-1"></a>SimPO is the most targeted solution for a conciseness requirement. The core problem is that vanilla DPO produces longer responses because human preference annotations favor length, and DPO's loss amplifies this bias through un-normalized total log-probabilities. SimPO normalizes the reward by sequence length, making the alignment signal per-token rather than per-sequence, which directly removes the incentive to generate more tokens. The target margin γ (typically 0.5-1.5) provides an additional calibration buffer.</span>
+<span id="cb1-160"><a href="#cb1-160" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-161"><a href="#cb1-161" aria-hidden="true" tabindex="-1"></a>The implementation strategy: collect preference data for the customer support domain, keeping it realistic by including actual support queries and model responses. Label shorter, accurate responses as preferred over longer ones that contain the same information plus filler language. Use SimPO with γ tuned so the model consistently produces responses in the 50-150 token range appropriate for support interactions. Monitor average response length as a primary training metric alongside preference accuracy.</span>
+<span id="cb1-162"><a href="#cb1-162" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-163"><a href="#cb1-163" aria-hidden="true" tabindex="-1"></a>If the customer has budget constraints and wants to avoid running a separate reference model, ORPO is a strong alternative — no reference model checkpoint is needed, compute is lower, and the combined SFT+alignment objective naturally controls length through the token-averaged SFT loss. However, SimPO is the more direct intervention for the conciseness problem specifically.</span>
+<span id="cb1-164"><a href="#cb1-164" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-165"><a href="#cb1-165" aria-hidden="true" tabindex="-1"></a>Two things to validate before deployment: run an evaluation comparing response quality (correct resolution, customer satisfaction proxy) across length buckets to confirm conciseness is not being achieved at the cost of resolution quality; and ensure the preference dataset contains examples where the correct answer genuinely requires a longer response (multi-step troubleshooting), so the model does not become pathologically brief on legitimately complex queries.</span>
+<span id="cb1-166"><a href="#cb1-166" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-167"><a href="#cb1-167" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-168"><a href="#cb1-168" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-169"><a href="#cb1-169" aria-hidden="true" tabindex="-1"></a>::: {.callout-important title="Forward Deployed Engineer"}</span>
+<span id="cb1-170"><a href="#cb1-170" aria-hidden="true" tabindex="-1"></a>**Q2. A team has a dataset of 10,000 individual "good response" / "bad response" labels but no paired comparisons — which alignment approach is most practical?**</span>
+<span id="cb1-171"><a href="#cb1-171" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-172"><a href="#cb1-172" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
+<span id="cb1-173"><a href="#cb1-173" aria-hidden="true" tabindex="-1"></a>KTO is the direct fit here. It is explicitly designed for unpaired binary preference labels — individual (prompt, response, label) triples where the label is desirable or undesirable, with no requirement that good and bad responses come from the same prompt. DPO, IPO, and SimPO all require matched pairs and cannot be applied to this dataset directly.</span>
+<span id="cb1-174"><a href="#cb1-174" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-175"><a href="#cb1-175" aria-hidden="true" tabindex="-1"></a>The practical path: structure the dataset as KTO expects — each row is (prompt, response, boolean label). Verify that the class balance is reasonable; KTO is theoretically grounded in the asymmetric value function of prospect theory, which expects undesirable examples to carry more weight, but extreme imbalance (90%+ good or 90%+ bad) will bias the objective. Aim for roughly 50-70% desirable labels if the data can be filtered.</span>
+<span id="cb1-176"><a href="#cb1-176" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-177"><a href="#cb1-177" aria-hidden="true" tabindex="-1"></a>If the team later wants to run DPO-style training, KTO can serve as a warmup: run KTO first to move the model in the right direction using the unpaired data, then collect a smaller set of paired comparisons (perhaps 1,000-2,000 pairs) targeting the remaining failure modes. This hybrid strategy is more data-efficient than trying to collect 10,000 paired comparisons from scratch.</span>
+<span id="cb1-178"><a href="#cb1-178" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-179"><a href="#cb1-179" aria-hidden="true" tabindex="-1"></a>One practical caution: audit the labeling criteria before training. Individual binary labels are often collected with weaker annotator guidance than paired comparisons, because annotators making pairwise judgments are forced to compare and contrast, which surfaces inconsistencies. If the labeling criteria were loose (e.g., "was this response acceptable?"), the resulting KTO model may have a calibration ceiling lower than what a clean paired dataset would produce. A calibration audit on a held-out sample before committing to a full training run is worth the investment.</span>
+<span id="cb1-180"><a href="#cb1-180" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb1-181"><a href="#cb1-181" aria-hidden="true" tabindex="-1"></a>:::</span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+</div></div></div></div></div>
+</div> <!-- /content -->
+
+
+
+
+<footer class="footer"><div class="nav-footer"><div class="nav-footer-center"><div class="toc-actions d-sm-block d-md-none"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/26-modern-alignment.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></div></div></footer></body></html>
