@@ -52,6 +52,28 @@ book:
         - chapters/16-customer-scenarios.qmd
         - chapters/17-integration.qmd
         - chapters/18-safety-production.qmd
+    - part: "Part VI — Modern Architectures & Efficiency"
+      chapters:
+        - chapters/19-moe.qmd
+        - chapters/20-ssm-mamba.qmd
+        - chapters/21-long-context.qmd
+        - chapters/22-speculative-decoding.qmd
+    - part: "Part VII — Reasoning & Multimodal"
+      chapters:
+        - chapters/23-reasoning-models.qmd
+        - chapters/24-multimodal.qmd
+        - chapters/25-diffusion.qmd
+    - part: "Part VIII — Advanced Training & Alignment"
+      chapters:
+        - chapters/26-modern-alignment.qmd
+        - chapters/27-synthetic-data.qmd
+    - part: "Part IX — Advanced Production Systems"
+      chapters:
+        - chapters/28-advanced-rag.qmd
+        - chapters/29-advanced-agents.qmd
+        - chapters/30-prompt-optimization.qmd
+        - chapters/31-interpretability.qmd
+        - chapters/32-observability.qmd
   appendices:
     - chapters/appendix-ml-fundamentals.qmd
 

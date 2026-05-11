@@ -1,0 +1,174 @@
+# Reasoning Models & Test-Time Compute {#sec-23}
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- What distinguishes reasoning models from standard LLMs and why the distinction matters
+- How extended thinking / chain-of-thought is trained and executed at inference time
+- The mechanics of GRPO, process reward models, and RL-based reasoning training
+- How test-time compute scaling works and when it pays off
+- When to deploy reasoning models vs. standard models — and how to justify the cost
+:::
+
+## What Reasoning Models Are
+
+Standard language models are trained to predict the most probable next token given a context. At inference time, they produce an answer in a single forward-pass sequence — each token conditioned on what came before, but with no structured deliberation step between reading the question and emitting the answer. This works well for tasks where a fluent continuation of the prompt is a correct answer. It breaks down on tasks that require multi-step logical deduction, constraint satisfaction, or long chains of arithmetic where an early error compounds into an entirely wrong final answer.
+
+Reasoning models solve this by inserting a structured thinking phase between input and output. Before producing the visible answer, the model generates thousands of reasoning tokens in a hidden scratchpad — sometimes called an "extended thinking" trace or "chain-of-thought" trace. These tokens are not returned to the user but are consumed by the model itself during generation. The practical effect is that the model has more opportunities to catch its own errors, explore alternative solution paths, and verify intermediate conclusions before committing to an answer.
+
+The key architectural insight is that this is not primarily a model-size phenomenon. A smaller model spending many reasoning tokens can outperform a larger model that answers immediately. This is the test-time compute hypothesis: the amount of compute available at inference time, not just the number of parameters or the quality of pretraining, determines the ceiling of reasoning performance. OpenAI's o1/o3/o4 family, DeepSeek-R1, and Claude 3.7 Sonnet with extended thinking all embody this approach, though they differ in training methodology and how much of the reasoning trace is exposed to users.
+
+## How It Works — Chain-of-Thought at Inference Scale
+
+The reasoning trace is not a post-hoc explanation — it is causally upstream of the final answer. The model generates the scratchpad autoregressively, and those scratchpad tokens appear in the context when the final answer tokens are generated. This means a mistake corrected mid-reasoning does not propagate to the answer, which is fundamentally different from a standard model that cannot revisit an implicit intermediate step buried in its hidden states.
+
+Training a reasoning model requires teaching the model to generate useful reasoning traces, not just any verbose output. Two approaches exist for supervising this. An **Outcome Reward Model (ORM)** scores only the final answer — correct answer gets a positive reward, wrong answer gets none or a penalty. ORMs are easy to apply whenever ground-truth answers exist (math problems, code execution results) but they provide no signal about whether the reasoning path was sound. A model can arrive at the right answer through flawed reasoning, and the ORM will reinforce the flawed path.
+
+A **Process Reward Model (PRM)** scores individual reasoning steps. A human annotator (or a trained verifier) labels each step in a chain as correct or incorrect, and the PRM learns to predict these step-level labels. This gives the training signal needed to distinguish "correct answer, wrong reasoning path" from "correct answer, correct reasoning path." PRMs are significantly more expensive to build — they require dense step-level annotation — but they produce more robust and generalizable reasoning behavior. OpenAI's o1 training reportedly relied heavily on process supervision. The tradeoff is annotation cost: step-level labels require mathematical or domain expertise and scale poorly to open-ended tasks.
+
+## GRPO & RL-Based Reasoning Training
+
+Training reasoning models requires reinforcement learning because the reward signal (is the final answer correct?) is not differentiable with respect to the model's token-level outputs. The standard approach in RLHF — PPO with a value network — requires training a separate critic model that estimates the expected future reward for each partial sequence. This critic is expensive in memory and compute, must be kept in sync with the policy, and introduces significant training instability.
+
+DeepSeek-R1 introduced **Group Relative Policy Optimization (GRPO)** as a lighter alternative. Instead of training a separate value network, GRPO generates a group of G candidate completions for each prompt, computes the reward for each completion (via a verifiable reward: does the math answer match?), and uses the group's average reward as the baseline. The policy gradient update pushes the model toward completions that scored above the group average and away from those that scored below. Because the baseline is computed from the model's own outputs rather than a learned critic, GRPO eliminates the memory and stability costs of PPO's critic while retaining the core optimization signal.
+
+The **"aha moment"** refers to an emergent behavior observed during DeepSeek-R1 training: mid-training, the model began spontaneously generating self-correction tokens ("Wait, that's wrong. Let me reconsider...") without being explicitly trained to do so. This suggests that RL training on verifiable reward signals can elicit structured self-reflection from a model that had no explicit supervision for that behavior. The policy simply discovered that backtracking and correcting intermediate steps increased the probability of reaching a correct final answer.
+
+The **cold-start problem** is the challenge of initializing RL training when the model has no prior behavior resembling structured reasoning. If the initial policy generates random chains that rarely lead to correct answers, the reward signal is too sparse for learning to begin. DeepSeek solved this with a two-phase approach: first, use supervised fine-tuning (SFT) on a small set of human-curated reasoning chain examples to warm-start the model into a regime where it occasionally produces correct multi-step solutions; then apply GRPO to refine and extend that behavior at scale. This SFT warm-up acts as a curriculum that bootstraps the policy into the reward basin.
+
+## Test-Time Compute Scaling
+
+The conventional scaling law says: more parameters + more training tokens = better model. The test-time compute scaling law says: given a fixed trained model, more inference-time computation can raise performance on hard tasks, and this additional compute can be more cost-effective than training a larger model.
+
+The simplest form is **Best-of-N sampling**: generate N independent answers and return the one that scores highest according to a verifier (e.g., a math-checking script or an ORM). If each attempt has probability p of being correct, the probability that at least one of N attempts is correct is 1-(1-p)^N. For hard problems with low per-attempt accuracy, this grows quickly. The cost is linear in N.
+
+More sophisticated approaches use **tree search over reasoning paths**. At each step in the reasoning chain, the model branches into multiple continuations; a PRM scores the partial traces; branches with low scores are pruned. This concentrates compute on promising reasoning directions rather than independent restarts. Beam search, Monte Carlo Tree Search (MCTS), and best-first search have all been applied in this framing.
+
+**Compute-optimal vs. token-optimal inference** is a real engineering tradeoff. Reasoning models are not always the right tool. They excel on tasks with a well-defined correct answer, high sensitivity to intermediate step errors, and where user latency tolerance is high: complex mathematics, multi-step code debugging, constraint satisfaction, legal or financial reasoning with explicit rules. They are overkill — and expensive — for tasks where a standard model is already near-ceiling: factual lookup, simple summarization, conversational replies, or tasks where chain-of-thought doesn't generalize (e.g., common-sense questions where slow deliberation can introduce overthinking artifacts).
+
+## Practical Use
+
+Reasoning model latency is fundamentally different from standard model latency. A standard `gpt-4o` call generating 200 output tokens might return in 2-3 seconds. An `o3` call on a hard problem might generate 4,000 reasoning tokens before the 200-token answer, adding 30-60 seconds of wait time. This is not a bug — it is the model doing useful work — but it is a deployment reality that must be designed around. Strategies include: showing a "thinking..." spinner with partial reasoning tokens streamed to the user, offloading reasoning-heavy tasks to background jobs, and reserving reasoning models for the subset of queries where the accuracy gain justifies latency.
+
+The OpenAI API exposes a `reasoning_effort` parameter for o3/o4-mini that lets callers trade off latency and cost against accuracy: `low` uses fewer reasoning tokens and responds faster; `high` uses more. This allows applications to tune dynamically — use `high` for a user explicitly requesting deep analysis, `low` for a quick check. Anthropic's extended thinking API for Claude 3.7 exposes a `budget_tokens` parameter that caps reasoning token spend per call. Both designs reflect the same insight: reasoning compute is a knob, not a binary.
+
+Cost is significant. Reasoning tokens are billed at the same rate as output tokens, and a single o3 call on a hard problem can generate 5,000–20,000 reasoning tokens. This makes reasoning models 10-100x more expensive per task than calling a standard model with a single pass. Architecture guidance: use reasoning models as a last resort or as an elevated tier triggered by task complexity signals (detected by a cheaper classifier), not as the default handler for every user request.
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. What is the difference between a standard LLM and a reasoning model like o1?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A standard LLM generates an answer token-by-token in a single forward pass, with no explicit deliberation between reading a question and emitting the answer. Each token is conditioned on the prompt and previous outputs, but the model has no mechanism to revisit or correct an intermediate step it has already emitted.
+
+A reasoning model like o1 generates a hidden reasoning trace — sometimes called a scratchpad or "extended thinking" — before producing the visible answer. This trace can be thousands of tokens long and allows the model to try multiple approaches, catch its own errors, and verify intermediate conclusions before committing to a final response.
+
+The practical difference shows up on hard tasks: on complex math or multi-step code problems, a standard GPT-4-class model answers quickly but makes errors at intermediate steps that cascade into wrong final answers. o1 uses the scratchpad to work through the problem step-by-step and self-correct, achieving dramatically higher accuracy at the cost of higher latency and inference cost.
+
+The key insight is that the improvement comes from compute at inference time, not a larger or differently trained base model.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. Why does "thinking longer" help a model solve harder problems?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Each token a model generates becomes part of the context for subsequent tokens. When a model generates a scratchpad before answering, those intermediate tokens serve as working memory — the model can write down sub-results, verify them, and build on them, just as a human working through a math problem on paper can catch a multiplication error before it corrupts the rest of the solution.
+
+Without a scratchpad, a model answering a multi-step problem must compress all intermediate reasoning into its hidden states across a fixed number of transformer layers. For complex problems, the hidden state dimensionality is insufficient to hold all necessary intermediate values accurately. The scratchpad offloads this computation into explicit tokens, where it can be checked and corrected.
+
+There is also a probabilistic argument: harder problems require longer correct reasoning chains. At each step, there is some probability of an error. Longer chains without correction accumulate more errors. A scratchpad allows the model to detect and recover from local errors rather than letting them propagate, so the probability of reaching a correct final answer on a hard problem improves substantially with additional reasoning tokens.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. What is test-time compute scaling and how does it differ from training-time scaling?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Training-time scaling means using more parameters, more training data, or more training compute to build a better model. The standard scaling laws (Chinchilla) tell us that model quality improves predictably with model size and training tokens. But after training, the model is fixed — its weights do not change at inference.
+
+Test-time compute scaling means spending more computation during inference — on a fixed, trained model — to get better answers. The simplest version is generating multiple answers and picking the best (best-of-N). More sophisticated versions generate long reasoning chains, branch into multiple reasoning paths, and use verifiers to prune bad branches. All of this happens at inference time, not training time.
+
+The practical implication is that you can trade latency and inference cost for accuracy on a per-query basis, without retraining anything. A hard problem gets more compute; a simple question gets less. This is fundamentally different from training-time scaling, where you pay the compute cost once but it applies uniformly to all future queries. Test-time scaling is dynamic and query-dependent, which is what makes it useful for production applications with mixed workloads.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q1. Explain the difference between a Process Reward Model (PRM) and an Outcome Reward Model (ORM) in the context of reasoning model training.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+An Outcome Reward Model scores only the final answer of a reasoning chain. A correct final answer receives a positive reward; incorrect answers receive zero or a penalty. ORMs are cheap to build whenever ground-truth answers are automatically verifiable — math problems have exact numerical answers, code problems can be tested against unit tests. The limitation is that ORMs cannot distinguish between a correct answer reached by valid reasoning and a correct answer reached by a flawed shortcut. The model can be reinforced for reasoning patterns that happen to get right answers but will generalize poorly to harder problems.
+
+A Process Reward Model scores individual steps in the reasoning chain. Annotators — human experts or a separately trained PRM — label each step as correct, incorrect, or uncertain. The RL training signal rewards step-level correctness, not just final-answer correctness. This forces the model to learn valid reasoning processes, not just answer-producing heuristics. PRMs produce more robust reasoning behavior and can identify where in a chain a model goes wrong, which is also useful for debugging.
+
+The tradeoff is cost. Step-level annotation for mathematical proofs or code debugging requires domain expertise and is orders of magnitude more expensive than collecting final-answer labels. PRMs also require defining what constitutes a "step," which is non-trivial for free-form reasoning. In practice, most production reasoning models use a combination: ORM for cheap large-scale training signal and PRM for high-quality fine-grained supervision on a smaller dataset.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q2. How does GRPO differ from PPO and why did DeepSeek choose it for DeepSeek-R1?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+PPO (Proximal Policy Optimization) requires a critic network — a separate model that estimates the expected future reward (value function) for each state in the sequence. The policy gradient update uses the advantage estimate from the critic: how much better was this action than the critic expected? Training PPO means running two large models in lockstep: the policy (the LLM being trained) and the critic (typically as large as the policy). This doubles memory requirements and introduces instability when the critic's value estimates lag behind rapid policy changes.
+
+GRPO (Group Relative Policy Optimization) eliminates the critic by estimating the baseline from the model's own group of outputs. For each prompt, the model generates G completions. The group average reward serves as the baseline. Individual completions are rewarded proportionally to how much better than average they scored. No separate value network is needed — the baseline is computed on-the-fly from inference outputs.
+
+DeepSeek chose GRPO for three practical reasons: it halves the GPU memory requirements during training (no second model), it is more stable because the baseline is always current (computed from the latest policy's outputs), and it integrates naturally with verifiable reward functions like mathematical answer checking. For DeepSeek-R1's training setup — large-scale RL on mathematical reasoning with automated reward verification — GRPO provided equivalent learning signal to PPO at significantly lower infrastructure cost.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q3. What are the failure modes of reasoning models — when do they "think" more but get worse?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Overthinking on simple tasks.** On tasks with obvious answers, forcing the model into extended reasoning can introduce spurious considerations that shift the answer away from the correct simple response. The model may convince itself that a straightforward factual question has hidden complexity and hedge or overqualify an answer that should be direct.
+
+**Reasoning trace length mismatch.** If the model is trained primarily on mathematical reasoning, it may not know how to budget reasoning tokens correctly for other task types. It can generate very long reasoning traces that loop or repeat without making progress — a form of "reasoning thrashing" that wastes tokens without improving accuracy.
+
+**Confident wrong conclusions.** A convincing-looking reasoning chain can be internally consistent but built on a wrong premise in the first step. Because the chain appears coherent, the final answer arrives with high apparent confidence. This is more dangerous than a standard model's wrong answer because the reasoning trace can mislead users who try to audit it.
+
+**Instruction following degradation.** Reasoning models trained primarily on problem-solving tasks can show weaker instruction-following behavior on format-sensitive tasks compared to RLHF-tuned standard models. They may ignore formatting requirements or output constraints that appear at the end of the prompt because the reasoning trace has shifted the model's context far from the original instruction.
+
+**Cost explosion on easy workloads.** Applying reasoning models to a mixed workload that includes many simple queries generates reasoning traces that add latency and cost without accuracy benefit on the simple queries.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q1. A customer needs to solve complex multi-step financial calculations — when would you recommend o3 vs. Claude Sonnet vs. a fine-tuned smaller model?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The decision turns on three factors: accuracy requirements, latency tolerance, and call volume/cost.
+
+**Use o3** when the calculations are genuinely multi-step with compounding dependencies — think portfolio risk calculations requiring dozens of sequential formula applications, or regulatory capital calculations with nested conditional rules. o3's extended reasoning excels when an error at step 3 would make the final answer wrong and there's no short-circuit to the answer. Accept the latency (10-60s per call) and cost (~$15-60 per million output tokens for reasoning tokens). For low-volume high-stakes decisions — end-of-day risk reports, not real-time pricing — this is the right call.
+
+**Use Claude Sonnet or GPT-4o** when calculations are structured but not deeply chained — filling a financial model template, extracting and transforming data from documents, or questions where a correct formula applied once gives the answer. These models are 10-20x cheaper, 10x faster, and near-ceiling accurate on well-structured financial tasks. Most enterprise financial automation falls in this bucket.
+
+**Fine-tune a smaller model** (e.g., Llama 3.1 8B or Mistral) when you have a narrow, well-defined calculation type (e.g., loan amortization schedules, specific regulatory ratio formulas), high call volume (millions/day), and strict latency or cost constraints. The fine-tuned model can match or exceed larger models on its specific task while running on much cheaper infrastructure. The risk is brittleness — it will fail on edge cases outside its training distribution.
+
+My recommendation for a new customer: prototype with Claude Sonnet, measure accuracy on their real test cases, escalate only the failing cases to o3, and benchmark whether a fine-tuned model can replace o3 at scale once you understand the failure modes.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q2. A customer is shocked by the latency of reasoning models. How do you explain the latency tradeoff and what alternatives do you propose?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The framing I use: reasoning model latency is not wasted time — it is the model doing the work that a human expert would do before answering a hard question. A human financial analyst doesn't answer "what is our regulatory capital requirement?" in two seconds; they spend time checking formulas, looking up rules, and verifying their arithmetic. The reasoning model is doing the same thing in its scratchpad. The latency is the computation, not the wait.
+
+That said, there are concrete alternatives depending on what the customer actually needs:
+
+**Async / background processing:** For queries that don't need a real-time response — batch document analysis, overnight reports, analysis runs — reasoning model latency is irrelevant. Move these to background jobs with a webhook or polling mechanism. The user submits a request and gets notified when results are ready.
+
+**Routing:** Use a cheap fast classifier (GPT-4o-mini or a fine-tuned classifier) to distinguish easy from hard queries. Route easy queries to Claude Sonnet (1-3s); only route genuinely hard queries to o3 (30-60s). This gives the customer fast responses on 80-90% of queries.
+
+**Streaming reasoning tokens:** OpenAI and Anthropic both support streaming reasoning traces. Show the customer a "thinking..." indicator with partial reasoning steps. Perceived latency is dramatically lower when users see progress versus staring at a spinner. For many users, watching the model reason is itself informative.
+
+**Reasoning effort tuning:** Use `reasoning_effort=low` or a lower `budget_tokens` cap for queries where near-perfect accuracy isn't critical. This can cut latency 3-5x with modest accuracy reduction.
+
+**Model-level alternative:** If the accuracy gap between o3 and Sonnet is acceptable for the use case, move back to a standard model. Always start with empirical accuracy benchmarking on the customer's actual workload — many customers discover Sonnet is sufficient once they measure it properly.
+:::
+:::

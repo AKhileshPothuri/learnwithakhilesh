@@ -1,0 +1,199 @@
+# Synthetic Data & Data-Centric AI {#sec-27}
+
+::: {.callout-note}
+**Who this chapter is for:** Entry / Mid / Forward Deployed Engineer
+
+**What you'll be able to answer after reading this:**
+
+- The three fundamental problems synthetic data solves (scale, distribution control, privacy) and where it falls short
+- The Self-Instruct and Evol-Instruct pipelines for generating instruction-following data
+- How distillation-as-data-generation differs from classical teacher-student distillation
+- Why model collapse happens and how to prevent it with real-data mixing
+- How to design a synthetic data strategy from scratch given minimal labeled examples
+:::
+
+## Why Synthetic Data
+
+Labeled data is the rarest and most expensive input to any supervised learning pipeline. Collecting high-quality (instruction, response) pairs at the scale needed to fine-tune a competitive LLM requires coordinating large annotation teams, establishing quality-control workflows, and running multiple rounds of review. The cost scales linearly with the number of examples and non-linearly with the required quality level, since harder tasks require more expert annotators and longer per-example annotation time. For domain-specific fine-tuning — medical records, legal documents, specialized engineering domains — the bottleneck is not just cost but availability: there are simply not enough credentialed domain experts willing to do annotation work at the volume needed.
+
+Synthetic data solves three distinct problems simultaneously. The first is scale: a single prompt to a strong LLM can generate thousands of (instruction, response) pairs per hour at a fraction of the cost of human annotation. A dataset that would take six months and $500,000 in human annotation can be generated in a week for $5,000 of API calls. The second is distribution control: human-collected data is biased toward the tasks annotators find interesting or the topics that appear most frequently in templates. Synthetic generation lets you precisely specify the distribution — generate 2,000 examples about tax law edge cases, 500 examples about multi-step mathematical word problems with misleading distractors, or 1,000 examples with adversarial user inputs designed to test safety behavior. The third is privacy: real user interaction data contains PII and is subject to data retention and consent regulations that may prohibit its use in training. Synthetic data generated from scratch contains no real personal information.
+
+The Phi model series from Microsoft provided the clearest empirical demonstration that data quality dominates data quantity at the frontier. Phi-1, a 1.3B parameter model, matched or exceeded the coding performance of 7B parameter models trained on standard web-scraped code. The key difference was the training data: rather than scraping all available code from GitHub and Stack Overflow, Microsoft generated a carefully curated dataset of "textbook quality" coding problems using GPT-4, explicitly targeting pedagogically clear problems that cover fundamental concepts with comprehensive explanations. The subsequent Phi-1.5, Phi-2, and Phi-3 models extended this principle to general reasoning, demonstrating consistent capability gains over models 3-5x larger trained on conventional data. The implication is fundamental: when compute and model size are fixed, data engineering — curation, synthetic augmentation, quality filtering — is the highest-leverage investment.
+
+## Types of Synthetic Data
+
+### Instruction Data
+
+The Self-Instruct pipeline bootstraps an instruction dataset from a small seed set using the model itself. Starting from 175 manually written seed tasks (instruction, input, output triples), the pipeline prompts the model to generate new tasks by providing examples from the seed set in context. The new tasks are filtered for diversity (remove tasks too similar to existing ones using ROUGE similarity), quality (remove tasks with empty outputs, tasks the model fails to complete), and safety. The surviving tasks are added to the pool, and the process repeats — the seed grows, and each iteration the model has a richer pool of examples to draw from. This bootstrapping loop generated the core of the ALPACA dataset (52,000 instruction-following examples for LLaMA fine-tuning) at a cost under $500.
+
+Evol-Instruct, developed by the WizardLM team, takes a complementary approach: rather than generating new tasks from scratch, it takes existing instructions and evolves them into more complex, more challenging, or more constrained variants. An evolution step might add additional constraints to the original instruction ("now require the response to be structured as a JSON object"), ask for more context ("expand this by adding an explanation of the underlying principle"), deepen the reasoning required ("now solve it using dynamic programming instead of recursion"), or combine two existing instructions into a composite task. Evolved instructions are harder and more diverse than the original seed set, and models fine-tuned on evolved instruction datasets score higher on instruction-following benchmarks than those trained on the raw seed. The key insight: simple seed instructions cover simple capabilities; evolving them is how you build a training set that stretches the model.
+
+Backtranslation reverses the natural generation direction. Instead of generating a response from an instruction, you generate an instruction from a response. The practical value: you may have a large corpus of high-quality responses — technical documentation, well-written blog posts, expert forum answers — with no associated instructions. Backtranslation uses a model to generate the instruction that would most naturally lead to each response, producing (instruction, response) pairs where the responses are human-authored and high-quality. This tends to produce better responses than fully synthetic generation because the response quality is bounded by real expert writing rather than model generation quality. Backtranslation-augmented datasets have been shown to substantially improve model responses on the types of tasks represented in the source documents.
+
+### Reasoning Traces
+
+Generating high-quality step-by-step reasoning traces is one of the highest-value forms of synthetic data for capability development. The mechanism is teacher distillation: a larger, more capable model (the teacher) generates chain-of-thought reasoning for a dataset of problems, and a smaller model (the student) trains to reproduce both the final answer and the reasoning process. The student is not just learning what the correct answer is — it is learning the decomposition strategy, the verification steps, and the self-correction patterns that the teacher uses. This is capability transfer at the reasoning level rather than the knowledge level.
+
+DeepSeek-R1 used a cold-start reasoning bootstrap to initialize the GRPO training loop. Before any RL training, the team generated 5,000 long-form reasoning examples: problems with multi-step solutions where each solution was a detailed, human-readable chain of thought in a specific XML format (`<think>...</think>` followed by the answer). These 5,000 examples were used to SFT the model into the reasoning format before GRPO training began. The cold start was essential: without it, GRPO training from the base model produced reasoning traces in inconsistent formats that the rule-based reward function could not evaluate reliably. The synthetic cold-start data established the reasoning format, after which RL could optimize for correctness within that format.
+
+### Code Synthesis
+
+Code is the domain where synthetic data has the tightest feedback loop, because code execution provides a deterministic correctness signal. A model generates code, the code is run against a test suite or interpreter, and the pass/fail result is ground-truth quality information. This eliminates the need for human judgment on individual examples and enables large-scale generation with automated quality filtering: generate 100 candidate solutions per problem, execute all of them, keep those that pass the test suite, and discard the rest.
+
+Pass@k is the key metric: the probability that at least one of k generated solutions is correct. For data generation, high pass@k at k=100 means a problem is generatable (some solutions exist) but the filtering rate is sufficient to ensure quality. Problems where no solution in 100 attempts passes the tests are removed from the dataset. Problems where nearly all solutions pass are too easy to provide useful training signal. The sweet spot is problems where 5-30% of attempts succeed — hard enough to require genuine capability, tractable enough that good solutions are obtainable.
+
+Self-play for code extends the pipeline further: a model generates a problem statement and test cases, then separately generates solutions to that problem. The problem and its passing solution together form a training pair. This removes dependency on external problem databases entirely — the model bootstraps its own problem space and its own solutions. Combined with a difficulty curriculum that targets problems at the current model's capability frontier, self-play code generation can produce training data that continuously tracks and challenges the model's improving ability.
+
+### Domain-Specific Data
+
+Structured enterprise data — relational databases, knowledge graphs, product catalogs, regulatory documents with defined schema — is highly amenable to synthetic QA generation. The process: for a relational database, enumerate tables and relationships, generate SQL queries of varying complexity, execute them to get ground-truth answers, then generate natural language question-answer pairs from the (query, result) pair. For a knowledge graph, traverse relation chains to generate multi-hop questions ("Which drugs in this class have FDA approval for pediatric use and have a contraindication with SSRIs?") with exact answers derivable from the graph. These QA pairs are grounded — the answers are correct by construction, not by model generation — which makes them more reliable training signal than purely generative synthetic data.
+
+Table-to-text generation is valuable for enterprise contexts where analysts need narrative summaries of structured results. A model trained on synthetic (table, narrative summary) pairs generalizes to real reporting contexts. The synthetic summaries are generated by a strong model given the table values and a template specifying the required reporting format; human review is needed only on a sample to validate quality rather than on every example.
+
+## Distillation as Data Generation
+
+Knowledge distillation in its classical formulation (covered in the deployment chapter) trains a student model to reproduce a teacher model's output distribution over the full vocabulary — the soft labels. Soft labels carry more information than one-hot hard labels because they encode the teacher's uncertainty and its assessments of near-correct alternatives. A soft label of 0.7 on "Paris", 0.15 on "Lyon", and 0.05 on "Marseille" tells the student not just that Paris is correct but that Lyon is a plausible near-miss and that this question is not maximally certain.
+
+Response distillation is a looser but more scalable form: instead of matching the teacher's full token probability distribution, the student is trained to match the teacher's sampled responses. The teacher generates responses to a large unlabeled prompt dataset; those responses become the training targets for the student. No access to the teacher's logits is needed — only its generated text. This is important in practice because API-access models (GPT-4, Claude) do not expose logits, so soft-label distillation is not feasible, but response distillation is. The tradeoff: response distillation uses only the hard outputs and loses the calibration information in the full distribution, but the teacher's response quality still transfers the reasoning and factual content.
+
+Constitutional AI's RLAIF pipeline is response distillation applied specifically to preference label generation. A strong judge model (the "AI Annotator") is given a constitutional principle and two candidate responses to the same prompt, and asked to identify which response better adheres to the principle. These AI-generated preference labels are used to train a reward model, which is then used in the alignment pipeline. Because the AI annotator can evaluate millions of pairs without fatigue, inconsistency, or scheduling constraints, RLAIF can produce preference datasets orders of magnitude larger than human annotation allows. The limitation is that the RLAIF preference labels encode the values and blind spots of the judge model, not human values directly — a systematic bias in the judge propagates into the alignment signal.
+
+## Quality Filtering
+
+Generating large volumes of synthetic data is straightforward; ensuring that synthetic data improves model performance rather than degrading it requires deliberate filtering. Perplexity-based filtering is one of the most effective and underappreciated techniques. The idea: score each synthetic example by the perplexity it induces in a reference model. Examples with very low perplexity are too easy — the model already handles them well and training on them provides no new signal. Examples with very high perplexity are too hard — they likely contain errors, unusual formatting, or concepts too far from the model's current distribution to be learnable. The most useful training examples are at intermediate perplexity: challenging but tractable. Filtering to the 20th-80th perplexity percentile consistently improves training efficiency compared to using the full synthetic dataset.
+
+Diversity sampling is complementary to quality filtering. A dataset of 10,000 examples that are all very similar provides less coverage of the task space than 10,000 diverse examples of comparable quality. Embedding-based deduplication removes near-duplicate examples (semantic similarity above a threshold). Cluster-then-sample approaches embed all examples, cluster them, and sample uniformly across clusters rather than sampling proportionally to cluster size — this prevents large common-case clusters from dominating the training distribution while rare-but-important cases are underrepresented.
+
+Instruction-following difficulty scoring evaluates how well the model's generated response actually follows the instruction: does it answer the right number of questions, adhere to format constraints, stay within length limits, use the requested structure? A lightweight classifier or rule-based checker can score each example for instruction compliance and filter out low-compliance examples where the generation model failed to follow its own prompt. These are typically the lowest-quality examples in the dataset and removing them improves the signal-to-noise ratio without reducing total training data volume significantly.
+
+## Data Flywheels
+
+The data flywheel is the compounding dynamic that separates organizations with durable AI advantages from those running one-off fine-tuning projects. The loop: a deployed model serves users; user interactions are logged; high-quality interactions (identified by engagement signals, explicit feedback, or downstream task success) are filtered and added to the training dataset; the next model version trains on the enriched dataset and performs better; better performance drives higher usage and more interactions; more interactions generate more training data. Each turn of the flywheel produces a marginal improvement that compounds over time.
+
+Building a flywheel from scratch requires deliberately instrumenting each stage. Interaction logging must capture enough context (full prompt, response, any user follow-up, downstream outcome) to evaluate quality retroactively. Quality filters must be designed with care — engagement metrics like session length or positive feedback clicks are noisy proxies that can optimize for user-pleasing responses rather than accurate ones. The best flywheel signals come from task completion: did the user's code run? Did the customer support ticket close without escalation? Did the generated document get approved without revision? These downstream signals require product-level instrumentation but provide ground-truth quality labels that no annotation workflow can match.
+
+The RLHF data flywheel is a specific instantiation: as the deployed model improves, the preference annotation becomes more useful because annotators are choosing between higher-quality responses and the discriminative task becomes more fine-grained. Each preference annotation round in the flywheel captures a more subtle preference signal than the previous round, continuously pushing the model's quality ceiling higher. This compounding quality improvement is why organizations with large user bases and well-instrumented data pipelines maintain persistent capability advantages over organizations that rely on static training datasets.
+
+## Risks and Limitations
+
+Model collapse is the failure mode that defines the ceiling of pure synthetic data training. When a model is trained on data generated by itself (or a closely related model), and those outputs are used to train subsequent generations without mixing in real data, the model's output distribution progressively narrows. The tail of the distribution — rare but valid responses, unusual phrasings, edge-case knowledge — is underrepresented in generated outputs compared to real human text, because the generative model assigns low probability to tail events. Training on generated outputs reinforces the model's existing distribution biases. Over multiple training generations, the distribution collapses toward high-probability modal outputs, and the model loses the ability to generate diverse, nuanced responses.
+
+The Shumailov et al. (2023) "model collapse" paper demonstrated this empirically: training iteratively on model-generated text caused Gaussian and LLM distributions to converge to narrow modes within 5-9 generations, losing variance that was present in the original real data distribution. The practical mitigation is straightforward but requires discipline: always mix a substantial proportion of real, human-generated data into any synthetic training set. A mixture of 20-40% real data is typically sufficient to prevent collapse even when the majority of training data is synthetic. The real data acts as an anchor that preserves the tails of the distribution the synthetic data would otherwise compress.
+
+Benchmark contamination is a distinct but equally serious risk. Synthetic data generation prompts can inadvertently include phrasing, problem structures, or answer formats that overlap with evaluation benchmark items. A model trained on contaminated synthetic data scores higher on benchmarks without actually having improved capabilities on the underlying task distribution the benchmarks are designed to measure. Decontamination is a mandatory step in any responsible synthetic data pipeline: embed all benchmark items and all synthetic examples, identify synthetic examples with high cosine similarity to benchmark items (threshold typically 0.9 or above), and remove them from the training set. This must be re-run whenever new benchmark versions are released and whenever the synthetic generation prompts change substantially.
+
+The echo chamber problem is subtler than contamination: synthetic data generated by a model reflects that model's existing knowledge structure, factual biases, and reasoning patterns. If the model has systematic factual errors — incorrect beliefs about chemistry, biased associations in social domains, overconfidence in specific topic areas — the synthetic data will exhibit the same errors and biases, and training on it will reinforce them rather than correcting them. Synthetic data is most dangerous in exactly the areas where the generating model is weakest. Quality filtering catches obvious errors but cannot detect systematic biases the model is consistently confident about. External validation against authoritative sources is essential for high-stakes domain fine-tuning.
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. Why would you use synthetic data instead of real data for fine-tuning?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+There are three core reasons to use synthetic data. First, scale: generating millions of labeled examples with a strong LLM costs a fraction of what human annotation costs. Fine-tuning a coding assistant might require 500,000 (problem, solution) pairs — collecting those from human programmers would take years and millions of dollars, but generating them with GPT-4 takes days and a much smaller budget.
+
+Second, distribution control: real-world data is biased toward common cases. If you scrape coding questions from forums, you will get millions of examples about sorting lists and reversing strings and almost nothing about concurrent data structure design or lock-free algorithms. Synthetic generation lets you specify exactly how many examples of each type you want and generate them directly.
+
+Third, privacy: real user interaction data contains names, addresses, account numbers, and other PII. Using it for training requires legal compliance frameworks (consent, data retention policies, cross-border data restrictions) that may prohibit training use entirely. Synthetic data contains no real personal information and bypasses these constraints.
+
+The tradeoff is quality: synthetic data reflects the generating model's knowledge and biases, contains the errors the generating model makes, and can cause model collapse if used without mixing real data. The rule is to use synthetic data to scale and control distribution while always anchoring the training set with a meaningful proportion of real, high-quality human-generated data.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. What is the Phi model's contribution to synthetic data research?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The Phi model series from Microsoft demonstrated empirically that data quality can substitute for model scale. Phi-1, a 1.3 billion parameter model, achieved coding performance comparable to 7 billion parameter models that were trained on standard web-scraped code data. The difference was entirely in the training data: instead of raw GitHub and Stack Overflow content, Phi-1 was trained on "textbook quality" synthetic coding problems generated by GPT-4.
+
+The synthetic problems were explicitly designed to be pedagogically clear — each problem covered a specific fundamental concept with a full explanation, clean sample code, and a discussion of common mistakes. This is very different from what most internet code looks like, which tends to be incomplete snippets, undocumented hacks, and partial solutions written under time pressure.
+
+The implication is that the conventional wisdom — "bigger model, more data, better performance" — has an important qualifier: when data quality is high enough, smaller models with better data outperform larger models trained on noisier data. This shifted attention in the field toward data curation and synthetic generation as first-class engineering problems rather than afterthoughts. Subsequent Phi models (Phi-1.5, Phi-2, Phi-3) extended the principle to reasoning and general language understanding, consistently demonstrating that careful synthetic data engineering can compress the capability gap between small and large models.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. What is "model collapse" and why does it happen?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Model collapse is the progressive degradation of a language model's output diversity when it is trained iteratively on its own generated outputs without mixing in real human-authored data.
+
+The mechanism: a language model's output distribution is not identical to the real data distribution it was trained on. Generated text overrepresents high-probability sequences and underrepresents rare, tail-of-the-distribution content — unusual phrasings, edge-case knowledge, minority viewpoints. When this generated text becomes the training data for the next version of the model, the model learns to overfit to the already-overrepresented common cases, compressing the distribution further. The second generation underrepresents the tail even more than the first. Over multiple training generations, the model's outputs become increasingly narrow and repetitive — it has effectively forgotten that the tail of the distribution exists.
+
+Research by Shumailov et al. demonstrated that this collapse can happen within 5-9 training generations in controlled experiments. The mitigation is straightforward: always mix real human-generated data into training sets, even when the majority of data is synthetic. The real data acts as an anchor that preserves the distribution's tails. A practical rule of thumb: maintain at least 20% real data in any training mixture. The risk of collapse is highest in iterative pipelines where each new model's outputs are fed back as training data for the next iteration — exactly the structure of many production data flywheel implementations.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q1. Explain the Self-Instruct pipeline — how does a model generate its own training data?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Self-Instruct starts with a small set of manually written seed tasks — in the original paper, 175 diverse instruction-following examples covering different task types (classification, generation, editing, QA). These seed tasks are used as in-context examples to prompt the same model being fine-tuned to generate new instructions and their responses.
+
+The generation step: sample 8 tasks from the current pool (the seed tasks initially, then the growing pool), include them in a prompt that instructs the model to generate a new, different task. The model generates a new instruction and optionally an input for the instruction. The generation step is run until the pool reaches the target size (typically 50,000-100,000 examples for ALPACA-scale datasets).
+
+After generation, filtering removes low-quality examples: tasks that are too similar to existing tasks (ROUGE-L similarity above 0.7 is a common threshold), tasks where the model generated an empty or malformed response, tasks that match known safety-harmful patterns, and tasks that are too short to be meaningful. Diversity filtering prevents the pool from degenerating to many near-identical variations of a few common task types.
+
+The critical insight is the bootstrapping loop: once the model has generated a few thousand tasks, the in-context examples drawn from the pool are themselves diverse and high-quality, which pushes the next generation round toward higher diversity. The pool improves the quality of the prompts, which improves the quality of the generated tasks, which further improves the pool. The process generates training data at near-zero marginal cost — only the API calls to the generating model — but the quality ceiling is set by the generating model's own instruction-following capability.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q2. Compare response distillation vs. soft-label distillation — when would you choose each?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Soft-label distillation trains the student to match the teacher's full output probability distribution over the vocabulary at every token position. The training signal is the KL divergence between teacher and student distributions, summed over all tokens. Soft labels carry rich calibration information: if the teacher assigns probability 0.6 to "Paris" and 0.3 to "Rome", the student learns both that Paris is preferred and that Rome is a plausible alternative — information that a hard label of "Paris" does not encode. Soft-label distillation requires access to the teacher's logits, which means the teacher must be a locally hosted model or one that exposes logit outputs through its API.
+
+Response distillation trains the student on the teacher's sampled text outputs, treating them as hard training targets with standard cross-entropy loss. No logit access is needed — you only need the teacher's generated text. This makes response distillation applicable when the teacher is an API model (GPT-4, Claude, Gemini) that does not expose logits. The tradeoff: you lose the calibration information in the full distribution and the learning signal is noisier (a single sampled response may not represent the teacher's distribution well, especially for high-temperature generation).
+
+Choose soft-label distillation when: you have access to the teacher's logits (it is a locally hosted model), you are distilling a specialized model where calibration matters (e.g., a medical QA model where uncertainty quantification is important), or you are compressing a model significantly (3B → 1B) where the richer signal is needed to compensate for the capacity gap.
+
+Choose response distillation when: the teacher is API-only, you are generating large-scale instruction data from a commercial model, or the task is one where single-best-response quality matters more than calibrated distributions (code generation, structured output tasks).
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q3. How do you detect and prevent benchmark contamination in a synthetic data pipeline?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Detection requires comparing all synthetic training examples against all evaluation benchmarks using semantic similarity. The practical pipeline: embed every training example and every benchmark item using a retrieval-grade embedding model (e.g., text-embedding-3-large or a sentence-transformer). For each benchmark item, retrieve the top-k most similar training examples. Flag pairs with cosine similarity above a threshold — typically 0.85-0.90 for conservative decontamination. Review flagged pairs manually if the dataset is small enough, or apply automatic removal for large-scale pipelines. Common targets: MMLU, HumanEval, GSM8K, MATH, HellaSwag, ARC, TruthfulQA, and any domain-specific benchmarks the team reports on.
+
+String-based matching is a complementary but insufficient method: exact substring matching catches verbatim contamination but misses paraphrased or structurally similar contamination. Embedding-based matching is necessary because synthetic generation typically does not reproduce exact benchmark text but often reproduces the same reasoning patterns, problem structures, or answer formats.
+
+Prevention is more effective than detection: structure the generation prompts to avoid overlap with known benchmark domains and formats. For math benchmarks, avoid generating grade-school word problems in the same format as GSM8K problems. For code benchmarks, avoid generating problems with the same function signatures and test structures as HumanEval. Use the benchmark items as negative examples in the generation prompt: "Generate a coding problem that is different from the following examples: [benchmark items]."
+
+Re-run decontamination whenever the synthetic generation prompts change substantially, when new benchmark items are added to the evaluation suite, and before any public release. Treat decontamination as a mandatory step in the release checklist rather than an optional quality check.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q1. A customer wants to fine-tune a model on their proprietary domain but has only 200 labeled examples. Design a synthetic data strategy to expand this dataset.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+With 200 high-quality domain-specific examples as a seed, the strategy is a three-phase synthetic expansion.
+
+Phase 1 — Seed analysis and taxonomy. Before generating anything, analyze the 200 examples to build an explicit taxonomy: what task types are present (extraction, summarization, classification, QA, generation), what sub-domains, what complexity levels. This taxonomy drives the generation prompts and ensures coverage rather than over-generating in a few common categories.
+
+Phase 2 — Evol-Instruct expansion. Use the 200 examples as seeds for Evol-Instruct: take each example and generate 3-5 evolved variants by adding constraints ("answer in one sentence"), increasing complexity ("now explain the underlying regulation, not just the answer"), or changing format ("rewrite as a structured JSON output"). This gives you roughly 800-1,000 examples with controlled quality — the evolved examples are grounded in your real data and vary in a structured way rather than randomly.
+
+Phase 3 — Self-Instruct generation with domain grounding. Prompt a strong model (GPT-4 or Claude Opus) with 8-example batches from your expanded seed and ask it to generate new domain-specific instructions and responses. Ground the generation by providing domain vocabulary, key entities, and common task patterns from your taxonomy. Generate until you have 5,000-10,000 candidates, then filter: use perplexity filtering to remove outliers, embedding-based deduplication to reduce redundancy, and a domain-specific validation check (ideally an SME reviews a random sample of 200 examples to estimate quality rate).
+
+Mitigation for model collapse: mix the 200 original real examples into every training batch at 20% weight regardless of how large the synthetic set grows. Run decontamination against any benchmarks you plan to evaluate on. Fine-tune in two stages — SFT on the full mixture, then KTO or DPO on a smaller set of preference-labeled examples from the 200 originals where you can generate alternative responses with the SFT model and have an SME label which is better.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q2. A startup wants to build a domain-specific coding assistant. They have a large unlabeled codebase but no Q&A pairs. How would you generate a fine-tuning dataset?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+An unlabeled codebase is highly structured — functions, classes, docstrings, test files, commit messages — which makes it amenable to multiple synthetic generation strategies simultaneously.
+
+Backtranslation on documented functions: for every function with a docstring or type annotation, generate the natural language question that the function answers. "What function would you use to paginate a list of database results with an offset and a page size?" → the function body is the answer. This immediately produces (question, code) pairs grounded in the real codebase. Functions without docstrings can be documented first by a code-summarization prompt, then backtranslated. Target functions across all modules to ensure task diversity.
+
+Test-driven QA generation: for functions covered by tests, extract the test cases and generate "explain what this code should do, given these test inputs and expected outputs" questions. The function implementation is the answer. This naturally produces a difficulty gradient: simple utility functions are easy questions, complex algorithmic functions are hard ones.
+
+Code completion and modification tasks: sample arbitrary code segments from the codebase and generate tasks of the form "add error handling to this function," "refactor this to be more efficient," or "write a unit test for this function." Use the actual codebase context so the generated tasks reference real variable names, real API calls, and real conventions from the codebase. This is especially valuable for ensuring the fine-tuned model uses the customer's internal APIs and naming conventions rather than generic patterns.
+
+Quality pipeline: for all generated examples, run the code through the project's test suite where applicable to verify it produces correct output. Filter examples where the generated code fails tests. Use pass@10 as a generation strategy: generate 10 variants per task and keep only those that pass. This automated quality signal is the strongest filtering mechanism available for code and eliminates the need for human review on the bulk of examples. Reserve human review for a 200-example validation sample to estimate overall dataset quality before committing to a training run.
+:::
+:::

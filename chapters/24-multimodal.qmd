@@ -1,0 +1,175 @@
+# Multimodal AI: Vision, Audio & Video {#sec-24}
+
+::: {.callout-note}
+**Who this chapter is for:** Entry / Mid / FDE
+**What you'll be able to answer after reading this:**
+
+- How vision-language models encode and process images before the LLM sees them
+- The CLIP training objective and why it aligns visual and language representations
+- Audio modality: cascade pipelines vs. native audio models and their tradeoffs
+- How video understanding scales and where current models hit limits
+- Multimodal RAG approaches including ColPali and when to use them
+- Practical cost and capability constraints of current vision APIs
+:::
+
+## The Shift to Multimodal
+
+Text-only LLMs treat all information as sequences of subword tokens. This works for written language but fails silently the moment meaningful information is encoded in an image, audio signal, or video. A contract with a table of figures, a spoken customer support call, a product photograph — none of these can be fully represented by asking a human to transcribe them into text first. The transcription loses layout, intonation, visual context, and temporal structure.
+
+Modern foundation models — GPT-4V/o, Claude 3.5+, Gemini 1.5 — have dissolved the modality boundary as a product baseline. Image understanding is now standard, not premium; audio and video capabilities are rapidly following. The architectural challenge this creates is non-trivial: images are grids of pixel intensities, audio is a waveform sampled at 16-44kHz, video is a temporal sequence of image frames with motion dynamics — all of these are fundamentally different signal types that must be projected into the same representation space as text tokens before a transformer can reason over them.
+
+This projection problem is where the interesting engineering lives. You cannot simply concatenate raw pixel values with text embeddings and expect the attention mechanism to figure out the alignment. The solution is modality-specific encoders that compress each signal into a sequence of dense vectors compatible with the LLM's token embedding space. How these encoders are designed, trained, and connected to the language backbone determines the quality of multimodal understanding.
+
+## Vision-Language Models (VLMs)
+
+The dominant VLM architecture has three components: a vision encoder, a projection layer, and the language model backbone.
+
+The **vision encoder** is typically a Vision Transformer (ViT). The input image is divided into a grid of non-overlapping patches (usually 14×14 or 16×16 pixels each). Each patch is flattened and linearly embedded into a dense vector — this is the "patch tokenization" step. A learnable [CLS] token is prepended to the sequence. The sequence of patch embeddings + CLS token is processed by transformer encoder layers with full self-attention. After encoding, each patch position produces a contextual representation that captures both local patch content and global image context through the attention mechanism. The CLS token aggregates global image information and is often used for image-level classification or retrieval tasks.
+
+The **projection layer** (also called an adapter or connector) bridges the dimension mismatch and representational gap between vision encoder outputs and LLM input space. In LLaVA-style architectures, this is a simple linear layer or two-layer MLP that maps each visual token from the ViT's output dimension (e.g., 1024) to the LLM's embedding dimension (e.g., 4096). Crucially, after projection, the visual tokens are concatenated with text tokens and fed jointly into the LLM — the LLM attends over both modalities in a unified sequence. More recent architectures use cross-attention connectors (like Flamingo's Perceiver Resampler) to compress the visual token sequence before passing it to the LLM, controlling token count.
+
+**Native image tokenization** — used in GPT-4o and some newer models — processes images directly as discrete tokens without a separate vision encoder pathway. Images are tiled into sub-images, each encoded into a fixed number of discrete visual tokens by a tokenizer trained jointly with the language model. This eliminates the architectural seam between vision and language paths and allows the model to be trained end-to-end from scratch on mixed image-text data, potentially learning better cross-modal representations. The cost is training complexity and the need for large-scale multimodal pretraining data.
+
+**CLIP (Contrastive Language-Image Pretraining)** trains a vision encoder and a text encoder jointly using contrastive loss on 400M+ image-text pairs from the web. For a batch of N image-text pairs, CLIP computes similarity scores between all N² combinations using the dot product of image and text embeddings. The loss maximizes similarity for the N true pairs and minimizes it for the N²-N incorrect pairs. After training, CLIP embeddings place semantically matching images and texts in nearby regions of the embedding space, enabling zero-shot image classification (compare image embedding to text embeddings for candidate class names) and image-text retrieval. Most VLMs use a pretrained CLIP ViT as the vision encoder rather than training one from scratch.
+
+A 224×224 image processed by a standard ViT produces approximately 256 visual tokens (14×14 grid). Higher-resolution images or multi-tile processing can produce 512–2048 visual tokens per image. At typical API token prices, a single high-resolution image adds hundreds of tokens of cost to every call.
+
+## Audio & Speech
+
+Audio modality in AI systems comes in two architectural forms: cascaded pipelines and native audio models.
+
+The **cascade pipeline** chains three separate models: a Speech-to-Text (STT) model transcribes audio to text, the LLM processes the text, and a Text-to-Speech (TTS) model converts the LLM output back to speech. Whisper is the dominant STT model. Whisper uses an encoder-decoder transformer architecture where the encoder processes log-mel spectrogram features of the audio (a frequency-domain representation computed in 25ms windows with 10ms hops) and the decoder autoregressively generates transcription tokens. Cascades are modular — each component can be swapped independently — and well-understood in production. The limitations are clear: transcription errors propagate and are unrecoverable downstream; prosody, emotion, accent, and non-verbal cues present in the audio are lost at the transcription step; and the three-model pipeline introduces additive latency.
+
+**Native audio models** — exemplified by GPT-4o's voice mode — process raw audio tokens directly in the same model that generates the text reasoning and output audio. Audio is tokenized (typically using a codec model like EnCodec) into discrete audio tokens, which are interleaved with text tokens in the model's context. The model reasons over audio content without first converting to text, preserving suprasegmental features like tone, emphasis, and pacing. The output can be generated as audio tokens directly, enabling low-latency streaming responses without a separate TTS step.
+
+The technical challenges of native audio are significant: audio token sequences are far longer than text (seconds of speech generates hundreds of tokens), the model must learn to align acoustic and semantic representations, and the training data requirements are orders of magnitude larger than text-only pretraining. **Voice activity detection (VAD)** — detecting when speech starts and stops in an audio stream — is a prerequisite for real-time voice interfaces and must be handled before audio tokens reach the model in streaming deployments. Streaming audio also requires careful buffering to accumulate enough audio context for accurate comprehension while maintaining low latency for the first response token.
+
+## Video Understanding
+
+Video is the hardest modality for current transformer-based models, primarily because of the token count explosion problem. One minute of video at 1 frame per second produces 60 frames; at common video resolutions, each frame encoded as visual tokens can produce 256–1024 tokens. One minute of video therefore generates 15,000–60,000 visual tokens before accounting for any audio. A 10-minute video consumes most or all of a standard model's context window, leaving little space for the query and response.
+
+The practical solution is **frame sampling**: rather than processing every frame, sample at a lower frequency (1 frame every 2-5 seconds) or use scene-change detection to sample keyframes. This loses temporal fine-detail but is essential for fitting long videos into context. Gemini 1.5 Pro's 1M-token context window enables processing longer videos without aggressive sampling, but this does not eliminate the fundamental tradeoff — it shifts it to higher cost per video query.
+
+**Temporal attention** is the mechanism by which video models reason about what changes over time, as distinct from spatial attention which reasons about content within a single frame. In a simple video transformer, temporal attention attends over the same spatial position across multiple frames, allowing the model to track objects and motion. Factorized spatial-temporal attention (attending spatially within frames, then temporally across frames) is more compute-efficient. Full 3D attention across all space-time positions is more expressive but quadratically expensive in both spatial resolution and temporal length.
+
+**Sora and DiT-based video generation** treat video as a sequence of spacetime patches — the same patch tokenization approach from ViT applied in 3D (height × width × time), enabling a unified transformer to model both spatial and temporal dependencies in a single attention operation. This architecture scales well with compute but requires massive training data and compute to learn physically plausible motion dynamics.
+
+## Multimodal RAG
+
+Retrieval-Augmented Generation for multimodal content presents a challenge that pure text RAG does not face: documents often contain information that is not preserved by standard text extraction. A PDF invoice contains a table where the column headers are visually aligned with values; extracting the raw text loses that spatial relationship. A technical slide deck contains diagrams where the visual arrangement conveys meaning that cannot be captured by alt-text.
+
+The traditional approach is OCR + text embedding: extract all text from images and PDFs using OCR, embed the extracted text, and retrieve via vector similarity. This works for text-dense documents but fails on: tables with complex structure, charts and graphs, handwritten text, and documents where the visual layout is semantically significant.
+
+**ColPali** (Contextual Late Interaction over PaliGemma) takes a fundamentally different approach: use a VLM directly to embed document pages as images, without OCR. Each page is encoded by the VLM into a set of patch-level visual embeddings. At retrieval time, the query (in text) is encoded by the same model's text encoder, and similarity is computed against the page-level visual embeddings using late interaction — the maximum similarity across patch embeddings for each query token, summed. This allows the query to attend to specific visual regions of the document rather than matching against a holistic page embedding. ColPali retrieves document pages that contain relevant visual content (tables, charts, annotated figures) with significantly higher accuracy than OCR + text embedding on visually complex documents.
+
+**Multi-vector retrieval for images** generalizes this: instead of a single embedding per image, store multiple patch-level or region-level embeddings and match queries against the most relevant region. This is more expensive in storage and retrieval compute but captures the spatial structure of images that single-vector approaches collapse.
+
+## Practical Considerations
+
+Vision token cost is the most commonly misunderstood expense in multimodal applications. Vision APIs charge for visual tokens at the same per-token rate as text tokens. A standard 512×512 image processed at low detail produces approximately 256 tokens. A high-resolution 2048×2048 image processed in tiled mode can produce 1,024–2,048 tokens. If your application processes 10,000 images per day and each image generates 1,024 tokens at $0.003/1K tokens, that is $30/day just in image processing costs — before the text of the prompt and response. Resolution management (sending the minimum resolution needed for the task) can reduce this by 4-8x.
+
+Current VLMs perform reliably on: object recognition, scene description, reading clearly printed text, basic diagram interpretation, and comparing two images. They perform unreliably on: precise spatial reasoning ("is the red object to the left or right of the blue object?"), counting objects beyond ~5, reading small or curved text in dense images, interpreting complex mathematical notation in images, and understanding fine-grained temporal ordering in image sequences. These limitations are important to communicate to customers building vision-based applications — pilot testing on representative real-world images before committing to a production architecture is essential.
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. How does a vision-language model process an image — what does the image actually look like to the LLM?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+An image never reaches the LLM as pixel data. Before the LLM sees anything, the image is processed by a vision encoder — typically a Vision Transformer (ViT) — which divides the image into a grid of small patches (e.g., 16×16 pixels each). Each patch is linearly embedded into a dense vector. The ViT processes these patch embeddings through transformer layers, producing a sequence of contextual vectors — one per patch — that capture both local patch content and global image context.
+
+These visual vectors are then passed through a projection layer (a small MLP) that transforms them into the same dimensional space as the LLM's text token embeddings. The result is a sequence of "visual tokens" — typically 256 to 2048 per image — that look like ordinary embedding vectors to the LLM.
+
+The LLM receives a mixed sequence: visual token embeddings followed by (or interleaved with) text token embeddings. It processes them all together with the same attention mechanism, attending across both visual and text tokens. So to the LLM, an image is just a dense sequence of learned representations in its embedding space — not pixels, not RGB values, but high-dimensional vectors that encode the visual content in a form the LLM was trained to reason over alongside text.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. What is CLIP and how is it trained?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+CLIP (Contrastive Language-Image Pretraining) is a model that learns to align images and text in a shared embedding space by training on 400 million image-text pairs collected from the internet. The training objective is contrastive: for a batch of N image-text pairs, CLIP computes embeddings for each image (via a vision encoder) and each text caption (via a text encoder). It then computes an N×N similarity matrix between all combinations of image and text embeddings.
+
+The loss function — InfoNCE or NT-Xent contrastive loss — tries to maximize the similarity between the N correct image-text pairs (the diagonal of the matrix) and minimize similarity between the N²-N incorrect pairings (every other combination). The model is trained until images and their matching captions have similar embeddings, and images paired with wrong captions have dissimilar embeddings.
+
+After training, CLIP embeddings are useful for: zero-shot image classification (compare the image embedding to text embeddings for class names like "a photo of a cat"), image-text retrieval, and as a pretrained vision encoder in VLMs like LLaVA. Most production vision-language models use a CLIP ViT as their vision backbone rather than training a vision encoder from scratch.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. What is the cost implication of sending a high-resolution image to a vision API?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Vision APIs charge for images in terms of tokens — the visual tokens generated by encoding the image — at the same per-token price as text. A low-resolution or low-detail image produces approximately 85-256 visual tokens. A high-resolution image processed in "high detail" mode is typically split into tiles, and each tile generates ~170 tokens, plus a base image fee. A 2048×2048 image processed at high detail can generate over 1,000 visual tokens.
+
+At typical API pricing (e.g., $0.003 per 1K tokens for a mid-tier model), 1,000 visual tokens per image costs $0.003. At scale — 10,000 image API calls per day — that is $30/day purely from image encoding, before prompt and response tokens.
+
+The practical implication: resize images to the minimum resolution needed for the task before sending them. For reading printed text, 512×512 is often sufficient. For counting fine-grained objects or reading small text, higher resolution is needed but should be used selectively. Applications that process large volumes of images should always profile actual token usage and test whether lower-resolution alternatives maintain acceptable task accuracy.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q1. Compare LLaVA-style architectures (separate vision encoder + projection layer) vs. native image tokenization.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+LLaVA-style architectures use a pretrained frozen or fine-tuned vision encoder (typically CLIP ViT) plus a learned projection layer (MLP) that maps visual representations into the LLM's embedding space. The LLM is separately pretrained on text and then fine-tuned on multimodal data with the visual tokens inserted into the token sequence. This modular design has a major advantage: you can swap in better vision encoders or language backbones independently, and the vision encoder benefits from pretrained CLIP representations out of the box. Training is relatively efficient because the vision encoder starts from a strong pretrained checkpoint. The limitation is the architectural seam: the projection layer must bridge a representational gap between a vision model trained with contrastive objectives and a language model trained with causal language modeling, and this gap can constrain the depth of visual-semantic integration.
+
+Native image tokenization (as in GPT-4o and some DALL-E-adjacent architectures) trains a unified model from scratch — or nearly from scratch — on mixed image-text data, where images are represented as discrete tokens from a visual tokenizer (often a VQ-VAE or codec-style tokenizer). There is no separate vision encoder; the main transformer handles all modalities in a unified token space. This enables deeper cross-modal integration because the model learns joint representations from the ground up, but it requires vastly more training data and compute, and it lacks the transfer learning benefit of pretrained CLIP encoders.
+
+For most teams building multimodal applications today, LLaVA-style APIs (Claude 3.5, GPT-4V) are the practical choice. Native tokenization is a research frontier with limited open-source options and very high training resource requirements.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q2. Explain the contrastive learning objective in CLIP and why it aligns vision and language embeddings.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+CLIP's contrastive objective works on batches of (image, text) pairs. Given a batch of N pairs, the image encoder produces N image embeddings and the text encoder produces N text embeddings. L2-normalized embeddings are used to compute an N×N cosine similarity matrix. The diagonal contains similarities between correct pairs; off-diagonal entries are similarities between mismatched images and captions.
+
+The InfoNCE loss treats each image as a query and asks: among all N text captions in the batch, can the model identify the one that matches this image? The loss is a cross-entropy loss where the correct text caption is the positive class and the remaining N-1 captions are negatives. The same loss is applied symmetrically for text queries. With large batch sizes (CLIP used up to 32,768 in the original training), there are many hard negatives — captions for visually similar images — which forces the model to learn fine-grained distinctions.
+
+Alignment emerges because the model has no option but to make correct pairs maximally similar and incorrect pairs minimally similar in the shared embedding space. After training at sufficient scale, the embedding space develops structure: images of cats are near text embeddings of "a photo of a cat," images of dogs are near "a photo of a dog," and the two clusters are distinct. This structure enables zero-shot transfer because the model has learned a general visual concept → language concept mapping, not just memorized specific image-caption pairs.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q3. What is ColPali and how does it change multimodal RAG compared to traditional OCR + text embedding?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Traditional multimodal RAG pipelines apply OCR to extract text from document images, embed the extracted text with a text embedding model, and retrieve documents via text-to-text vector similarity. This approach degrades on: tables where column-row relationships are spatially encoded, charts and graphs whose meaning is not captured by axis labels alone, documents where the visual layout (indentation, grouping, color) carries semantic information, and any image content (logos, diagrams, photographs) that OCR cannot extract.
+
+ColPali replaces OCR with direct visual encoding. It uses a VLM (PaliGemma) to encode document pages as images, producing a grid of patch-level embeddings — not a single page embedding, but one embedding per visual patch. At query time, the text query is encoded by the same model's text encoder, producing query token embeddings. Retrieval uses late interaction: for each query token, compute the maximum similarity score against all patch embeddings for a candidate page, then sum these maximum scores across all query tokens. This MaxSim aggregation allows each query token to identify the most relevant visual region of the page independently.
+
+The practical benefit: ColPali can match a query about "Q3 revenue figures" to a chart in a PDF slide even when the chart contains no extractable text other than axis labels, because the VLM understands the visual layout. Benchmark results on document retrieval tasks show ColPali outperforming OCR + text embedding by large margins on complex financial reports, academic papers with figures, and slide decks. The cost is higher storage (many patch embeddings per page vs. one text embedding) and slightly higher retrieval compute.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q1. A customer wants to build a system that answers questions about PDF invoices containing tables and graphs. Design the multimodal pipeline and discuss OCR vs. vision model tradeoffs.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I would propose two candidate architectures and recommend based on invoice complexity after a pilot.
+
+**Architecture A (OCR + structured extraction):** Use a PDF parsing library (pdfplumber or Azure Document Intelligence) to extract structured text and table data from invoices. For tables, the parser can identify row-column structure and output structured JSON. Text chunks are embedded and indexed in a vector store. At query time, retrieve relevant chunks and send to a standard LLM for answering. This works well when invoices are digitally created PDFs with consistent layouts. Cost is low; latency is fast; it is easy to debug because the extracted text is inspectable. Failure modes: scanned PDFs with low OCR quality, handwritten values, complex merged-cell tables, and invoices with embedded image charts (e.g., spending breakdown pie charts) that OCR cannot parse.
+
+**Architecture B (Vision model pipeline):** Render each PDF page as a high-resolution image (300 DPI PNG). Use a VLM (Claude 3.5 Sonnet or GPT-4o) to directly answer questions about the page or extract structured data (line items, totals, vendor name) as JSON. For retrieval at scale, index page images using ColPali for patch-level visual retrieval rather than OCR text. This handles complex tables, graphs, stamps, and scanned documents natively. Cost is 5-10x higher per page due to vision token pricing; latency is higher; debugging requires inspecting visual inputs, not just text.
+
+**My recommendation:** Start with OCR + Document Intelligence (Azure or AWS Textract). Measure extraction accuracy on a representative sample of 100 real customer invoices. Track where extraction fails (likely: merged cells, totals that span rows, non-standard layouts). For those failure cases, add a fallback vision model path that sends the problematic page image to a VLM for extraction. A hybrid pipeline — OCR fast path with VLM fallback — typically gives the best cost-accuracy balance. Reserve full ColPali-style visual retrieval for customers with large volumes of visually diverse, scanned documents.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q2. A customer asks whether to use cascaded STT+LLM+TTS vs. native audio models for their voice assistant — what are the key tradeoffs?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a maturity vs. capability tradeoff, and the right answer depends on the customer's primary pain point.
+
+**Cascade (STT → LLM → TTS)** is the production-proven path. Each component (Whisper or Deepgram for STT, GPT-4o or Claude for LLM, ElevenLabs or Azure Neural TTS) can be selected, swapped, scaled, and debugged independently. Transcripts are inspectable — if the LLM gives a wrong answer, you can check the STT output to see if the error was in transcription or reasoning. Error attribution is clean. Latency for a cascade is typically 800-2000ms from speech end to first speech output, which is acceptable for most voice assistants. The limitation is information loss at transcription: tone, emotion, accent, background noise context, and disfluencies are stripped before the LLM sees the input. This matters for sentiment-aware applications.
+
+**Native audio models (GPT-4o voice mode)** eliminate the transcription step and the information-loss boundary. The model hears the audio directly and can respond to tone, urgency, and non-verbal cues. Latency can be lower because there is no sequential pipeline; all three stages run in a unified model. The limitations are: lower reliability on complex reasoning tasks compared to text-only LLM backends, limited ability to substitute components (if GPT-4o voice is wrong, you cannot swap in a different STT model), and higher cost per minute of audio processing. It is also difficult to inject dynamic context (real-time data, RAG results) into the middle of a streaming audio exchange.
+
+**My recommendation for most customers:** Start with a cascade. It is easier to debug, easier to improve piece-by-piece (upgrade the TTS voice without touching the LLM), and the current native audio models are not significantly ahead of best-in-class cascades on reasoning-heavy tasks. Move to native audio when: the use case requires emotional intelligence (e.g., mental health support, sales coaching), when sub-500ms first-word latency is required, or when the customer's task profile is proven to hit OCR-equivalent information loss in transcription.
+:::
+:::

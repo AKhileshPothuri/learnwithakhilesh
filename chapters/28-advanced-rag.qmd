@@ -1,0 +1,218 @@
+# Advanced RAG Patterns {#sec-28}
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- Why GraphRAG outperforms vector search for cross-document and relationship queries
+- How agentic RAG, Self-RAG, and CRAG extend single-shot retrieval into multi-step reasoning loops
+- Which indexing strategies (parent-child, late chunking, contextual headers) improve precision without sacrificing recall
+- How to decompose multi-hop questions using IRCoT and RAPTOR
+- How to evaluate RAG systems using the RAGAS framework and separate retrieval quality from generation quality
+:::
+
+## GraphRAG: Retrieval over Knowledge Graphs
+
+Standard vector RAG retrieves the top-k most similar text chunks to a query and passes them to the model. This works well for localized, fact-lookup questions but breaks down the moment a question requires reasoning across documents or understanding relationships between entities. If you ask "Which of our clients had supply chain disruptions in Q3?" against a corpus of 500 reports, no single chunk contains the answer — the evidence is distributed across many documents.
+
+GraphRAG, developed by Microsoft Research and open-sourced in 2024, addresses this by transforming documents into a knowledge graph before retrieval. During ingestion, an LLM extracts entities (people, organizations, events, locations) and the relationships between them from every chunk. These entities and edges form a graph stored alongside the text. The result is a structured representation that preserves cross-document connections that would be invisible to embedding similarity.
+
+Retrieval in GraphRAG operates in two modes. **Local search** starts from a query entity, traverses its neighborhood in the graph — connected entities, relationships, and associated text — and constructs a context from that subgraph. This excels at entity-centric questions ("What do we know about Company X?"). **Global search** works differently: before any query, GraphRAG runs community detection using the Leiden algorithm, which partitions the graph into hierarchical communities of densely connected entities. Each community is summarized by an LLM into a multi-level hierarchy of summaries. When a global question arrives ("What are the main themes across all reports?"), the model answers from community summaries, not raw chunks. This is critical — raw chunks lack the abstraction needed to answer thematic questions.
+
+The cost model for GraphRAG is fundamentally different from standard RAG. Graph construction — entity extraction, relationship identification, community detection, summary generation — is an expensive ingest-time operation that can cost 10-100x more than standard chunking. However, it is a one-time cost paid per corpus update, not per query. At query time, global search queries community summaries, which are already pre-generated. The tradeoff is clear: higher ingest cost in exchange for qualitatively better answers on cross-document and relational queries. GraphRAG is not a replacement for standard RAG — it is the right choice when your query distribution contains thematic or multi-entity questions that span the corpus.
+
+## Agentic RAG: Retrieval as a Decision
+
+Standard RAG is a fixed pipeline: retrieve-then-generate, once, unconditionally. Agentic RAG replaces the fixed pipeline with a reasoning loop. The LLM decides *whether* to retrieve, *what* to retrieve, and *when* to stop. This is implemented as a ReAct loop where retrieval is one of several available tools. The agent can call the retrieval tool multiple times in sequence, using the output of one retrieval to formulate the next query — a pattern called **multi-step retrieval**.
+
+**Self-RAG** takes this a step further by embedding retrieval decisions into the generation process itself. The model generates special reflection tokens during inference: `[Retrieve]` signals a need to retrieve before continuing; `[IsREL]` evaluates whether a retrieved document is relevant to the query; `[IsSUP]` assesses whether the model's generated claim is supported by the retrieved evidence; `[IsUSE]` judges whether the overall response is useful. These tokens are trained, not prompted — Self-RAG is a fine-tuned model variant that has learned to introspect on its retrieval needs and output quality. The practical effect is a model that skips retrieval on questions it can answer from parametric knowledge and critiques the relevance of what it retrieves before using it.
+
+**CRAG (Corrective RAG)** adds a quality gate to the retrieval step. After retrieval, a lightweight evaluator model (fine-tuned for this purpose) scores the relevance of retrieved documents. If the score is high, CRAG proceeds normally. If the score is low (ambiguous retrieval), CRAG triggers a corrective action — typically a web search to supplement the low-quality local retrieval. This makes CRAG robust to sparse knowledge bases where the local corpus does not cover a question. The implementation architecture involves three components: the retriever, the evaluator, and the knowledge refiner that integrates web results when needed.
+
+## Multi-Hop and Reasoning-Intensive RAG
+
+Multi-hop questions require chaining evidence across multiple retrieval steps. "Who are the main investors in the company that acquired Startup X?" requires first retrieving who acquired Startup X, then retrieving the investors of that acquirer. Standard single-shot retrieval returns chunks related to Startup X, which may not contain investor information.
+
+**Query decomposition** is the foundational technique: decompose the complex question into a directed acyclic graph of sub-questions. Each sub-question is answered independently through retrieval, and the sub-answers are assembled into the final answer. Decomposition can be sequential (later questions depend on earlier answers) or parallel (independent sub-questions answered simultaneously). The critical challenge is generating high-quality decompositions — poorly decomposed questions lead to irrelevant sub-retrievals.
+
+**IRCoT (Interleaved Retrieval with Chain-of-Thought)** addresses decomposition implicitly by alternating between reasoning steps and retrieval steps. The model generates one chain-of-thought step, identifies what information is needed to continue reasoning, retrieves it, incorporates the retrieved content into context, and continues the reasoning chain. This produces a tightly coupled reasoning-retrieval loop that handles multi-hop questions without requiring explicit upfront decomposition.
+
+**RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval)** takes a corpus-level approach. Starting from raw document chunks (leaf nodes), RAPTOR clusters semantically similar chunks, summarizes each cluster with an LLM, and recursively clusters and summarizes the summaries until a single root summary exists. The result is a tree of abstractions at multiple granularities. At query time, retrieval can operate at any level of the tree: fine-grained for specific fact lookups, coarse-grained for thematic questions. This is architecturally similar to GraphRAG's global search but does not require entity extraction — it works on any text and is cheaper to build, at the cost of losing explicit relationship information.
+
+## Indexing Strategies That Change Retrieval Quality
+
+The chunking strategy used at ingest time determines the ceiling of retrieval quality. Most production RAG failures are chunking failures, not model failures.
+
+**Parent-child chunking** separates indexing from context delivery. Small child chunks (100-150 tokens) are embedded and indexed — their granularity improves retrieval precision, as the embedding more closely captures the semantic meaning of a specific claim. When a child chunk is retrieved, the system returns its parent chunk (500-1000 tokens) to the LLM, providing the surrounding context needed for coherent generation. This decouples the chunk size used for retrieval from the chunk size used for generation, solving the classic tension between precision (small chunks) and coherence (large chunks).
+
+**Sentence window retrieval** applies the same principle at the sentence level. Individual sentences are embedded and retrieved. When a matching sentence is found, a window of sentences surrounding it (e.g., the 2 sentences before and after) is passed to the model. This is especially effective for dense technical documents where each sentence encodes a distinct claim.
+
+**Late chunking** is a newer approach that exploits long-context embedding models. Instead of chunking the document first and then embedding each chunk independently, late chunking embeds the entire document (or a long passage) as a sequence of token-level embeddings using a model like JinaAI's long-context embedder. The chunk-level embeddings are then derived from the token embeddings, preserving cross-chunk context in the embeddings. This is theoretically superior to standard chunking because each chunk's embedding reflects its surrounding context.
+
+**Contextual chunk headers** are a simpler but highly effective technique. Before embedding a chunk, prepend a structured header containing the document title, section heading, and optionally a one-sentence document summary. This solves the decontextualization problem: a chunk reading "The dosage is 10mg twice daily" is meaningless without knowing it comes from a specific drug's prescribing guidelines. Adding that context to the chunk before embedding anchors the semantic meaning. Anthropic's contextual retrieval work (2024) demonstrated meaningful improvements in retrieval recall by prepending model-generated context summaries to each chunk.
+
+## Evaluation of RAG Systems
+
+RAG systems have two independent quality axes that must be evaluated separately: retrieval quality and generation quality. Conflating them is the most common evaluation mistake. A system can have excellent retrieval and poor generation (the LLM ignores or misuses retrieved evidence), or poor retrieval and accidentally correct generation (the model answers from parametric knowledge despite retrieving irrelevant chunks). Only by evaluating each axis separately can you diagnose and fix the right component.
+
+**RAGAS** (Retrieval Augmented Generation Assessment) is the standard evaluation framework. It computes four metrics given a question, ground-truth answer, LLM answer, and retrieved contexts. **Faithfulness** measures whether every claim in the LLM's answer is supported by the retrieved context — computed by extracting claims from the answer and checking each against the context using an LLM judge. **Answer Relevance** measures whether the answer actually addresses the question, ignoring factual correctness. **Context Precision** measures whether the retrieved chunks are relevant to the question (signal-to-noise ratio of retrieval). **Context Recall** measures whether the retrieved chunks contain all the information needed to answer the question.
+
+Production monitoring requires distinguishing online and offline metrics. Offline: RAGAS scores on a curated test set, run on every pipeline change. Online: retrieval latency (p50/p95), reranker latency, end-to-end latency, cost per query, user satisfaction signals (thumbs up/down, follow-up question rate as a proxy for answer completeness). A degraded context precision score in offline eval tells you your retriever is returning noise — you should inspect your chunking, embedding model, or retrieval threshold. A degraded faithfulness score tells you the LLM is hallucinating beyond retrieved context — check your prompt's instructions to stay grounded and consider reducing temperature.
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. What problem does GraphRAG solve that standard vector RAG cannot?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Standard vector RAG retrieves the most similar text chunks to a query by embedding similarity. This works for localized fact-lookup questions where the answer lives in a single chunk, but fails when the answer requires reasoning across multiple documents or understanding relationships between entities.
+
+GraphRAG solves this by building a knowledge graph from the corpus during ingest: entities are extracted, relationships are identified, and a graph structure is created. For global questions like "what are the main themes across all reports?" GraphRAG uses the Leiden community detection algorithm to partition the graph into communities of related entities, then pre-generates hierarchical summaries of each community. At query time, these summaries — not raw chunks — are used to answer thematic questions. This is fundamentally impossible with vector search alone, because no single chunk in any document contains a thematic synthesis.
+
+The practical implication: if your query distribution includes cross-document questions, relationship queries, or thematic analysis, GraphRAG is necessary. If queries are mostly factual lookups into a single document, standard RAG is cheaper and sufficient. GraphRAG has a significant ingest cost — graph construction and summary generation — but this is paid once, not per query.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. What is agentic RAG and how does it differ from standard RAG?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Standard RAG is a fixed, linear pipeline: receive query → retrieve once → generate answer. The retrieval step always happens, always happens once, and the model has no control over it.
+
+Agentic RAG replaces this fixed pipeline with a reasoning loop. The LLM is given retrieval as a tool and decides dynamically: Should I retrieve? What should I search for? Is the retrieved information sufficient, or should I retrieve again? This is typically implemented as a ReAct (Reasoning + Acting) loop where the model can call the retrieval tool multiple times, using the result of one retrieval to formulate a more targeted follow-up query.
+
+The key difference is control and adaptability. Standard RAG always retrieves, regardless of whether retrieval helps. Agentic RAG can skip retrieval for questions the model can answer from its parametric knowledge, and can perform multi-step retrieval for complex questions that require chaining evidence. Self-RAG extends this further by training the model to generate special tokens that reflect on retrieval need and output quality during generation itself — making the retrieval decision intrinsic to the generation process rather than implemented as an external control flow.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. What is parent-child chunking and why does it improve retrieval?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Parent-child chunking is an indexing strategy that separates the chunk size used for retrieval from the chunk size passed to the LLM for generation.
+
+Small child chunks (100-150 tokens) are embedded and stored in the vector index. Their small size means the embedding captures the semantic content of a specific claim with high precision — the query vector will closely match the relevant child chunk. However, small chunks lack surrounding context and read awkwardly in isolation.
+
+When a child chunk is retrieved, the system returns its parent chunk (the larger surrounding passage, typically 500-1000 tokens) to the LLM. The parent provides the context needed for coherent generation without sacrificing retrieval precision.
+
+This solves the fundamental tension in RAG chunking: small chunks improve retrieval precision but hurt generation quality; large chunks hurt precision but improve generation coherence. Parent-child chunking gets both by decoupling the two phases. The practical gain is meaningful — reducing chunk size from 1000 tokens to 150 tokens for indexing purposes typically improves retrieval recall while the larger context window still allows coherent answer generation.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q1. Walk through the GraphRAG pipeline from document ingestion to query answering.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Ingest phase:**
+
+1. Documents are chunked into passages (GraphRAG uses larger chunks, ~600 tokens, because the LLM needs sufficient context for entity extraction).
+2. For each chunk, an LLM extracts a structured list of entities (name, type, description) and relationships (source entity, target entity, relationship description, strength).
+3. Entities and relationships are merged across chunks — the same entity appearing in 50 documents is consolidated into a single graph node with all descriptions aggregated.
+4. The Leiden community detection algorithm partitions the entity graph into hierarchically nested communities. Leiden is preferred over Louvain because it guarantees well-connected communities.
+5. For each community at each level of the hierarchy, an LLM generates a summary report covering key entities, relationships, and themes within that community. These summaries are stored.
+
+**Query phase — Local search:**
+The query is mapped to relevant entities via embedding similarity. The system pulls the entity's descriptions, its direct relationships, neighboring entities, and associated text chunks. These are assembled into a context and passed to the LLM.
+
+**Query phase — Global search:**
+The query is sent to all community summaries at a chosen hierarchy level. Each summary is scored for relevance to the query, and the top summaries are assembled into the final context. The LLM synthesizes the answer from community summaries rather than raw chunks. This enables thematic answers that span the entire corpus.
+
+The key architectural insight is that all expensive LLM calls happen at ingest time. Query-time cost is comparable to standard RAG.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q2. Explain Self-RAG — how does the model decide whether to retrieve?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Self-RAG is a fine-tuned model variant, not a prompting technique. The training process teaches the model to generate special reflection tokens interspersed with normal generation:
+
+- `[Retrieve]` / `[No Retrieve]` — generated after seeing the input question. The model learns to predict whether retrieval would help based on question type.
+- `[IsREL]` — generated after seeing a retrieved document. Classifies the document as relevant or irrelevant to the query.
+- `[IsSUP]` — generated after each claim in the response. Indicates whether the claim is fully supported, partially supported, or contradicted by the retrieved evidence.
+- `[IsUSE]` — generated at the end of the response. Overall usefulness rating on a 1-5 scale.
+
+The model is trained on data where these tokens are labeled by a separate critic model. At training time, the model learns to internalize these judgments.
+
+At inference time, the `[Retrieve]` token triggers an actual retrieval call — the generation is paused, the retrieval engine is called, and the retrieved documents are inserted into the context. The model then generates `[IsREL]` to evaluate what it just retrieved. If marked irrelevant, the model can proceed without using the retrieved content.
+
+The critical advantage over external retrieval decisions is that Self-RAG's retrieval decisions are conditioned on the full generation context — the model knows what it has already generated and what it needs next. This is more accurate than a router that sees only the original query. The downside is that Self-RAG requires a specially fine-tuned model; you cannot apply it to any off-the-shelf LLM.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q3. Compare RAPTOR vs. GraphRAG for handling large document collections.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Both RAPTOR and GraphRAG build higher-level abstractions over raw documents to enable multi-document reasoning, but their approaches differ fundamentally.
+
+**RAPTOR** works bottom-up through recursive summarization. It clusters semantically similar chunks (using Gaussian mixture models in the original paper), summarizes each cluster, then clusters and summarizes the summaries recursively. The result is a tree of abstractions with raw chunks at the leaves and a root summary at the top. Retrieval searches nodes at all levels of the tree, with coarser nodes answering thematic questions and finer nodes answering specific factual queries.
+
+**GraphRAG** works by making structure explicit. It extracts entities and relationships, building a graph with typed nodes and edges. Community detection creates the hierarchical structure. Summaries are generated per community, not per arbitrary cluster.
+
+**Practical differences:**
+
+- **Ingest cost:** RAPTOR is cheaper — clustering and summarization do not require entity extraction. GraphRAG requires many LLM calls for extraction.
+- **Query types:** GraphRAG has a clear advantage for relationship queries ("how is entity A connected to entity B?") because relationships are explicit. RAPTOR has no relationship structure.
+- **Domain generality:** RAPTOR works on any text. GraphRAG is most effective on entity-rich domains (business reports, scientific literature, legal documents).
+- **Explainability:** GraphRAG's graph structure is inspectable — you can visualize which communities contributed to an answer. RAPTOR's cluster membership is less interpretable.
+
+In practice, GraphRAG wins for entity-relationship queries; RAPTOR is sufficient for thematic summarization and costs less to build.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q1. A consulting firm needs to answer questions that span multiple client reports, like "which clients had supply chain issues?" Design the RAG architecture.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This query is a canonical cross-document aggregation problem that standard RAG cannot solve. The answer requires scanning all client reports, identifying supply chain issue mentions, and aggregating by client. No single chunk will contain this answer.
+
+**Architecture recommendation: GraphRAG with metadata filtering**
+
+**Ingest design:**
+- Each client report is a separate document with metadata (client name, date, report type) stored alongside the graph.
+- During entity extraction, configure the entity types to include: Organization, Issue, Event, TimeperiodKeyword extraction should capture "supply chain," "logistics disruption," "inventory shortage," etc.
+- After graph construction, community summaries will naturally group clients with similar issue profiles.
+
+**Query execution:**
+- Parse the incoming query to identify it as a global/aggregation query (not entity-lookup).
+- Run global search against community summaries filtered by "supply chain" concepts.
+- If the community summaries include client-level metadata, the response will enumerate affected clients with supporting evidence.
+
+**Hybrid enhancement:**
+- Layer metadata filtering: maintain a structured index (not just vector) with document-level metadata including client ID, date, and extracted topic tags.
+- For queries like "which clients had X," first retrieve documents tagged with the relevant topic, then run targeted extraction within those documents.
+
+**Guardrails for production:**
+- Per-client access control via metadata filtering — consultants should only see their own clients' data.
+- Citation tracking: every claim in the answer should trace back to a specific document section.
+- Confidence scoring: when the model synthesizes across reports, flag the response as aggregated inference, not direct quote.
+
+Estimated ingest cost: 5-10x standard RAG. Retrieval time: comparable. Correctness on cross-client queries: significantly better than vector search.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q2. A customer's RAG system answers simple factual questions well but fails on multi-step analytical questions. What pattern would you introduce?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Failing on multi-step analytical questions with a standard RAG system is expected — the pipeline is not architected for it. The fix requires introducing reasoning-coupled retrieval.
+
+**Step 1: Diagnose the failure mode.**
+Multi-step failure can come from two places: the query requires evidence from multiple documents (multi-hop), or the question requires analytical reasoning over retrieved evidence (reasoning gap). Pull 20 failing queries and categorize them. This determines which pattern to apply.
+
+**Step 2: For multi-hop evidence gaps — introduce IRCoT.**
+Implement Interleaved Retrieval with Chain-of-Thought. Instead of one retrieval call, the agent generates one reasoning step, identifies what it needs next, retrieves it, and continues. Implementation: wrap the LLM call in a ReAct loop with a retrieval tool. The prompt should instruct the model to reason step-by-step and explicitly call the retrieval tool when it needs information to continue.
+
+**Step 3: For thematic analytical questions — add RAPTOR or GraphRAG summaries.**
+If the multi-step questions are aggregative ("summarize the key trends"), the system needs pre-built abstractions. Layer in RAPTOR tree indexing over the existing corpus so the model can retrieve at the right level of abstraction.
+
+**Step 4: Query decomposition as a preprocessing step.**
+Before any retrieval, route complex questions through a decomposition step: a cheap LLM call that breaks the question into sub-questions. Each sub-question is answered independently via the existing RAG pipeline, and a synthesis step combines the sub-answers.
+
+**Step 5: Validate with RAGAS.**
+Measure context recall before and after changes — multi-step failures usually manifest as low context recall (needed information not retrieved), not low faithfulness. Track that metric specifically to confirm the fix is working.
+
+Start with IRCoT — it is the lowest-complexity intervention and handles the majority of multi-hop cases without requiring corpus re-indexing.
+:::
+:::

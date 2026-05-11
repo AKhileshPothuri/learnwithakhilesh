@@ -1,0 +1,152 @@
+# Mixture of Experts (MoE) {#sec-19}
+
+::: {.callout-note}
+**Who this chapter is for:** Mid / FDE
+**What you'll be able to answer after reading this:**
+
+- How sparse MoE routing works and why it achieves high capacity with controlled compute
+- The distinction between total parameters and active parameters, and why both matter
+- Why expert collapse happens and what mechanisms prevent it
+- How MoE models behave differently from dense models during fine-tuning and deployment
+- The infrastructure tradeoffs for self-hosting MoE models at production scale
+:::
+
+## How MoE Works
+
+A Mixture of Experts model replaces the feed-forward network (FFN) sublayer inside each transformer block with a bank of E parallel expert FFNs, plus a gating network that routes each token to only the top-k experts. The critical word is "only": in a dense model, every token activates all the parameters of the FFN. In a sparse MoE, a token with k=2 activates exactly 2 of the E experts, regardless of how large E is. This is sparse activation — the mechanism that decouples total parameter count (all experts combined) from active parameter count (the k experts used per token), and it is the source of every MoE tradeoff that follows.
+
+The gating network is a small learned linear layer followed by a softmax. For each token's hidden state h ∈ ℝ^d, the router computes logits g = Wh where W ∈ ℝ^{E×d}, applies softmax to produce routing probabilities, selects the top-k expert indices, and routes h to those experts with their corresponding softmax weights as scaling coefficients. The output of the MoE layer is the weighted sum of the selected experts' outputs. The router is tiny — for a model with hidden dimension 4096 and 8 experts, W has about 32K parameters, negligible compared to the expert FFNs themselves. The gating computation adds almost no FLOP cost; the bottleneck is the expert FFN computations and, at scale, the communication needed to dispatch tokens to the right experts.
+
+Expert capacity is a practical constraint in batched execution. If you have 8 experts and 800 tokens in a batch, perfect load balancing means each expert processes 100 tokens. But expert capacity sets a maximum: tokens in excess of that limit are dropped (their contribution to the output is zeroed or they fall back to a residual). The capacity factor CF scales this limit — a CF of 1.25 means each expert can process up to 125 tokens (25% overage). Setting CF too low means dropped tokens and quality degradation; setting it too high means wasted GPU memory allocation. The ideal scenario is that tokens distribute uniformly enough that capacity is rarely hit. In practice, routing tends to cluster, which is why load balancing mechanisms are so important.
+
+Dense versus sparse MoE represents a fundamental design axis. A dense MoE would compute all experts and sum their weighted outputs — identical parameter count and identical FLOP cost to a model with one large FFN per layer. No sparse MoE benefit. Sparse MoE introduces the sparsity during both forward pass and training: gradients only flow through the selected experts for each token, meaning experts not selected for a token do not receive gradient updates from that token. This is good for specialization — experts can diverge in function — and it creates the load balancing problem, since experts that are never routed to never improve, which makes them less likely to be selected, which reinforces the collapse.
+
+The architecture replacement is straightforward: in each transformer layer where you want MoE, the single FFN of dimension d → 4d → d (for a typical 4x expansion) is replaced by E experts each of identical structure. The rest of the transformer block — the self-attention sublayer, the residual connections, the layer normalizations — is unchanged. In Mixtral-8x7B, every other layer uses MoE while the alternating layers use dense FFN, but this is a design choice rather than a requirement. Interleaving dense and sparse layers reduces communication overhead and the number of distinct expert sets the infrastructure must manage.
+
+## Router Design & Load Balancing
+
+Top-1 routing (select one expert per token) and top-2 routing (select two) have meaningfully different properties. Top-1 maximizes sparsity — only one expert's computation is triggered — but produces high variance in routing decisions; a small perturbation in the hidden state can flip which expert is selected, making training less stable. Top-2 routing provides a weighted blend of two experts, which smooths gradients and generally produces better quality at the cost of doubled expert computation per token. Nearly all competitive MoE models use top-2. Some research has explored top-k with k > 2, but the quality gains beyond k=2 are typically marginal relative to the compute cost.
+
+Expert collapse is the dominant failure mode of MoE training without intervention. Without any load balancing pressure, the gating network converges to routing most or all tokens to a small subset of experts — sometimes just one. The dynamic is self-reinforcing: a slightly stronger expert receives more gradient signal, becomes better, is routed to more frequently, receives more gradient, becomes better still. The remaining experts starve and become useless. When collapse occurs, the MoE behaves like a model with far fewer actual experts, losing all the capacity benefits of the architecture. Detecting collapse is straightforward: monitor the fraction of tokens routed to each expert; a healthy model shows roughly uniform distribution with standard deviation well below the mean. Collapsed routing shows one or two experts handling 80%+ of traffic.
+
+The standard fix for expert collapse is an auxiliary load balancing loss added to the training objective. The most common formulation (from the original Switch Transformer paper) penalizes the squared coefficient of variation of expert load: L_aux = α × E × Σ_i (f_i × p_i), where f_i is the fraction of tokens routed to expert i and p_i is the mean routing probability toward expert i. This loss is differentiable with respect to the routing probabilities, so it pushes the router toward uniform load distribution. The coefficient α controls the strength: too small and it fails to prevent collapse; too large and it overrides the task objective, degrading quality because the router is forced to be uniform rather than informative. Typical values range from 0.01 to 0.001. The loss is applied during training only — at inference, you route normally without the auxiliary signal.
+
+Expert choice routing inverts the standard setup. Rather than each token choosing its top-k experts, each expert selects its top-k tokens from the batch. This guarantees perfect load balance by construction: every expert processes exactly k tokens. The drawback is that tokens may not be processed by any expert at all if they are not in any expert's top-k — you need a fallback path or must ensure k × E ≥ T where T is the number of tokens. Expert choice also complicates batching: the selection is global across the batch, requiring knowledge of all tokens before routing decisions can be made. DeepSeek V2 and V3 introduced an auxiliary-loss-free approach to load balancing by adding per-expert bias terms to the routing logits: if an expert is overloaded in recent steps, its bias is decreased, reducing its routing probability until load normalizes. This avoids the quality degradation from the auxiliary loss while still preventing collapse, though it requires careful bias update scheduling.
+
+Token dropping behavior at capacity deserves practical attention. When expert capacity is exceeded, dropped tokens still flow through the residual connection — their hidden state passes through unchanged, missing the FFN transformation entirely. For a few tokens per batch, this is inconsequential. For systematic overload (e.g., all the tokens from long documents routing to the same expert), dropped tokens can create significant quality degradation for specific input types. Monitoring expert utilization and the token drop rate during training and evaluation is important. Increasing capacity factor (CF) is the simplest mitigation, at the cost of more memory allocation. Alternatively, auxiliary loss tuning can reduce peak load variance.
+
+## MoE in Production
+
+The memory versus compute tradeoff in MoE is the defining infrastructure constraint. Because the gating network might route any token to any expert during any forward pass, all experts must be loaded into GPU memory simultaneously — you cannot load experts on demand at inference time without millisecond-level latency spikes. For Mixtral-8x7B: the model has 46.7B total parameters but only 12.9B active per token (since each token activates 2 of 8 experts in each MoE layer). The FLOP count per token is comparable to a 12-13B dense model. But the memory requirement is that of a 47B model, not a 13B model. To serve Mixtral-8x7B in FP16, you need approximately 93GB of GPU memory just for weights — three A100 40GB GPUs at minimum, or two A100 80GB GPUs.
+
+Expert parallelism is the standard parallelism strategy for MoE at scale. In expert parallelism, different GPUs host different experts. When the router assigns tokens to experts, tokens must be sent to the GPU hosting the target expert — this requires all-to-all communication across the GPU group hosting the MoE layer. All-to-all communication is expensive: bandwidth requirements scale with the number of experts and the batch size, and it cannot be overlapped with computation as easily as tensor parallel communication. At small batch sizes (single-user inference), all-to-all overhead is small relative to computation. At large batch sizes (throughput-optimized serving), the all-to-all overhead can consume a significant fraction of the total step time. Expert parallelism is typically combined with tensor parallelism on each expert: each expert is itself split across multiple GPUs, reducing per-GPU memory requirements and mitigating the communication cost somewhat.
+
+Mixtral-8x7B provides a concrete example of MoE production characteristics. With 8 experts and k=2 routing, each token activates 2 experts per MoE layer. The 32 transformer layers alternate between dense attention and MoE-FFN layers. The active parameter count of ~12.9B explains the throughput: tokens per second for Mixtral-8x7B on a given hardware configuration is similar to Llama-2-13B, which has 13B total and active parameters. But the model quality — as measured by benchmark performance — is significantly higher than Llama-2-13B, because the 47B capacity provides representational richness that the 13B model cannot match even at equal FLOP cost. The 4× quality-per-FLOP advantage is not universal (it depends on task complexity and domain) but is the core argument for MoE architectures.
+
+Communication overhead with expert parallelism means MoE latency at small batch sizes can actually exceed that of an equivalent-FLOP dense model on the same hardware. Dispatching tokens, doing all-to-all, computing expert FFNs, doing another all-to-all to collect results, and then continuing the forward pass adds multiple communication round trips per MoE layer. For a real-time interactive application on a single user's query (small batch, low latency requirement), a dense model running on fewer GPUs is often faster end-to-end than a MoE on a larger GPU cluster. MoE's throughput advantage becomes pronounced in batch inference scenarios where many sequences are processed simultaneously and the per-token communication cost amortizes across a large batch.
+
+## Fine-Tuning MoE Models
+
+Fine-tuning a MoE model requires understanding what fine-tuning will actually change. With standard supervised fine-tuning, all parameters — the attention layers, the router weights, and all expert FFN weights — are updated. The risk is that fine-tuning on a small dataset can disrupt the routing patterns the model has learned during pretraining. Expert specialization is a learned emergent property: different experts have developed affinity for different types of content (code, reasoning, languages, factual recall). Fine-tuning on a narrow dataset can collapse this specialization, causing previously well-distributed routing to degenerate. Monitoring the expert utilization distribution throughout fine-tuning is important — if you see routing collapsing, reduce learning rate or freeze router weights.
+
+Freezing the router during fine-tuning is a viable strategy when you want to preserve routing structure while adapting expert content. With frozen router, the expert FFNs receive gradient updates through the same tokens they would have during pretraining routing, preserving the specialization structure. The downside is that if your fine-tuning data has a very different token distribution from pretraining, the fixed routing may be suboptimal. A middle path: use a much smaller learning rate for router weights than for expert FFN weights, allowing gradual adjustment rather than rapid disruption.
+
+LoRA applied to MoE models follows the same mechanics as dense models, but the target layer selection requires more care. Applying LoRA adapters to every expert in every MoE layer is parameter-expensive: for Mixtral-8x7B with 8 experts per MoE layer and 32 layers, targeting expert FFN weights means 8× more LoRA adapters compared to a dense 7B model with equivalent architecture depth. Practitioners typically choose between two strategies: apply LoRA to expert FFNs only (adapting the knowledge-storage capacity), or apply LoRA to attention layers only (adapting reasoning and retrieval patterns while leaving expert content unchanged). For task-specific fine-tuning (instruction following, tool use), attention-layer LoRA is usually sufficient. For domain adaptation (legal, medical, scientific), including expert FFN LoRA improves results because domain knowledge is encoded in the FFN layers. The router itself rarely needs LoRA — its capacity is small and it adapts adequately with standard gradient updates at a low learning rate.
+
+Expert specialization patterns that emerge from pretraining are measurable and informative for debugging. You can profile which expert each token activates across a validation set and observe clustering: certain experts concentrate on code tokens, others on multilingual content, others on numerical reasoning. These clusters are stable and transfer to fine-tuned versions of the model when fine-tuning is done carefully. When specialization patterns collapse under fine-tuning (measured as increased routing entropy or clustering coefficient), it is almost always a sign of too-high learning rate on the router, fine-tuning data that is out-of-distribution relative to pretraining, or insufficient load balancing auxiliary loss during the fine-tuning run.
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. What is Mixture of Experts and how does it differ from a dense model?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A Mixture of Experts (MoE) model replaces the feed-forward network sublayer in a transformer with a bank of multiple expert FFNs and a gating network that routes each token to only a subset — typically the top 2. A dense model activates all parameters for every token; a sparse MoE model activates only the k selected experts per token, leaving the rest of the parameters untouched.
+
+The result is a model that has a large total parameter count (all experts summed) but a much smaller active parameter count per token (only k experts). Mixtral-8x7B has ~47B total parameters but only ~12.9B active per token. This means the FLOP cost per token is similar to a 13B dense model, but the model has access to 47B worth of stored capacity — different experts can specialize in different types of knowledge or processing, giving the model higher quality at the same inference cost. The tradeoff is that all experts must reside in memory simultaneously, even though most are idle per token, so GPU memory requirements correspond to the full 47B, not the active 13B.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. Why does a 47B MoE model run with similar FLOPS to a 12B dense model?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+FLOPs scale with the number of multiplications and additions performed during the forward pass, which corresponds to the parameters that are actually activated and computed — not the parameters that are sitting in memory unused. In Mixtral-8x7B, each transformer token activates 2 of 8 experts per MoE layer. Each expert has the same FFN structure as a ~1.5B-parameter model's FFN block. Two active experts therefore contribute roughly the same computation as one larger FFN in a ~3B-parameter model per MoE layer.
+
+When you add up the attention layers (which are dense and equal in both models) plus the active expert FFN layers across all 32 transformer blocks, the total FLOP count per token is approximately equivalent to running a 12-13B dense model. The 47B total parameters are partitioned across 8 experts per layer; only 25% (2/8) of those FFN parameters do any computation for any given token. The other 75% consume memory and do nothing for that token, which is the fundamental memory-compute tradeoff of sparse MoE.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. What is "expert collapse" and how is it prevented?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Expert collapse is when the gating network in a MoE model converges to routing most or all tokens to the same one or two experts, effectively ignoring the rest. It happens because training is self-reinforcing: an expert that happens to be slightly better gets routed to more often, receives more gradient updates, gets better, receives even more traffic, and so on. The unused experts receive no gradients and stagnate. The result is a model that behaves like it has only 1-2 experts despite having 8, wasting the capacity and quality advantage that MoE was designed to provide.
+
+The primary prevention mechanism is an auxiliary load balancing loss added during training. This differentiable penalty term measures the unevenness of token distribution across experts and adds it to the training objective, pushing the router toward uniform load. The coefficient on this loss is a hyperparameter — too small and collapse still occurs; too large and the router is forced to be uniform even when it should be selective, hurting quality. A complementary approach used by DeepSeek is per-expert bias terms in the routing logits: overloaded experts have their bias decreased dynamically, reducing their selection probability until load balances, without requiring an auxiliary loss term in the objective.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q4. Walk through the routing mechanism in detail — how does a token get assigned to experts?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The routing mechanism begins with the token's hidden state h ∈ ℝ^d after the attention sublayer. The router is a linear projection W ∈ ℝ^{E×d} that maps h to E scalar logits, one per expert. These logits pass through a softmax to produce routing probabilities p ∈ ℝ^E where p_i represents the router's confidence in sending this token to expert i.
+
+The top-k selection takes the k highest-probability experts (typically k=2) and normalizes their weights so they sum to 1. Token h is sent to each selected expert's FFN independently, producing k output vectors. These outputs are linearly combined using the normalized routing probabilities as weights: output = Σ_{i ∈ topk} (p_i / Σ_{j ∈ topk} p_j) × FFN_i(h).
+
+In distributed execution, expert dispatch involves: (1) each device determines which tokens to send where, (2) an all-to-all communication sends tokens to the GPUs hosting their target experts, (3) each GPU computes its expert FFN on received tokens, (4) another all-to-all sends results back, (5) the routing device reconstructs the weighted sum. Token dropping occurs if a target expert has already reached capacity (capacity_factor × tokens_per_batch / num_experts); dropped tokens pass through the residual connection without any FFN transformation.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q5. Why does MoE require more GPU memory than a dense model of equivalent active parameters?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+GPU memory requirements for MoE are determined by total parameters, not active parameters, because the gating network can route any token to any expert at any time. Unlike a dense model where you know exactly which parameters will execute, a MoE model's routing is data-dependent — you cannot predict at model-load time which experts will be needed. Therefore, all expert parameters must be resident in GPU memory for every forward pass.
+
+Mixtral-8x7B illustrates this starkly: active parameters per token are ~12.9B, but GPU memory requirement for weights is ~93GB (at FP16), which corresponds to the full 46.7B parameter count. A dense 13B model requires ~26GB at FP16. You need approximately 3.5× more GPU memory to serve Mixtral-8x7B versus a dense model with the same compute cost per token. The activation memory during forward pass scales with the active parameter count (plus attention KV cache), so peak activation memory is similar to the 13B dense equivalent — the memory penalty is entirely in the weight storage. This is why MoE serving typically requires high-memory GPUs or expert parallelism across multiple GPUs, while the inference throughput (tokens/sec) is competitive with the smaller dense equivalent.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q6. What is the load balancing auxiliary loss and why does removing it (DeepSeek approach) work?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The auxiliary load balancing loss L_aux = α × E × Σ_i (f_i × p_i) adds a differentiable penalty to the training objective when expert loads are uneven. f_i is the fraction of tokens in a batch routed to expert i (a hard count, non-differentiable), and p_i is the mean routing probability toward expert i across the batch (differentiable). Their product is a proxy for load imbalance that can receive gradients. This penalty pushes routing probabilities toward uniformity to avoid collapse.
+
+The problem with auxiliary loss is that it degrades model quality. The routing network is simultaneously trying to minimize task loss (route tokens to the most capable expert) and auxiliary loss (distribute tokens uniformly). These objectives are in tension — the best expert for a math problem is not uniformly chosen. The auxiliary loss acts as a regularizer that prevents the routing from becoming as discriminative as it could be.
+
+DeepSeek's auxiliary-loss-free approach replaces the training-time objective pressure with an inference-time correction via per-expert bias terms added to routing logits. After each forward pass, a monitoring system tracks expert utilization; overloaded experts have their bias decreased by a small δ, and underloaded experts have their bias increased. This closed-loop feedback maintains approximate load balance without any gradient-level interference with the routing network's quality signal. The router learns to be as discriminative as the task requires, while the bias correction prevents sustained collapse. The result in DeepSeek V2/V3 is better benchmark performance than models trained with auxiliary loss at equivalent scale, validating the approach.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q7. A customer wants to self-host Mixtral-8x7B — what infrastructure requirements would you give them?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Mixtral-8x7B has ~46.7B parameters. At FP16, weights consume approximately 93GB. At INT4 (via GPTQ or AWQ quantization), weights compress to approximately 24-26GB. Based on this, the minimum viable serving configuration depends on the precision/quality tradeoff the customer accepts.
+
+For FP16 serving (highest quality): two NVIDIA A100 80GB GPUs connected via NVLink, running tensor parallelism across both GPUs. vLLM or TGI (Text Generation Inference) handle the parallelism automatically. Expected throughput: 400-800 tokens/second at batch size 8 on A100 NVLink pair. Expected latency for first token at typical prompt lengths: 150-300ms.
+
+For INT4 serving (cost-optimized): a single A100 80GB GPU or two A6000 48GB GPUs (in tensor parallel mode). Quality degradation from 4-bit quantization is measurable but typically within 2-3 points on standard benchmarks. Using llama.cpp or ExLlamaV2 with GPTQ/AWQ quantization.
+
+Additional requirements: NVMe storage for model weights (at least 100GB fast storage), sufficient CPU RAM to hold weights during initial load (96GB+ recommended), CUDA 12.x drivers, and either Docker + NVIDIA Container Toolkit or a direct Python environment with vLLM installed. For persistent production serving, recommend running behind a load balancer with health checks since MoE models have occasional routing stability issues on unusual inputs. Monitor GPU memory utilization — MoE expert dispatch patterns can cause memory pressure spikes on adversarial inputs. Alert threshold around 90% utilization.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q8. Compare using a Mixtral-8x7B MoE vs. a Llama-3-13B dense model for a latency-sensitive use case.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The comparison depends critically on what "latency-sensitive" means and what hardware is available. On equivalent hardware budgets, the tradeoffs diverge across three dimensions: quality, time-to-first-token (TTFT), and decode throughput.
+
+Quality: Mixtral-8x7B substantially outperforms Llama-3-13B across most benchmarks — coding, reasoning, instruction following. If quality is the primary driver with latency as a constraint, Mixtral-8x7B wins if you can meet the latency budget.
+
+TTFT (prefill latency): On a 2× A100 configuration, Mixtral-8x7B prefill is 2-3× slower than Llama-3-13B on a single A100 at equivalent prompt lengths, because prefill is compute-bound and Mixtral-8x7B has more total FLOP work across all parameters (though active-parameter FLOP count is similar, prefill benefits from batch parallelism differently in MoE vs. dense).
+
+Decode latency per token: With tensor parallelism on 2× A100 NVLink, Mixtral-8x7B decode latency per token is similar to Llama-3-13B on a single A100 — because the active compute is similar and NVLink bandwidth is high. However, on slower interconnects (PCIe), the all-to-all communication overhead in MoE expert dispatch adds latency per token, making dense preferable.
+
+Practical recommendation for latency-sensitive use cases: if the customer has 2× NVLink-connected A100s or better, Mixtral-8x7B provides better quality at acceptable latency. If they only have a single A100 or slower interconnect, Llama-3-13B or a quantized Llama-3-8B will meet tighter latency budgets. For P50 latency under 100ms at 512-token decode, prefer the dense model on single GPU. For P50 under 200ms on multi-GPU with NVLink, Mixtral is viable and preferable on quality.
+:::
+:::

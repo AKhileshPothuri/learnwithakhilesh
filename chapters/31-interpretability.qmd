@@ -1,0 +1,217 @@
+# Mechanistic Interpretability & Sparse Autoencoders {#sec-31}
+
+::: {.callout-note}
+**Who this chapter is for:** Mid Level → FDE
+**What you'll be able to answer after reading this:**
+
+- Why interpretability research matters for AI safety and reliability, beyond academic interest
+- What features and circuits are, and how they relate to model behavior
+- How sparse autoencoders recover interpretable features from dense neural network activations
+- How activation steering works and how it differs from prompting
+- What practical interpretability tools exist and what production use cases they enable
+:::
+
+## Why Interpretability
+
+LLMs produce outputs that can be wrong, harmful, biased, or subtly deceptive — and we currently cannot reliably predict which inputs will trigger these failures. The standard response is evaluation: test the model on many inputs and measure failure rates. Evaluation is necessary but insufficient. It tells you *that* the model fails on certain inputs; it does not tell you *why*, which makes it hard to fix and impossible to extrapolate to unseen failure modes.
+
+Mechanistic interpretability takes a different approach: reverse-engineer the internal computations of the model to understand how it produces its outputs. This is analogous to the difference between black-box testing (stimulus → observe response) and source code inspection (read the program). Source code inspection is dramatically more powerful for understanding failure modes because it reveals the mechanism, not just the symptom.
+
+The practical stakes are high. For **safety**, interpretability is the path toward detecting whether a model has developed deceptive capabilities — the ability to behave safely during evaluation while behaving differently in deployment. An evaluator testing a model's outputs cannot rule out deceptive capability; an interpretability audit that understands the model's internal decision-making process can provide stronger evidence. For **reliability**, understanding the circuits responsible for factual recall reveals why hallucinations occur — whether the model lacks the relevant knowledge (training data gap), has conflicting knowledge (memorization of contradictory facts), or is applying incorrect retrieval heuristics. For **debugging**, when a model consistently fails on a specific type of input, interpretability tools can identify which internal representation is responsible rather than requiring the engineer to guess which part of the prompt or training data is at fault.
+
+## Circuits and Features
+
+The basic unit of mechanistic interpretability is the **feature**: a direction in a layer's activation space that corresponds to a human-interpretable concept. When the model processes text that involves the concept of "Paris" (the city), there is a consistent direction in the residual stream activations that becomes highly activated. This direction is the "Paris" feature. Features can correspond to tokens (character sequences), concepts (countries, emotions), syntactic structures (subject-verb agreement), or more abstract semantic properties. The existence of consistent, interpretable directions in activation space is an empirical finding from interpretability research, not an assumption.
+
+**Circuits** are computational subgraphs — specific sets of attention heads and MLP neurons that implement a coherent behavior. The classic example is the indirect object identification circuit, studied in GPT-2 by Anthropic researchers: the circuit responsible for completing "John and Mary went to the store. John gave a drink to ___" with "Mary." By carefully ablating (zeroing out) subsets of attention heads and observing the resulting behavior, researchers identified which specific heads are responsible for copying the subject's name vs. inhibiting the repeated name vs. attending to the indirect object. The circuit comprises roughly 26 attention heads whose collective computation implements this single behavior.
+
+The study of circuits reveals that **models reuse components** across tasks. An attention head that attends to the most recent noun antecedent is used in pronoun resolution, indirect object identification, and subject-verb agreement — it has learned a general syntactic operation rather than a task-specific one. This compositionality is what makes neural networks tractable to study: the components are not random; they are organized around reusable functional primitives.
+
+The complication is **superposition**: a single neuron or a single direction in activation space often represents multiple features simultaneously. The model doesn't have one neuron per feature — it has far more features than neurons. Multiple features are encoded in overlapping directions, decodable because they are rarely active simultaneously (sparse co-occurrence). Superposition is why naive neuron-by-neuron analysis fails. A neuron that activates for "Python programming," "snake," and "formal attire" is not meaningless — these are three features superimposed on one neuron because they rarely co-occur in text, so the superposition doesn't cause interference.
+
+## Sparse Autoencoders (SAEs)
+
+The superposition problem makes features impossible to find by inspecting individual neurons. Sparse Autoencoders solve this by learning to decompose activations into a higher-dimensional, sparse feature space where each feature is more interpretable.
+
+An SAE is a two-layer neural network trained to reconstruct a target activation vector (e.g., a residual stream activation at layer 12) with a constraint: the intermediate representation must be sparse — most features are zero, only a few activate at once. The architecture: **encoder** projects from activation dimension d (e.g., 4096) to a much larger feature dimension n (e.g., 16384 or 65536), applies a ReLU activation and a top-k sparsity constraint; **decoder** projects from n back to d. The training objective is reconstruction loss (||original activation - reconstructed activation||²) plus a sparsity penalty (L1 norm of the feature activations, or top-k hard sparsity).
+
+The sparsity constraint is what drives interpretability. Without it, the encoder would learn an arbitrary rotation — any basis for the activation space — and features would be as entangled as neurons. With sparsity, the encoder is forced to represent concepts as distinct, rarely co-occurring features. The features that emerge are empirically more interpretable: a feature that activates strongly on "DNA," "gene," and "protein" tokens is interpretable as a "molecular biology" feature.
+
+Anthropic's 2024 paper "Scaling and evaluating sparse autoencoders" trained SAEs on Claude Sonnet's residual stream activations and recovered millions of interpretable features. The evaluation methodology: take the tokens that most strongly activate each feature, have human raters assess whether those tokens share a coherent semantic theme, and measure inter-rater agreement. The best-performing SAEs achieved high interpretability rates on this metric. The features span semantic concepts, syntactic roles, emotional tones, topics, entity types, and more abstract notions like "deception" or "moral uncertainty" that have no obvious single token correlate.
+
+**Feature steering** is the practical application of discovered features: identify the activation direction corresponding to a concept (e.g., "aggressiveness"), then during inference, add a scaled multiple of that direction to the residual stream activations at a specific layer. This causes the model to generate text as though the concept were more strongly present in its internal state. Feature steering has been used to: amplify or suppress model behaviors for safety testing, induce specific personas, study causal relationships (does suppressing the "factual recall" feature increase hallucinations?), and modify model behavior without fine-tuning.
+
+## Activation Steering
+
+Activation steering manipulates model behavior by intervening directly on internal representations, bypassing the prompt layer entirely. The standard approach: identify the concept direction using SAE features or by contrasting activations on concept-positive vs. concept-negative examples (take the mean activation on "happy" examples minus the mean activation on "sad" examples to get the "happiness" direction). During inference, add `alpha * direction` to the residual stream at a target layer.
+
+The effect of steering is qualitatively different from prompting. A prompt that says "respond angrily" changes the surface-level instruction but the model may or may not comply, and the instruction may interfere with other aspects of the response. Activation steering at the representation level directly modifies the model's internal state as though it had experienced inputs that activated the targeted concept strongly. The behavioral modification is more direct and often more consistent than prompting.
+
+Steering has important **safety research applications**. To test whether a model has a dangerous capability that it is hiding during evaluation, researchers can try to steer toward that capability using the activation direction associated with it. If steering toward "deception" causes measurably more deceptive outputs, this is evidence that the model has a latent deception representation — even if the model never produces deceptive outputs without steering. This is a stronger safety test than behavioral evaluation alone.
+
+The limitations of activation steering are meaningful. Steering is not targeted: adding a direction to a layer's residual stream affects all computations downstream that depend on that representation, potentially producing unexpected side effects. The steering vector's effect varies across layers — the same direction added at layer 5 vs. layer 20 produces different behaviors. The magnitude of the steering coefficient must be tuned: too low produces no effect; too high disrupts coherent generation entirely. Despite these limitations, activation steering has demonstrated that model behavior can be modified with surgical specificity in ways that prompt engineering cannot achieve.
+
+## Practical Interpretability Tools
+
+Several tools make interpretability techniques accessible without implementing SAEs from scratch.
+
+**LogitLens** (and its variants, TunedLens, Patchscopes) projects intermediate layer representations to the vocabulary space by applying the model's final unembedding layer to each intermediate residual stream state. This shows what the model "predicts" at each layer — the token distribution if generation stopped at that layer. For factual recall tasks, this reveals at which layer a factual feature becomes dominant: "The capital of France is ___" might show a diffuse distribution at layer 5, a slightly peaked distribution at layer 15, and a sharp prediction of "Paris" by layer 25. Deviations from this expected pattern in a failing case localize the error to specific layers.
+
+**Attention visualization** plots the attention weights from every head in the model for a given input, showing which source tokens each destination token attends to. This is useful for identifying copy-paste behaviors, coreference resolution patterns, and long-range dependencies. The limitation: attention weights are not the same as information flow — a head can attend to a token without meaningfully using its value vector, and information can flow through residual connections without appearing in attention patterns.
+
+**Probing classifiers** are lightweight (usually logistic regression or linear) classifiers trained on top of frozen model hidden states to predict whether a specific concept is represented at that layer. To probe for "syntactic subject" at layer 8: collect examples with labeled syntactic subjects, extract layer-8 activations, train a linear classifier to predict the subject token identity from the activation. High probe accuracy indicates the representation is linearly decodable from that layer. Probing is diagnostic, not causal: a successful probe means the concept is represented; it does not mean the model uses that representation for the behavior in question.
+
+**Causal mediation analysis** (activation patching) establishes causal claims rather than correlational ones. The procedure: run the model on two inputs (clean and corrupted), record activations for both. To test if a specific component is causally responsible for a specific output, patch that component's activation from the clean run into the corrupted run and observe whether the output recovers. If patching layer 15, attention head 7's output restores the correct answer on a corrupted input, that head is causally involved in that computation. This is the gold standard for identifying circuits.
+
+## Interpretability in Production
+
+Interpretability tools are moving from research settings into production monitoring and safety workflows, though the practice is nascent.
+
+**Feature-based monitoring** uses SAE features as signals in production observability. If you have a deployed model and have trained an SAE on its activations, you can monitor the activation strength of specific features on production traffic. High activation of a "competitor mention" feature is a signal to route for human review. High activation of a "personal information disclosure" feature triggers a content filter. This is qualitatively different from keyword-based monitoring: features capture semantic concepts that span many lexical forms, making them more robust to paraphrasing.
+
+**Red-teaming via feature identification** uses interpretability to design adversarial inputs systematically rather than through manual trial and error. Find the activation direction associated with a target harmful behavior, then search for input tokens that maximally activate that direction. This is a more principled approach to adversarial input generation than random search.
+
+**Hallucination debugging** applies logitlens and probing techniques to understand why a model produces a false factual claim. Trace the factual recall through layers: at which layer does the model's predicted token diverge from the ground truth? Is the correct token represented in the residual stream at any layer (suggesting a retrieval failure in final layers rather than absence of knowledge)? This locates the failure mechanism rather than just observing the failure.
+
+Current limitations constrain production applicability. SAEs are expensive to train (require access to model internals and large compute budgets), and their coverage of all model behavior is imperfect — features that don't emerge from the SAE are invisible to feature-based analysis. Causal interpretation of features is difficult: correlation in activation patterns does not establish that a feature is a necessary or sufficient cause of an observed behavior. And the field is moving fast — what constitutes best practice for production interpretability is still evolving.
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. What is mechanistic interpretability and why does it matter for AI safety?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Mechanistic interpretability is a subfield of AI research that attempts to reverse-engineer the internal computations of neural networks — understanding not just what a model does, but how and why it produces specific outputs at the level of activations, weights, and computational circuits.
+
+It matters for AI safety for a fundamental reason: behavioral evaluation cannot rule out dangerous capabilities that a model hides during testing. If a model has learned to behave safely when it detects it is being evaluated and unsafely otherwise (deceptive alignment), standard evals will not catch this — the model passes all tests. Mechanistic interpretability, by inspecting the model's internal representations, can look for the presence of concepts like "deception" or "goal-directed behavior" that don't manifest in observable outputs under normal evaluation conditions.
+
+More practically, interpretability helps with reliability and debugging. When a model fails on a specific class of inputs, interpretability can identify which internal component is responsible — which layer, which attention head, which feature. This localizes the problem and suggests targeted fixes, rather than requiring the engineer to guess which part of training data or fine-tuning is at fault.
+
+For AI safety specifically, the ability to identify what concepts a model represents internally — not just what it outputs — provides a much stronger foundation for safety guarantees than behavioral testing alone.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. What is a "feature" in the context of neural network interpretability?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A feature, in interpretability terms, is a consistent direction in a neural network's activation space that corresponds to a human-interpretable concept.
+
+When a language model processes text containing the concept "Paris," there is a specific direction in the model's residual stream (the running sum of activations through the layers) that becomes consistently activated. This direction is the "Paris" feature. It is not a single neuron — features are distributed across many neurons — but a specific linear combination of neuron activations that forms a consistent pattern.
+
+Features can represent many types of concepts: semantic (cities, emotions, animals), syntactic (the grammatical subject, a prepositional phrase), factual (the fact that Paris is the capital of France), stylistic (formal vs. informal register), or more abstract properties like "deception" or "uncertainty."
+
+The key property of a feature is that it is consistent and linearly decodable: given the activation vector at a layer, you can apply a linear transformation to measure how strongly the "Paris" feature is active. This linearity is what makes features manipulable — you can amplify or suppress a feature by adding or subtracting its direction from the activations.
+
+In practice, features are discovered rather than defined: techniques like sparse autoencoders search the activation space for consistent, interpretable directions that emerge from training, rather than specifying in advance what concepts to look for.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. What is a sparse autoencoder and why is sparsity important?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A sparse autoencoder (SAE) is a neural network trained to reconstruct its input through a bottleneck layer, with the constraint that the bottleneck representation must be sparse — most activations zero, only a few active at any given time.
+
+In the context of LLM interpretability, SAEs are applied to the internal activations of a language model (e.g., the residual stream after a specific layer). The SAE encoder projects these activations from a small, dense activation space (say, 4096 dimensions) into a much larger, sparse feature space (say, 65536 dimensions). The decoder projects back. With sparsity enforced, the SAE is forced to use only a few features to represent any given activation.
+
+Sparsity is important because it drives interpretability. Without sparsity, an autoencoder can use any arbitrary linear transformation and the features in the bottleneck will be entangled and uninterpretable. With sparsity, the features tend to be monosemantic: each feature activates for a consistent, identifiable concept because the sparsity constraint prevents a feature from "absorbing" multiple unrelated concepts (using a feature for multiple purposes would require it to be active for too many inputs, violating sparsity).
+
+Empirically, SAEs trained with sufficient sparsity recover features that human raters can interpret at high rates — features corresponding to specific topics, entities, syntactic roles, or semantic concepts. Without the sparsity constraint, the recovered features are mathematically valid decompositions but have no interpretable meaning.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q1. Explain the superposition hypothesis and why it makes neural networks hard to interpret.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The superposition hypothesis states that neural networks represent more features than they have neurons by encoding multiple features in overlapping directions, relying on the fact that features are rarely active simultaneously (sparse co-occurrence) to avoid destructive interference.
+
+Consider a network layer with 1000 neurons. Naive analysis might expect at most 1000 distinct features (one per neuron). But empirically, language models represent millions of concepts — far more than the number of neurons in any layer. The superposition hypothesis explains how: instead of one feature per neuron, the model encodes features as nearly-orthogonal directions in the activation space. With 1000 dimensions, you can represent many more than 1000 nearly-orthogonal vectors (this is the Johnson-Lindenstrauss lemma territory — high-dimensional spaces have room for exponentially many near-orthogonal directions).
+
+The key enabling condition is sparsity: most features are inactive on any given input. If 1000 features exist in a 100-dimensional space but typically only 5 are active simultaneously, the interference from superposition is small (5 active features in 100-dimensional space produce manageable noise). But if many features were active simultaneously, they would interfere, degrading representation quality.
+
+This makes naive interpretation hard in two ways. First, individual neurons are polysemantic — they activate for multiple unrelated concepts (the neuron activates for "banana," "yellow," and "tropical fruit" because these features are superimposed on the same neuron direction). Inspecting what a neuron responds to reveals a mixture, not a clean concept. Second, you cannot identify features by looking at individual neurons or simple combinations — the features are spread across many neurons in non-obvious combinations. SAEs are needed to untangle the superposition.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q2. Walk through how Anthropic's SAEs work — what is the training objective and what do the recovered features look like?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Anthropic trains SAEs on the internal activations of Claude-family models, with the goal of recovering interpretable features from the superimposed representations in the residual stream and MLP output layers.
+
+**Training setup:** The SAE is trained on a large dataset of text. For each token in the training data, the original model's forward pass is run and the activation at a target layer (e.g., residual stream at layer 20) is extracted. The SAE is trained on a dataset of these activation vectors.
+
+**Architecture:** The encoder is a linear projection followed by a ReLU or top-k activation function: `f(x) = ReLU(W_enc * (x - b_pre) + b_enc)`. The decoder is a linear projection with unit-norm columns (to prevent the trivial solution of making all feature magnitudes small and large decoder norms): `x_reconstructed = W_dec * f(x) + b_pre`. The number of features (SAE width) is typically 4-64x larger than the activation dimension.
+
+**Training objective:** Minimize `||x - x_reconstructed||² + λ * ||f(x)||₁`, where the first term is reconstruction loss and the second is the L1 sparsity penalty. The weight λ controls the sparsity-reconstruction tradeoff. Anthropic's 2024 work also explored top-k SAEs where exactly k features are active per forward pass (hard sparsity), finding this controls sparsity more predictably than L1 penalty.
+
+**What the features look like:** After training, each feature in the SAE has an associated decoder direction (a direction in the original activation space) and a learned encoder weight. To interpret a feature, find the dataset examples where that feature activates most strongly and examine the surrounding tokens. Anthropic's paper reports features corresponding to specific entities (the "Golden Gate Bridge" feature activates on related tokens), semantic concepts, emotional valences, syntactic structures, programming language constructs, and abstract concepts like "morality" or "authority." Features that activate in diverse, incoherent contexts are labeled "uninterpretable"; features that activate consistently on a coherent theme are labeled "interpretable." Their highest-quality SAEs achieved interpretability rates above 60% by human evaluation, with millions of interpretable features extracted from a single model.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q3. What is activation steering and how does it differ from prompting as a way to modify model behavior?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Activation steering modifies model behavior by directly manipulating the internal activations during inference, rather than changing the input tokens. To steer toward a concept, identify its activation direction (via SAE features or by contrasting activations on positive vs. negative examples), then add a scaled version of that direction to the residual stream at a target layer during the model's forward pass.
+
+**The mechanism in detail:** If you want to steer the model toward "formal register," compute the mean activation vector on formal-text examples minus the mean on informal-text examples. Call this `steering_vector`. During inference, at layer L, compute `new_activation = original_activation + alpha * steering_vector`. The modified activation propagates through the remaining layers, influencing the output distribution.
+
+**How this differs from prompting:**
+
+*Level of intervention:* Prompting operates at the token input level — you change the information the model receives. Activation steering operates at the representation level — you change the model's internal state as though it had processed inputs that activated the concept strongly, bypassing the input entirely.
+
+*Consistency:* A prompt instruction ("respond formally") can be "overridden" by strong contextual cues in the conversation, because the model processes the full context and may produce informal responses if the rest of the context is informal. Activation steering directly modifies the representation regardless of context.
+
+*Specificity:* Prompting modifies many aspects of behavior simultaneously (tone, style, content, format). Activation steering can target specific concepts with surgical precision — steering the "formality" direction without changing the content direction.
+
+*Limitations:* Activation steering requires white-box access to model internals (not available via API), has side effects on other behaviors sharing the modified layers, and requires careful magnitude tuning. Prompting requires no model access and has more predictable scope.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q1. A customer wants to ensure their fine-tuned customer support model doesn't generate competitor mentions. How would interpretability tools help vs. just eval testing?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Eval testing for competitor mentions is easy to implement (test a list of queries that might elicit competitor mentions, check outputs for competitor names), but it has a critical coverage gap: you can only test the queries you think to include. A model that has learned to associate competitor mentions with specific contexts will produce them on inputs outside your test set.
+
+Interpretability tools address the coverage gap by working at the representation level, not the output level.
+
+**Step 1 — Feature identification via SAE:**
+If you have access to the model's internals (which is the case for a fine-tuned model you control), train or use a pre-trained SAE on the model's residual stream. Search for features associated with competitor names: find the features that activate most strongly when competitor names appear in training data. This may be a single "competitor brand" feature or separate features per competitor.
+
+**Step 2 — Monitoring via feature activation:**
+Deploy a feature activation monitor alongside the model. For each inference, extract the residual stream activation at the relevant layer and project onto the competitor feature directions. If any competitor feature exceeds an activation threshold, flag the response for review before returning it. This catches competitor mentions that would emerge from semantically related contexts even if the exact competitor name is not in the test set — because the feature activates on the concept, not just the token.
+
+**Step 3 — Steering as a preventative measure:**
+Use activation steering to suppress the competitor feature directions during inference. Add `alpha * (-competitor_direction)` to the activations, which pushes the representation away from the competitor feature subspace. This is more robust than filtering outputs because it prevents the generation of competitor content at the representation level, not just removing it from the output.
+
+**What eval testing gives you:** Coverage of the queries you explicitly included. Detection after the fact.
+
+**What interpretability gives you:** Conceptual coverage (catches paraphrases, semantic variants), early intervention (prevents rather than catches), and evidence that the model's internal representation of competitors has been addressed — not just that specific test cases pass.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q2. A model is sometimes toxic but only in specific context combinations that are hard to find with red-teaming. How would SAE-based feature analysis help?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Sparse red-teaming failure is exactly the scenario where activation-level analysis outperforms behavioral evaluation. The toxicity is triggered by specific feature combinations in the model's representation space — finding those combinations by sampling input space is exponentially hard, but finding them in activation space is tractable.
+
+**Step 1 — Characterize the toxicity in activation space:**
+Collect the cases where toxicity is known to occur. Extract activations from these examples at multiple layers. Apply the SAE to each activation and identify which features are consistently elevated in toxic outputs compared to non-toxic outputs of similar surface form. You are looking for features that distinguish the toxic cases — not just features that are "big" in toxic examples, but features that are disproportionately active compared to semantically similar benign examples.
+
+**Step 2 — Build a toxicity probe:**
+Train a simple linear classifier on the SAE feature activations: features as inputs, toxic/non-toxic as labels. High-accuracy probes (e.g., 90%+ on held-out examples) indicate that the toxicity is linearly predictable from the representation — the model's internal state reflects its intent before generating the output. This probe can be deployed as a pre-output monitor.
+
+**Step 3 — Feature-directed red-teaming:**
+Use the identified toxic features to guide input search. Instead of randomly sampling inputs and hoping to find toxic outputs, search for inputs that activate the toxic feature cluster at high magnitude. Concretely: run the model on diverse inputs, monitor feature activations, collect inputs that push feature values toward the toxic profile. This dramatically narrows the search space compared to random sampling. You are searching a low-dimensional feature space (the subset of SAE features associated with toxicity) rather than the exponentially large input space.
+
+**Step 4 — Targeted mitigation:**
+Once the specific features driving toxicity are identified, you have targeted mitigation options: fine-tune on examples that discourage those feature-combination patterns, apply activation steering to suppress the identified feature directions during inference, or implement a production monitor that flags high activation of the toxic feature cluster for human review.
+
+The key insight is that toxicity is not randomly distributed in input space — it is triggered by specific combinations of internal representations that form a coherent cluster in feature space. SAE analysis makes that cluster visible and accessible.
+:::
+:::
