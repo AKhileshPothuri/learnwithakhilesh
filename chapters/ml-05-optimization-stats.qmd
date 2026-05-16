@@ -127,7 +127,7 @@ The learning rate $\eta$ controls the size of each parameter update. It is simul
 - **Step decay:** Multiply LR by a factor (e.g., 0.1) every $k$ epochs. Common in early ImageNet training recipes. Creates sharp drops in the learning curve at each step.
 - **Linear decay:** Reduce LR linearly from initial value to near zero over training. Simple, predictable.
 - **Cosine annealing:** Follows a cosine curve from max to min LR:
-  $$\eta_t = \eta_\min + \frac{1}{2}(\eta_\max - \eta_\min)\left(1 + \cos\frac{t \pi}{T}\right)$$
+  $$\eta_t = \eta_{\min} + \frac{1}{2}(\eta_{\max} - \eta_{\min})\left(1 + \cos\frac{t \pi}{T}\right)$$
   Smooth reduction with a slow start, fast middle, and slow end. This is the dominant schedule for LLM pretraining. Optionally includes restarts (cosine annealing with warm restarts) for exploration.
 - **Cyclic LR (CLR):** Oscillates between a minimum and maximum LR on a cycle. The high-LR phase helps escape saddle points; the low-LR phase allows fine convergence. Useful when you are uncertain about the optimal LR range.
 - **Linear warmup + cosine decay:** The standard recipe for transformers. Discussed below.
@@ -138,7 +138,7 @@ The learning rate $\eta$ controls the size of each parameter update. It is simul
 
 Warmup means starting with a very small learning rate and linearly increasing it to the target LR over the first $N$ steps (typically 1,000–10,000 steps for large models):
 
-$$\eta_t = \eta_\max \cdot \frac{t}{N_\text{warmup}}, \quad t < N_\text{warmup}$$
+$$\eta_t = \eta_{\max} \cdot \frac{t}{N_\text{warmup}}, \quad t < N_\text{warmup}$$
 
 Why do transformers need warmup when CNNs often do not? Two reasons:
 
@@ -146,7 +146,7 @@ Why do transformers need warmup when CNNs often do not? Two reasons:
 
 2. **Attention weights are fragile early on.** In the first few steps of transformer training, attention weights are nearly uniform (softmax over near-zero logits). Large early updates can break the symmetry in catastrophic ways, forcing the model into a poor attractor state that takes thousands of steps to escape. Small initial updates allow the attention patterns to develop more naturally.
 
-The standard recipe for LLMs: linear warmup for 1–5% of total training steps, followed by cosine decay to $\eta_\min \approx 0.1 \times \eta_\max$.
+The standard recipe for LLMs: linear warmup for 1–5% of total training steps, followed by cosine decay to $\eta_{\min} \approx 0.1 \times \eta_{\max}$.
 
 ### Batch Size and Training Dynamics
 
