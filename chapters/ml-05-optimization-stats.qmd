@@ -546,7 +546,7 @@ Intuition: entropy is the average number of bits needed to encode a message from
 Properties:
 - $H(X) \geq 0$ — entropy is always non-negative.
 - $H(X) = 0$ iff $X$ is deterministic (one outcome has probability 1).
-- For a $k$-outcome variable, entropy is maximized when all outcomes are equally likely: $H_\max = \log_2 k$.
+- For a $k$-outcome variable, entropy is maximized when all outcomes are equally likely: $H_{\max} = \log_2 k$.
 
 In ML: entropy appears in decision tree splitting criteria (information gain = reduction in entropy), in regularization (entropy regularization in RL encourages exploration), and in calibration (a model that outputs uniform probabilities has maximum entropy — maximum uncertainty).
 
