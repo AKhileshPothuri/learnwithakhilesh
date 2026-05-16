@@ -65,7 +65,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../chapters/32-observability.html" rel="prev">
+<link href="../chapters/38-coding-interview.html" rel="prev">
 <script src="../site_libs/quarto-html/quarto.js"></script>
 <script src="../site_libs/quarto-html/popper.min.js"></script>
 <script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
@@ -75,8 +75,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-dc95f10abd972b9c41a78ec8992004fc.css" rel="prefetch" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-ccd92d5b9cd3e64de80ef7f1ead5b3e1.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-375668ddd5fab82322274c16a79adfb4.min.css" rel="prefetch" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-5ca4781baac7136421f09e9bdfad5cdd.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-6d91317dd22175348e34451914613ade.min.css" rel="prefetch" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -105,6 +105,35 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   }
 }</script>
 
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
 
 </head>
 
@@ -164,7 +193,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
- <span class="menu-text">Part I — Foundations</span></a>
+ <span class="menu-text">Part 0 — Classical ML Foundations</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -172,20 +201,32 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/01-intro.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">What Is Generative AI?</span></span></a>
+  <a href="../chapters/ml-01-bias-variance.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">Bias-Variance Tradeoff &amp; Regularization</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Backprop</span></span></a>
+  <a href="../chapters/ml-02-model-selection.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Model Selection: Which Model to Use When</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/03-transformers.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">The Transformer Architecture</span></span></a>
+  <a href="../chapters/ml-03-supervised-learning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">Classical Supervised Learning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-04-unsupervised-features-eval.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Unsupervised Learning, Evaluation Metrics &amp; Feature Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-05-optimization-stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Optimization, Training Dynamics &amp; Probability for ML</span></span></a>
   </div>
 </li>
       </ul>
@@ -193,7 +234,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true">
- <span class="menu-text">Part II — Large Language Models</span></a>
+ <span class="menu-text">Part I — Foundations</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -201,20 +242,20 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/04-llm-pretraining.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">LLM Pretraining — Data, Scale, and Paradigms</span></span></a>
+  <a href="../chapters/01-intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Introduction to Generative AI</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/05-embeddings.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Embeddings — Representations That Encode Meaning</span></span></a>
+  <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Transformers</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/06-inference.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Inference &amp; Decoding Strategies</span></span></a>
+  <a href="../chapters/03-transformers.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">The Transformer Architecture</span></span></a>
   </div>
 </li>
       </ul>
@@ -222,7 +263,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true">
- <span class="menu-text">Part III — Adapting &amp; Aligning LLMs</span></a>
+ <span class="menu-text">Part II — Large Language Models</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -230,26 +271,20 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/07-prompting.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Prompt Engineering</span></span></a>
+  <a href="../chapters/04-llm-pretraining.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">LLM Pre-Training — Data, Scale, and Paradigms</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/08-finetuning.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Fine-Tuning LLMs</span></span></a>
+  <a href="../chapters/05-embeddings.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Embeddings — Dense Representations of Meaning</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/09-peft-lora.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">PEFT, LoRA &amp; QLoRA</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../chapters/10-rlhf-alignment.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">RLHF &amp; Alignment</span></span></a>
+  <a href="../chapters/06-inference.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">LLM Inference &amp; Decoding Strategies</span></span></a>
   </div>
 </li>
       </ul>
@@ -257,7 +292,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
- <span class="menu-text">Part IV — GenAI Systems &amp; Architecture</span></a>
+ <span class="menu-text">Part III — Adapting &amp; Aligning LLMs</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -265,26 +300,26 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/11-rag.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Retrieval-Augmented Generation (RAG)</span></span></a>
+  <a href="../chapters/07-prompting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Prompt Engineering</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/12-agents.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Agents &amp; Tool Use</span></span></a>
+  <a href="../chapters/08-finetuning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Fine-Tuning LLMs</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/13-evaluation.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Evaluation — Measuring What Matters</span></span></a>
+  <a href="../chapters/09-peft-lora.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">PEFT, LoRA &amp; QLoRA</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/14-deployment.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Deployment &amp; Optimization</span></span></a>
+  <a href="../chapters/10-rlhf-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">RLHF &amp; Alignment</span></span></a>
   </div>
 </li>
       </ul>
@@ -292,7 +327,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true">
- <span class="menu-text">Part V — Forward Deployed Engineer Track</span></a>
+ <span class="menu-text">Part IV — GenAI Systems &amp; Architecture</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -300,26 +335,26 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/15-fde-overview.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">The Forward Deployed Engineer Role</span></span></a>
+  <a href="../chapters/11-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Retrieval-Augmented Generation (RAG)</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/16-customer-scenarios.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Common GenAI Customer Use Cases</span></span></a>
+  <a href="../chapters/12-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">LLM Agents &amp; Tool Use</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/17-integration.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Enterprise Integration Patterns</span></span></a>
+  <a href="../chapters/13-evaluation.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">LLM Evaluation — Measuring What Matters</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/18-safety-production.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Safety &amp; Responsible Deployment</span></span></a>
+  <a href="../chapters/14-deployment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">LLM Deployment &amp; Optimization</span></span></a>
   </div>
 </li>
       </ul>
@@ -327,7 +362,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
- <span class="menu-text">Part VI — Modern Architectures &amp; Efficiency</span></a>
+ <span class="menu-text">Part V — Forward Deployed Engineer Track</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -335,26 +370,26 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/19-moe.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Mixture of Experts (MoE)</span></span></a>
+  <a href="../chapters/15-fde-overview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">The Forward Deployed Engineer Role</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/20-ssm-mamba.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span></a>
+  <a href="../chapters/16-customer-scenarios.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Customer Discovery &amp; Scenarios</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/21-long-context.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></a>
+  <a href="../chapters/17-integration.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Enterprise AI Integration</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/22-speculative-decoding.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span></a>
+  <a href="../chapters/18-safety-production.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">LLM Safety in Production</span></span></a>
   </div>
 </li>
       </ul>
@@ -362,7 +397,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true">
- <span class="menu-text">Part VII — Reasoning &amp; Multimodal</span></a>
+ <span class="menu-text">Part VI — Modern Architectures &amp; Efficiency</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -370,20 +405,38 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/23-reasoning-models.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></a>
+  <a href="../chapters/19-moe.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Mixture of Experts (MoE)</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/24-multimodal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span></a>
+  <a href="../chapters/20-ssm-mamba.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/25-diffusion.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span></a>
+  <a href="../chapters/21-long-context.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/22-speculative-decoding.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/33-distributed-training.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Distributed Training: Parallelism &amp; Scale</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/34-vector-databases.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Vector Databases Deep Dive</span></span></a>
   </div>
 </li>
       </ul>
@@ -391,7 +444,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true">
- <span class="menu-text">Part VIII — Advanced Training &amp; Alignment</span></a>
+ <span class="menu-text">Part VII — Reasoning &amp; Multimodal</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -399,14 +452,20 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/26-modern-alignment.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></a>
+  <a href="../chapters/23-reasoning-models.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/27-synthetic-data.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Synthetic Data &amp; Data-Centric AI</span></span></a>
+  <a href="../chapters/24-multimodal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/25-diffusion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span></a>
   </div>
 </li>
       </ul>
@@ -414,7 +473,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
- <span class="menu-text">Part IX — Advanced Production Systems</span></a>
+ <span class="menu-text">Part VIII — Advanced Training &amp; Alignment</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
@@ -422,32 +481,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/28-advanced-rag.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Advanced RAG Patterns</span></span></a>
+  <a href="../chapters/26-modern-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../chapters/29-advanced-agents.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Advanced Agents: MCP, Computer Use &amp; GUI Agents</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../chapters/30-prompt-optimization.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Prompt Optimization &amp; DSPy</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../chapters/31-interpretability.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Mechanistic Interpretability &amp; Sparse Autoencoders</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../chapters/32-observability.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span></a>
+  <a href="../chapters/27-synthetic-data.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">34</span>&nbsp; <span class="chapter-title">Synthetic Data for LLM Training</span></span></a>
   </div>
 </li>
       </ul>
@@ -455,12 +496,88 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
- <span class="menu-text">Appendices</span></a>
+ <span class="menu-text">Part IX — Advanced Production Systems</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
       </div>
       <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/28-advanced-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">35</span>&nbsp; <span class="chapter-title">Advanced RAG Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/29-advanced-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">36</span>&nbsp; <span class="chapter-title">Advanced Agents: MCP, Computer Use &amp; GUI Agents</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/30-prompt-optimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">37</span>&nbsp; <span class="chapter-title">Automated Prompt Optimization</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/31-interpretability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">38</span>&nbsp; <span class="chapter-title">LLM Interpretability</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/32-observability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">39</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part X — Interview Practicum</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-11" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/35-system-design.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">LLM System Design for Interviews</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/36-tokenization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">41</span>&nbsp; <span class="chapter-title">Tokenization Deep Dive</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/37-model-merging.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">42</span>&nbsp; <span class="chapter-title">Model Merging: Task Arithmetic, SLERP, TIES, DARE &amp; WARP</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/38-coding-interview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">43</span>&nbsp; <span class="chapter-title">LLM Coding Interview: Implementing Core Concepts</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-12" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/appendix-ml-fundamentals.html" class="sidebar-item-text sidebar-link active">
@@ -479,9 +596,31 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">Table of contents</h2>
    
   <ul>
-  <li><a href="#core-algorithms" id="toc-core-algorithms" class="nav-link active" data-scroll-target="#core-algorithms"><span class="header-section-number">A.1</span> Core Algorithms</a></li>
-  <li><a href="#key-concepts" id="toc-key-concepts" class="nav-link" data-scroll-target="#key-concepts"><span class="header-section-number">A.2</span> Key Concepts</a></li>
-  <li><a href="#interview-questions" id="toc-interview-questions" class="nav-link" data-scroll-target="#interview-questions"><span class="header-section-number">A.3</span> Interview Questions</a></li>
+  <li><a href="#sec-appendix-ml" id="toc-sec-appendix-ml" class="nav-link active" data-scroll-target="#sec-appendix-ml"><span class="header-section-number">B</span> ML Fundamentals Refresher</a>
+  <ul class="collapse">
+  <li><a href="#core-algorithm-quick-reference" id="toc-core-algorithm-quick-reference" class="nav-link" data-scroll-target="#core-algorithm-quick-reference"><span class="header-section-number">B.1</span> Core Algorithm Quick Reference</a></li>
+  <li><a href="#essential-math-reference" id="toc-essential-math-reference" class="nav-link" data-scroll-target="#essential-math-reference"><span class="header-section-number">B.2</span> Essential Math Reference</a>
+  <ul class="collapse">
+  <li><a href="#linear-algebra" id="toc-linear-algebra" class="nav-link" data-scroll-target="#linear-algebra"><span class="header-section-number">B.2.1</span> Linear Algebra</a></li>
+  <li><a href="#probability" id="toc-probability" class="nav-link" data-scroll-target="#probability"><span class="header-section-number">B.2.2</span> Probability</a></li>
+  <li><a href="#calculus-for-ml" id="toc-calculus-for-ml" class="nav-link" data-scroll-target="#calculus-for-ml"><span class="header-section-number">B.2.3</span> Calculus for ML</a></li>
+  </ul></li>
+  <li><a href="#regularization-reference" id="toc-regularization-reference" class="nav-link" data-scroll-target="#regularization-reference"><span class="header-section-number">B.3</span> Regularization Reference</a></li>
+  <li><a href="#optimizer-reference" id="toc-optimizer-reference" class="nav-link" data-scroll-target="#optimizer-reference"><span class="header-section-number">B.4</span> Optimizer Reference</a></li>
+  <li><a href="#gpu-hardware-reference" id="toc-gpu-hardware-reference" class="nav-link" data-scroll-target="#gpu-hardware-reference"><span class="header-section-number">B.5</span> GPU Hardware Reference</a></li>
+  <li><a href="#model-sizing-formulas" id="toc-model-sizing-formulas" class="nav-link" data-scroll-target="#model-sizing-formulas"><span class="header-section-number">B.6</span> Model Sizing Formulas</a></li>
+  <li><a href="#evaluation-metrics-quick-reference" id="toc-evaluation-metrics-quick-reference" class="nav-link" data-scroll-target="#evaluation-metrics-quick-reference"><span class="header-section-number">B.7</span> Evaluation Metrics Quick Reference</a>
+  <ul class="collapse">
+  <li><a href="#classification" id="toc-classification" class="nav-link" data-scroll-target="#classification"><span class="header-section-number">B.7.1</span> Classification</a></li>
+  <li><a href="#regression" id="toc-regression" class="nav-link" data-scroll-target="#regression"><span class="header-section-number">B.7.2</span> Regression</a></li>
+  <li><a href="#information-retrieval-rag" id="toc-information-retrieval-rag" class="nav-link" data-scroll-target="#information-retrieval-rag"><span class="header-section-number">B.7.3</span> Information Retrieval / RAG</a></li>
+  </ul></li>
+  <li><a href="#big-o-complexity-reference" id="toc-big-o-complexity-reference" class="nav-link" data-scroll-target="#big-o-complexity-reference"><span class="header-section-number">B.8</span> Big-O Complexity Reference</a></li>
+  <li><a href="#activation-functions" id="toc-activation-functions" class="nav-link" data-scroll-target="#activation-functions"><span class="header-section-number">B.9</span> Activation Functions</a></li>
+  <li><a href="#genai-acronym-reference" id="toc-genai-acronym-reference" class="nav-link" data-scroll-target="#genai-acronym-reference"><span class="header-section-number">B.10</span> GenAI Acronym Reference</a></li>
+  <li><a href="#key-papers-reference" id="toc-key-papers-reference" class="nav-link" data-scroll-target="#key-papers-reference"><span class="header-section-number">B.11</span> Key Papers Reference</a></li>
+  <li><a href="#interview-qa-entry-level-screening" id="toc-interview-qa-entry-level-screening" class="nav-link" data-scroll-target="#interview-qa-entry-level-screening"><span class="header-section-number">B.12</span> Interview Q&amp;A: Entry-Level Screening</a></li>
+  </ul></li>
   </ul>
 <div class="toc-actions"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/appendix-ml-fundamentals.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></nav>
     </div>
@@ -490,7 +629,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/appendix-ml-fundamentals.html">Appendices</a></li><li class="breadcrumb-item"><a href="../chapters/appendix-ml-fundamentals.html"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">ML Fundamentals Refresher</span></a></li></ol></nav>
 <div class="quarto-title">
-<div class="quarto-title-block"><div><h1 class="title"><span id="sec-appendix-ml" class="quarto-section-identifier">Appendix A — ML Fundamentals Refresher</span></h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
+<div class="quarto-title-block"><div><h1 class="title">Appendix A — ML Fundamentals Refresher</h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
 </div>
 
 
@@ -507,6 +646,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
+<section id="sec-appendix-ml" class="level1" data-number="B">
+<h1 data-number="B"><span class="header-section-number">B</span> ML Fundamentals Refresher</h1>
 <div class="callout callout-style-default callout-note callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
@@ -517,193 +658,1164 @@ Note
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>This appendix covers classical ML concepts that frequently appear in entry-level GenAI interview screening rounds. It assumes you have seen these topics before and need a quick recall pass, not a first introduction.</p>
+<p>This appendix is a fast-recall reference for concepts that appear in screening rounds and onsite interviews across all experience levels. Detailed treatment of each topic is in the main chapters.</p>
 </div>
 </div>
-<section id="core-algorithms" class="level2" data-number="A.1">
-<h2 data-number="A.1" class="anchored" data-anchor-id="core-algorithms"><span class="header-section-number">A.1</span> Core Algorithms</h2>
-<p><strong>Linear Regression</strong> — Fits a line (or hyperplane) by minimizing mean squared error. Closed-form solution via normal equations; gradient descent for large datasets. Key assumption: linear relationship between features and target.</p>
-<p><strong>Logistic Regression</strong> — Classification via sigmoid-squashed linear output. Minimizes cross-entropy loss. Despite the name, it’s a classifier. Interpretable coefficients. L1/L2 regularization applied directly.</p>
-<p><strong>Decision Trees</strong> — Recursively partition feature space using information gain (entropy) or Gini impurity. Prone to overfitting; depth and min-samples hyperparameters control this.</p>
-<p><strong>SVMs</strong> — Find the maximum-margin hyperplane. Kernel trick extends to non-linear boundaries (RBF, polynomial). Effective in high-dimensional spaces; expensive at scale.</p>
-<p><strong>k-NN</strong> — Classify by majority vote of k nearest neighbors. No training phase (lazy learner). Distance metric choice matters. Degrades in high dimensions (curse of dimensionality).</p>
-<p><strong>K-Means Clustering</strong> — Assign points to k centroids, recompute centroids, repeat. Sensitive to initialization (k-means++). Choose k with elbow method or silhouette score.</p>
-<p><strong>PCA</strong> — Project data onto directions of maximum variance (eigenvectors of covariance matrix). Reduces dimensionality. Features become uninterpretable linear combinations.</p>
-</section>
-<section id="key-concepts" class="level2" data-number="A.2">
-<h2 data-number="A.2" class="anchored" data-anchor-id="key-concepts"><span class="header-section-number">A.2</span> Key Concepts</h2>
-<p><strong>Bias-Variance Tradeoff</strong> — High bias = underfitting (model too simple). High variance = overfitting (model memorizes training data). Increasing model complexity moves bias down and variance up.</p>
-<p><strong>Regularization</strong> — L2 (Ridge): penalizes large weights, shrinks all weights. L1 (Lasso): can zero out weights, producing sparse models. Both added as λ||w|| term to the loss.</p>
-<p><strong>Cross-Validation</strong> — k-fold CV partitions data into k folds, trains on k-1, evaluates on 1, rotates. Produces more reliable generalization estimates than a single train/val split.</p>
-<p><strong>Evaluation Metrics</strong></p>
+<section id="core-algorithm-quick-reference" class="level2" data-number="B.1">
+<h2 data-number="B.1" class="anchored" data-anchor-id="core-algorithm-quick-reference"><span class="header-section-number">B.1</span> Core Algorithm Quick Reference</h2>
 <table class="caption-top table">
+<colgroup>
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Algorithm</th>
+<th>Loss Function</th>
+<th>Output</th>
+<th>Regularization</th>
+<th>Scale</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Linear Regression</td>
+<td>MSE</td>
+<td>Continuous</td>
+<td>L1 (Lasso), L2 (Ridge)</td>
+<td>Normal equations: O(n·d²); GD: O(n·d)</td>
+</tr>
+<tr class="even">
+<td>Logistic Regression</td>
+<td>Cross-entropy</td>
+<td>Probability [0,1]</td>
+<td>L1/L2</td>
+<td>O(n·d) per epoch</td>
+</tr>
+<tr class="odd">
+<td>Decision Tree</td>
+<td>Gini/Entropy</td>
+<td>Class/Value</td>
+<td>max_depth, min_samples</td>
+<td>O(n·d·log n)</td>
+</tr>
+<tr class="even">
+<td>Random Forest</td>
+<td>Avg of trees</td>
+<td>Class/Value</td>
+<td>n_estimators, max_features</td>
+<td>O(k·n·d·log n)</td>
+</tr>
+<tr class="odd">
+<td>Gradient Boosting</td>
+<td>Residual MSE/log-loss</td>
+<td>Class/Value</td>
+<td>learning_rate, max_depth</td>
+<td>O(n·d·T)</td>
+</tr>
+<tr class="even">
+<td>SVM</td>
+<td>Hinge loss</td>
+<td>Class</td>
+<td>C (margin width)</td>
+<td>O(n²–n³)</td>
+</tr>
+<tr class="odd">
+<td>k-NN</td>
+<td>—</td>
+<td>Majority/mean</td>
+<td>k, distance metric</td>
+<td>O(n·d) per query</td>
+</tr>
+<tr class="even">
+<td>K-Means</td>
+<td>Inertia (SSE)</td>
+<td>Cluster ID</td>
+<td>k, max_iter</td>
+<td>O(n·k·d·T)</td>
+</tr>
+<tr class="odd">
+<td>PCA</td>
+<td>Variance explained</td>
+<td>Low-dim projection</td>
+<td>n_components</td>
+<td>O(n·d²) or randomized O(n·d·k)</td>
+</tr>
+<tr class="even">
+<td>Naive Bayes</td>
+<td>Log-likelihood</td>
+<td>Probability</td>
+<td>α (Laplace smoothing)</td>
+<td>O(n·d)</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="essential-math-reference" class="level2" data-number="B.2">
+<h2 data-number="B.2" class="anchored" data-anchor-id="essential-math-reference"><span class="header-section-number">B.2</span> Essential Math Reference</h2>
+<section id="linear-algebra" class="level3" data-number="B.2.1">
+<h3 data-number="B.2.1" class="anchored" data-anchor-id="linear-algebra"><span class="header-section-number">B.2.1</span> Linear Algebra</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol/Operation</th>
+<th>Meaning</th>
+<th>ML Use</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><span class="math inline">\(\mathbf{A}^\top\)</span></td>
+<td>Transpose</td>
+<td>Swap rows/cols; <span class="math inline">\((\mathbf{AB})^\top = \mathbf{B}^\top\mathbf{A}^\top\)</span></td>
+</tr>
+<tr class="even">
+<td><span class="math inline">\(\mathbf{A}^{-1}\)</span></td>
+<td>Inverse</td>
+<td>Solve <span class="math inline">\(\mathbf{Ax}=\mathbf{b}\)</span>: <span class="math inline">\(\mathbf{x}=\mathbf{A}^{-1}\mathbf{b}\)</span></td>
+</tr>
+<tr class="odd">
+<td><span class="math inline">\(\|\mathbf{x}\|_2\)</span></td>
+<td>L2 norm</td>
+<td><span class="math inline">\(\sqrt{\sum x_i^2}\)</span> — Euclidean distance</td>
+</tr>
+<tr class="even">
+<td><span class="math inline">\(\|\mathbf{x}\|_1\)</span></td>
+<td>L1 norm</td>
+<td><span class="math inline">\(\sum \lvert x_i\rvert\)</span> — Manhattan distance; promotes sparsity</td>
+</tr>
+<tr class="odd">
+<td><span class="math inline">\(\mathbf{x} \cdot \mathbf{y}\)</span></td>
+<td>Dot product</td>
+<td><span class="math inline">\(\sum x_i y_i = \|\mathbf{x}\|\|\mathbf{y}\|\cos\theta\)</span></td>
+</tr>
+<tr class="even">
+<td><span class="math inline">\(\cos\theta\)</span></td>
+<td>Cosine similarity</td>
+<td><span class="math inline">\(\frac{\mathbf{x}\cdot\mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|}\)</span> — embedding similarity</td>
+</tr>
+<tr class="odd">
+<td>Eigenvalue <span class="math inline">\(\lambda\)</span></td>
+<td><span class="math inline">\(\mathbf{Av} = \lambda\mathbf{v}\)</span></td>
+<td>PCA directions; gradient signal</td>
+</tr>
+<tr class="even">
+<td>SVD</td>
+<td><span class="math inline">\(\mathbf{A}=\mathbf{U\Sigma V}^\top\)</span></td>
+<td>Dimensionality reduction; LoRA</td>
+</tr>
+<tr class="odd">
+<td>Rank</td>
+<td>Independent rows/cols</td>
+<td>LoRA rank r controls parameter budget</td>
+</tr>
+<tr class="even">
+<td>Trace</td>
+<td><span class="math inline">\(\sum_i A_{ii}\)</span></td>
+<td><span class="math inline">\(\text{tr}(\mathbf{AB})=\text{tr}(\mathbf{BA})\)</span></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="probability" class="level3" data-number="B.2.2">
+<h3 data-number="B.2.2" class="anchored" data-anchor-id="probability"><span class="header-section-number">B.2.2</span> Probability</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Concept</th>
+<th>Formula</th>
+<th>ML Relevance</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Bayes theorem</td>
+<td><span class="math inline">\(P(A\|B) = \frac{P(B\|A)P(A)}{P(B)}\)</span></td>
+<td>Posterior = likelihood × prior / evidence</td>
+</tr>
+<tr class="even">
+<td>MLE</td>
+<td><span class="math inline">\(\hat\theta = \arg\max_\theta \prod_i P(x_i\|\theta)\)</span></td>
+<td>Maximizes data likelihood</td>
+</tr>
+<tr class="odd">
+<td>MAP</td>
+<td><span class="math inline">\(\hat\theta = \arg\max_\theta P(\theta)\prod_i P(x_i\|\theta)\)</span></td>
+<td>MLE + prior = regularization</td>
+</tr>
+<tr class="even">
+<td>KL divergence</td>
+<td><span class="math inline">\(\sum_x p(x)\log\frac{p(x)}{q(x)}\)</span></td>
+<td>Asymmetric; RLHF KL penalty, VAE</td>
+</tr>
+<tr class="odd">
+<td>Cross-entropy</td>
+<td><span class="math inline">\(-\sum_x p(x)\log q(x) = H(p) + D_{KL}(p\|q)\)</span></td>
+<td>Classification loss</td>
+</tr>
+<tr class="even">
+<td>Entropy</td>
+<td><span class="math inline">\(H(X) = -\sum_x p(x)\log p(x)\)</span></td>
+<td>Decision tree splits, information theory</td>
+</tr>
+<tr class="odd">
+<td>Gaussian</td>
+<td><span class="math inline">\(\mathcal{N}(\mu, \sigma^2)\)</span>: <span class="math inline">\(f(x) = \frac{1}{\sigma\sqrt{2\pi}}e^{-\frac{(x-\mu)^2}{2\sigma^2}}\)</span></td>
+<td>Weight init, noise modeling</td>
+</tr>
+<tr class="even">
+<td>CLT</td>
+<td><span class="math inline">\(\bar X \to \mathcal{N}(\mu, \sigma^2/n)\)</span></td>
+<td>Justifies averaging, A/B test stats</td>
+</tr>
+<tr class="odd">
+<td>p-value</td>
+<td><span class="math inline">\(P(\text{data this extreme} \| H_0 \text{ true})\)</span></td>
+<td>Reject <span class="math inline">\(H_0\)</span> if <span class="math inline">\(p &lt; \alpha = 0.05\)</span></td>
+</tr>
+<tr class="even">
+<td>Type I/II error</td>
+<td>False positive / False negative</td>
+<td><span class="math inline">\(\alpha\)</span> controls Type I; power = 1 - Type II</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="calculus-for-ml" class="level3" data-number="B.2.3">
+<h3 data-number="B.2.3" class="anchored" data-anchor-id="calculus-for-ml"><span class="header-section-number">B.2.3</span> Calculus for ML</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Concept</th>
+<th>Formula</th>
+<th>ML Use</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Gradient</td>
+<td><span class="math inline">\(\nabla_\theta L\)</span> — vector of partial derivatives</td>
+<td>Direction of steepest ascent</td>
+</tr>
+<tr class="even">
+<td>Chain rule</td>
+<td><span class="math inline">\(\frac{\partial L}{\partial w} = \frac{\partial L}{\partial z}\frac{\partial z}{\partial w}\)</span></td>
+<td>Backpropagation</td>
+</tr>
+<tr class="odd">
+<td>Jacobian</td>
+<td><span class="math inline">\(J_{ij} = \frac{\partial f_i}{\partial x_j}\)</span></td>
+<td>Multi-output gradients</td>
+</tr>
+<tr class="even">
+<td>Hessian</td>
+<td><span class="math inline">\(H_{ij} = \frac{\partial^2 L}{\partial w_i \partial w_j}\)</span></td>
+<td>Second-order optimization</td>
+</tr>
+<tr class="odd">
+<td>Sigmoid derivative</td>
+<td><span class="math inline">\(\sigma'(x) = \sigma(x)(1-\sigma(x))\)</span></td>
+<td>Vanishes for large <span class="math inline">\(\lvert x\rvert\)</span> — saturation</td>
+</tr>
+<tr class="even">
+<td>ReLU derivative</td>
+<td><span class="math inline">\(\text{ReLU}'(x) = \mathbb{1}[x &gt; 0]\)</span></td>
+<td>Dead neurons if always <span class="math inline">\(x &lt; 0\)</span></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="regularization-reference" class="level2" data-number="B.3">
+<h2 data-number="B.3" class="anchored" data-anchor-id="regularization-reference"><span class="header-section-number">B.3</span> Regularization Reference</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Method</th>
+<th>Penalty</th>
+<th>Effect</th>
+<th>Use When</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>L2 (Ridge, Weight Decay)</td>
+<td><span class="math inline">\(\lambda\|\mathbf{w}\|_2^2\)</span></td>
+<td>Shrinks all weights</td>
+<td>Dense features; neural nets (as weight decay)</td>
+</tr>
+<tr class="even">
+<td>L1 (Lasso)</td>
+<td><span class="math inline">\(\lambda\|\mathbf{w}\|_1\)</span></td>
+<td>Zeros out weights</td>
+<td>Sparse features; feature selection</td>
+</tr>
+<tr class="odd">
+<td>Elastic Net</td>
+<td><span class="math inline">\(\alpha\|\mathbf{w}\|_1 + (1-\alpha)\|\mathbf{w}\|_2^2\)</span></td>
+<td>Both effects</td>
+<td>High-dim with correlated features</td>
+</tr>
+<tr class="even">
+<td>Dropout</td>
+<td>Random zero at rate <span class="math inline">\(p\)</span></td>
+<td>Ensemble effect</td>
+<td>Neural nets; during training only</td>
+</tr>
+<tr class="odd">
+<td>Early Stopping</td>
+<td>Stop at min val loss</td>
+<td>Implicit regularization</td>
+<td>Always — simple and free</td>
+</tr>
+<tr class="even">
+<td>Data Augmentation</td>
+<td>Transform inputs</td>
+<td>Reduces variance</td>
+<td>Computer vision; text (synonym swap)</td>
+</tr>
+<tr class="odd">
+<td>BatchNorm</td>
+<td>Normalize layer activations</td>
+<td>Smooths loss landscape</td>
+<td>Deep nets (especially CNNs)</td>
+</tr>
+<tr class="even">
+<td>Label Smoothing</td>
+<td>Replace 1/0 with 0.9/0.1</td>
+<td>Reduces overconfidence</td>
+<td>Classification with noisy labels</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="optimizer-reference" class="level2" data-number="B.4">
+<h2 data-number="B.4" class="anchored" data-anchor-id="optimizer-reference"><span class="header-section-number">B.4</span> Optimizer Reference</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Optimizer</th>
+<th>Update Rule</th>
+<th>Adaptive LR</th>
+<th>Memory Overhead</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>SGD</td>
+<td><span class="math inline">\(\theta \leftarrow \theta - \alpha g\)</span></td>
+<td>No</td>
+<td>0</td>
+<td>Simple problems; when Adam diverges</td>
+</tr>
+<tr class="even">
+<td>Momentum</td>
+<td><span class="math inline">\(v \leftarrow \beta v + g\)</span>; <span class="math inline">\(\theta \leftarrow \theta - \alpha v\)</span></td>
+<td>No</td>
+<td>1× params</td>
+<td>Smooth loss landscapes</td>
+</tr>
+<tr class="odd">
+<td>AdaGrad</td>
+<td><span class="math inline">\(\theta \leftarrow \theta - \frac{\alpha}{\sqrt{G+\epsilon}} g\)</span></td>
+<td>Yes (per-param)</td>
+<td>1× params</td>
+<td>Sparse features; embeddings</td>
+</tr>
+<tr class="even">
+<td>RMSprop</td>
+<td>EMA of <span class="math inline">\(g^2\)</span>; divide update</td>
+<td>Yes</td>
+<td>1× params</td>
+<td>RNNs; non-stationary objectives</td>
+</tr>
+<tr class="odd">
+<td>Adam</td>
+<td>Momentum + RMSprop</td>
+<td>Yes</td>
+<td>2× params</td>
+<td>Default for most deep learning</td>
+</tr>
+<tr class="even">
+<td>AdamW</td>
+<td>Adam + explicit weight decay</td>
+<td>Yes</td>
+<td>2× params</td>
+<td>Transformers (decouples decay from Adam)</td>
+</tr>
+</tbody>
+</table>
+<p>Adam memory: <span class="math inline">\(m_t\)</span> (first moment) + <span class="math inline">\(v_t\)</span> (second moment) = 2× the parameter count in additional optimizer state.</p>
+</section>
+<section id="gpu-hardware-reference" class="level2" data-number="B.5">
+<h2 data-number="B.5" class="anchored" data-anchor-id="gpu-hardware-reference"><span class="header-section-number">B.5</span> GPU Hardware Reference</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>GPU</th>
+<th>VRAM</th>
+<th>BF16 TFLOPS</th>
+<th>Memory BW</th>
+<th>NVLink</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>A100 80GB</td>
+<td>80 GB</td>
+<td>312</td>
+<td>2.0 TB/s</td>
+<td>Yes (600 GB/s)</td>
+<td>Training frontier models</td>
+</tr>
+<tr class="even">
+<td>H100 SXM</td>
+<td>80 GB</td>
+<td>989</td>
+<td>3.35 TB/s</td>
+<td>Yes (900 GB/s)</td>
+<td>Current training standard</td>
+</tr>
+<tr class="odd">
+<td>H200</td>
+<td>141 GB</td>
+<td>989</td>
+<td>4.8 TB/s</td>
+<td>Yes</td>
+<td>Large model training/inference</td>
+</tr>
+<tr class="even">
+<td>A10G</td>
+<td>24 GB</td>
+<td>125</td>
+<td>600 GB/s</td>
+<td>No</td>
+<td>Small model inference</td>
+</tr>
+<tr class="odd">
+<td>L40S</td>
+<td>48 GB</td>
+<td>366</td>
+<td>864 GB/s</td>
+<td>No</td>
+<td>Mid-size inference</td>
+</tr>
+<tr class="even">
+<td>RTX 4090</td>
+<td>24 GB</td>
+<td>82</td>
+<td>1.0 TB/s</td>
+<td>No</td>
+<td>Consumer dev/LoRA training</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="model-sizing-formulas" class="level2" data-number="B.6">
+<h2 data-number="B.6" class="anchored" data-anchor-id="model-sizing-formulas"><span class="header-section-number">B.6</span> Model Sizing Formulas</h2>
+<p><strong>Parameters from architecture:</strong> <span class="math display">\[\text{Params} \approx 12 \cdot n_{layers} \cdot d_{model}^2\]</span> (Accounts for: 4 attention weight matrices of <span class="math inline">\(d_{model}^2/4\)</span> each, 2 FFN layers of <span class="math inline">\(4 \cdot d_{model}^2\)</span> each)</p>
+<p><strong>Memory for inference (BF16):</strong> <span class="math display">\[\text{VRAM (GB)} = \frac{\text{Params} \times 2}{10^9}\]</span> (2 bytes per parameter in BF16)</p>
+<p><strong>Memory for training (full precision + Adam):</strong> <span class="math display">\[\text{VRAM (GB)} = \frac{\text{Params} \times 16}{10^9}\]</span> (2 for weights + 2 for gradients + 4 for Adam <span class="math inline">\(m_t\)</span> + 4 for Adam <span class="math inline">\(v_t\)</span> + 4 for optimizer fp32 copy)</p>
+<p><strong>KV cache per token per layer:</strong> <span class="math display">\[\text{KV cache per token} = 4 \times d_{model} \times \text{bytes per param}\]</span> (2 for K, 2 for V; each of size <span class="math inline">\(d_{model}\)</span>)</p>
+<p><strong>Quick estimates:</strong></p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Model</th>
+<th>Params</th>
+<th>BF16 inference</th>
+<th>Full train</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>7B</td>
+<td>7B</td>
+<td>~14 GB</td>
+<td>~112 GB</td>
+</tr>
+<tr class="even">
+<td>13B</td>
+<td>13B</td>
+<td>~26 GB</td>
+<td>~208 GB</td>
+</tr>
+<tr class="odd">
+<td>70B</td>
+<td>70B</td>
+<td>~140 GB</td>
+<td>~1.1 TB</td>
+</tr>
+<tr class="even">
+<td>405B</td>
+<td>405B</td>
+<td>~810 GB</td>
+<td>~6.5 TB</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="evaluation-metrics-quick-reference" class="level2" data-number="B.7">
+<h2 data-number="B.7" class="anchored" data-anchor-id="evaluation-metrics-quick-reference"><span class="header-section-number">B.7</span> Evaluation Metrics Quick Reference</h2>
+<section id="classification" class="level3" data-number="B.7.1">
+<h3 data-number="B.7.1" class="anchored" data-anchor-id="classification"><span class="header-section-number">B.7.1</span> Classification</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
 <thead>
 <tr class="header">
 <th>Metric</th>
 <th>Formula</th>
-<th>When to use</th>
+<th>Use When</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
 <td>Accuracy</td>
 <td>(TP+TN)/(P+N)</td>
-<td>Balanced classes</td>
+<td>Balanced classes only</td>
 </tr>
 <tr class="even">
 <td>Precision</td>
 <td>TP/(TP+FP)</td>
-<td>False positives are costly</td>
+<td>False positives are costly (spam filter)</td>
 </tr>
 <tr class="odd">
 <td>Recall</td>
 <td>TP/(TP+FN)</td>
-<td>False negatives are costly</td>
+<td>False negatives are costly (cancer screening)</td>
 </tr>
 <tr class="even">
 <td>F1</td>
 <td>2·P·R/(P+R)</td>
-<td>Imbalanced classes</td>
+<td>Imbalanced; single metric needed</td>
 </tr>
 <tr class="odd">
 <td>AUC-ROC</td>
 <td>Area under ROC curve</td>
-<td>Comparing classifiers</td>
+<td>Ranking quality; threshold-independent</td>
+</tr>
+<tr class="even">
+<td>MCC</td>
+<td>Correlation between predicted/actual</td>
+<td>Best single metric for imbalanced</td>
+</tr>
+<tr class="odd">
+<td>Log loss</td>
+<td><span class="math inline">\(-\frac{1}{n}\sum y_i\log\hat{p}_i\)</span></td>
+<td>Probabilistic predictions</td>
 </tr>
 </tbody>
 </table>
-<hr>
 </section>
-<section id="interview-questions" class="level2" data-number="A.3">
-<h2 data-number="A.3" class="anchored" data-anchor-id="interview-questions"><span class="header-section-number">A.3</span> Interview Questions</h2>
-<div class="callout callout-style-default callout-tip callout-titled" title="Entry Level — ML Screening">
-<div class="callout-header d-flex align-content-center">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-Entry Level — ML Screening
-</div>
-</div>
-<div class="callout-body-container callout-body">
-<p><strong>Q1. What is the bias-variance tradeoff? Give an example of a high-bias and high-variance model.</strong></p>
-<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
-<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-Model Answer
-</div>
-<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
-</div>
-<div id="callout-2" class="callout-2-contents callout-collapse collapse">
-<div class="callout-body-container callout-body">
-<p>Bias and variance are two sources of prediction error that trade off against each other as you change model complexity.</p>
-<p><strong>Bias</strong> is systematic error — the model’s assumption structure causes it to consistently miss the true pattern. A high-bias model underfits: it can’t capture the complexity of the data even with unlimited training examples.</p>
-<p><strong>Variance</strong> is sensitivity error — the model fits the training data too closely, including noise, and fails to generalize to new data. A high-variance model overfits: it memorizes the training set rather than learning the underlying pattern.</p>
-<p><strong>High-bias example:</strong> a linear regression model trained to predict house prices using only square footage, on a dataset where price depends on neighborhood, age, and school district in complex nonlinear ways. The model is too simple to capture the true relationship — it will consistently underpredict expensive houses in good neighborhoods and overpredict cheap houses in poor ones.</p>
-<p><strong>High-variance example:</strong> a decision tree with no depth limit trained on 1,000 samples. It will achieve near-zero training error by creating a unique leaf for every training example. On new data, it performs poorly because it learned the noise in the training set rather than the underlying patterns.</p>
-<p>The tradeoff: as you increase model complexity (more parameters, deeper trees, smaller regularization), bias decreases but variance increases. The optimal model sits at the minimum of total error (bias² + variance + irreducible noise). In practice, regularization, cross-validation, and ensemble methods (bagging reduces variance, boosting reduces bias) are the tools for navigating this tradeoff.</p>
-</div>
-</div>
-</div>
-<p><strong>Q2. When would you use L1 vs.&nbsp;L2 regularization?</strong></p>
-<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
-<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-Model Answer
-</div>
-<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
-</div>
-<div id="callout-3" class="callout-3-contents callout-collapse collapse">
-<div class="callout-body-container callout-body">
-<p>Both L1 and L2 regularization add a penalty term to the loss function to discourage large weights and reduce overfitting, but they have different mathematical properties that make each useful in different situations.</p>
-<p><strong>L2 regularization (Ridge)</strong> adds the sum of squared weights: λΣwᵢ². This shrinks all weights proportionally toward zero but rarely to exactly zero. L2 is the default choice when you believe all features are potentially relevant and you want to reduce their individual influence without eliminating any. It also has a closed-form solution for linear models (unlike L1) and is numerically stable.</p>
-<p><strong>L1 regularization (Lasso)</strong> adds the sum of absolute weights: λΣ|wᵢ|. The absolute value geometry creates corner solutions — many weights get driven to exactly zero, producing sparse models. Use L1 when you suspect many features are irrelevant and want the model to perform automatic feature selection. A model with 500 features where only 20 truly matter will benefit from L1 producing a 20-feature model rather than a 500-feature model with small weights.</p>
-<p><strong>Practical decision criteria:</strong> - High-dimensional data with expected feature sparsity (NLP bag-of-words, genomics): L1 - Dense feature sets where most features are predictive (tabular data with curated features): L2 - Uncertainty about which: Elastic Net, which combines both (α·L1 + (1-α)·L2) - Neural networks: almost always L2 (weight decay), as L1 is harder to optimize with gradient descent</p>
-<p>One important note: in deep learning, L2 regularization applied to weights is mathematically equivalent to “weight decay” in Adam optimization, and the two terms are often used interchangeably.</p>
-</div>
-</div>
-</div>
-<p><strong>Q3. You have a dataset with 95% class A and 5% class B. Your model predicts class A 100% of the time. What is the accuracy, and why is it misleading?</strong></p>
-<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
-<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-Model Answer
-</div>
-<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
-</div>
-<div id="callout-4" class="callout-4-contents callout-collapse collapse">
-<div class="callout-body-container callout-body">
-<p>The accuracy is 95%. If the test set reflects the same 95/5 distribution and the model always predicts class A, it’s correct on all class A examples and wrong on all class B examples: (0.95 × 1.0 + 0.05 × 0.0) = 0.95 = 95% accuracy.</p>
-<p>This is misleading because it creates the illusion of a performing model where there is none. The model has learned nothing — it’s equivalent to a hardcoded “always predict A” rule. It will be completely useless in any application that cares about class B.</p>
-<p>Why this matters: in most imbalanced classification problems, the minority class is the reason the model exists. Fraud detection: 99% of transactions are legitimate, but you’re building the system to catch the 1% that are fraudulent. Cancer screening: most patients are healthy, but the value is detecting the rare positive. A 99% accurate “predict healthy always” model for cancer detection is catastrophically wrong.</p>
-<p><strong>Better metrics for imbalanced classification:</strong> - <strong>Precision</strong> (of the class B predictions the model makes, what fraction are actually class B) — irrelevant here since no class B predictions exist - <strong>Recall</strong> (of all actual class B cases, what fraction does the model catch) — 0% for this model, which immediately exposes the failure - <strong>F1 score</strong> (harmonic mean of precision and recall) — 0 for this model - <strong>AUC-ROC</strong> (area under the ROC curve) — measures ranking quality across all thresholds, insensitive to class imbalance</p>
-<p>The general lesson: always look at per-class metrics for imbalanced data, and validate that your baseline metric isn’t trivially achievable by predicting the majority class.</p>
-</div>
-</div>
-</div>
-<p><strong>Q4. What is cross-validation and why is it better than a single train/test split?</strong></p>
-<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
-<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-Model Answer
-</div>
-<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
-</div>
-<div id="callout-5" class="callout-5-contents callout-collapse collapse">
-<div class="callout-body-container callout-body">
-<p>Cross-validation is a model evaluation technique that partitions data into k folds and performs k training runs, each time using k-1 folds for training and 1 fold for validation. The final performance estimate is the average across all k held-out folds.</p>
-<p>The standard variant is k-fold CV, typically with k=5 or k=10. For each fold, the model trains on 80% (for k=5) of the data and evaluates on the remaining 20%. After 5 runs, every example has served as a validation example exactly once.</p>
-<p><strong>Why it’s better than a single train/test split:</strong></p>
-<p><em>High variance in small datasets.</em> With a small dataset, a single train/test split can yield wildly different performance estimates depending on which examples land in the test set. If your 20% test set happens to contain mostly easy examples, you overestimate performance. Cross-validation averages this variance over multiple splits, giving a more reliable estimate.</p>
-<p><em>Better use of data.</em> A single 80/20 split means 20% of your data is never used for training. Cross-validation trains on 100% of the data (across different folds), which produces better models and better estimates, especially critical when data is limited.</p>
-<p><em>Honest hyperparameter tuning.</em> If you tune hyperparameters to maximize performance on a single test set, you’re effectively training on that test set and the reported performance is optimistic. Cross-validation on the training data for hyperparameter tuning keeps the test set truly held-out.</p>
-<p><em>Confidence intervals.</em> k-fold gives you k performance estimates, from which you can compute mean and standard deviation — quantifying how stable the performance is, not just its point estimate.</p>
-<p>Leave-one-out cross-validation (LOOCV) is the extreme case: k=n, maximum data usage but computationally expensive. For most use cases, k=5 or k=10 is the practical standard.</p>
-</div>
-</div>
-</div>
-<p><strong>Q5. How does gradient descent work at a high level?</strong></p>
-<div class="callout callout-style-default callout-note callout-titled" title="Model Answer">
-<div class="callout-header d-flex align-content-center" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-Model Answer
-</div>
-<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
-</div>
-<div id="callout-6" class="callout-6-contents callout-collapse collapse">
-<div class="callout-body-container callout-body">
-<p>Gradient descent is an iterative optimization algorithm that minimizes a loss function by repeatedly moving model parameters in the direction that most steeply decreases the loss.</p>
-<p>The core intuition: imagine you’re blindfolded on a hilly landscape and want to reach the lowest valley. You feel the slope of the ground under your feet (the gradient) and take a step in the downhill direction. Repeat until you’re no longer going downhill.</p>
-<p>Mathematically: at each iteration, compute the gradient of the loss with respect to every parameter — ∂L/∂θ. This vector points in the direction of steepest ascent. Update parameters by stepping in the opposite direction: θ ← θ - α · ∂L/∂θ, where α (the learning rate) controls step size.</p>
-<p><strong>Three variants differ in how many examples compute each gradient update:</strong></p>
-<p><em>Batch gradient descent</em> computes the gradient over the entire dataset before each update. Accurate gradient estimate, but slow and memory-intensive for large datasets.</p>
-<p><em>Stochastic gradient descent (SGD)</em> computes the gradient from a single training example per update. Fast iterations, noisy gradient estimates. The noise can actually help escape shallow local minima.</p>
-<p><em>Mini-batch gradient descent</em> (what nearly everyone uses) computes gradients from a batch of 32–256 examples. Balances accuracy and speed, vectorizes well on GPUs.</p>
-<p><strong>Key challenges in practice:</strong> - <em>Learning rate:</em> too high → oscillates and diverges; too low → converges slowly or gets stuck. Learning rate schedules (warmup + decay) and adaptive optimizers (Adam, which maintains per-parameter learning rates) address this. - <em>Local minima:</em> in high-dimensional spaces, most critical points are saddle points, not local minima — less of a problem in practice than theoretical concerns suggest. - <em>Gradient vanishing/exploding:</em> gradients become near-zero (vanish) or very large (explode) in deep networks — addressed by careful initialization, gradient clipping, and architectural choices like residual connections.</p>
-</div>
-</div>
-</div>
-</div>
-</div>
+<section id="regression" class="level3" data-number="B.7.2">
+<h3 data-number="B.7.2" class="anchored" data-anchor-id="regression"><span class="header-section-number">B.7.2</span> Regression</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Metric</th>
+<th>Formula</th>
+<th>Sensitive To</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>MAE</td>
+<td><span class="math inline">\(\frac{1}{n}\sum\lvert y_i - \hat{y}_i\rvert\)</span></td>
+<td>All errors equally</td>
+</tr>
+<tr class="even">
+<td>MSE</td>
+<td><span class="math inline">\(\frac{1}{n}\sum(y_i - \hat{y}_i)^2\)</span></td>
+<td>Large errors (squared)</td>
+</tr>
+<tr class="odd">
+<td>RMSE</td>
+<td><span class="math inline">\(\sqrt{\text{MSE}}\)</span></td>
+<td>Large errors; same units as target</td>
+</tr>
+<tr class="even">
+<td>R²</td>
+<td><span class="math inline">\(1 - \frac{SS_{res}}{SS_{tot}}\)</span></td>
+<td>Fraction of variance explained</td>
+</tr>
+<tr class="odd">
+<td>MAPE</td>
+<td><span class="math inline">\(\frac{1}{n}\sum\left\lvert\frac{y_i-\hat{y}_i}{y_i}\right\rvert\)</span></td>
+<td>Relative error (undefined if <span class="math inline">\(y_i=0\)</span>)</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="information-retrieval-rag" class="level3" data-number="B.7.3">
+<h3 data-number="B.7.3" class="anchored" data-anchor-id="information-retrieval-rag"><span class="header-section-number">B.7.3</span> Information Retrieval / RAG</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Metric</th>
+<th>Formula</th>
+<th>What It Measures</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Precision@k</td>
+<td>Relevant in top-k / k</td>
+<td>Quality of top-k results</td>
+</tr>
+<tr class="even">
+<td>Recall@k</td>
+<td>Relevant found in k / total relevant</td>
+<td>Coverage at k</td>
+</tr>
+<tr class="odd">
+<td>MRR</td>
+<td><span class="math inline">\(\frac{1}{\lvert Q\rvert}\sum_q \frac{1}{\text{rank}_q}\)</span></td>
+<td>Rank of first relevant result</td>
+</tr>
+<tr class="even">
+<td>NDCG@k</td>
+<td>Normalized discounted cumulative gain</td>
+<td>Graded relevance with position discount</td>
+</tr>
+<tr class="odd">
+<td>Faithfulness</td>
+<td>Is answer grounded in context?</td>
+<td>RAG hallucination rate</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="big-o-complexity-reference" class="level2" data-number="B.8">
+<h2 data-number="B.8" class="anchored" data-anchor-id="big-o-complexity-reference"><span class="header-section-number">B.8</span> Big-O Complexity Reference</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Operation</th>
+<th>Time</th>
+<th>Space</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Matrix multiply (n×n)</td>
+<td>O(n³)</td>
+<td>O(n²)</td>
+<td>Strassen: O(n^2.37)</td>
+</tr>
+<tr class="even">
+<td>Self-attention (seq len n)</td>
+<td>O(n²·d)</td>
+<td>O(n²)</td>
+<td>Quadratic in sequence length</td>
+</tr>
+<tr class="odd">
+<td>FlashAttention</td>
+<td>O(n²·d)</td>
+<td>O(n)</td>
+<td>Same FLOPs, IO-efficient</td>
+</tr>
+<tr class="even">
+<td>KV cache lookup</td>
+<td>O(1)</td>
+<td>O(n·d) per layer</td>
+<td>Per-token at inference</td>
+</tr>
+<tr class="odd">
+<td>HNSW search</td>
+<td>O(log n)</td>
+<td>O(n)</td>
+<td>ANN approximate</td>
+</tr>
+<tr class="even">
+<td>IVF search</td>
+<td>O(√n·d)</td>
+<td>O(n)</td>
+<td>Exact within clusters</td>
+</tr>
+<tr class="odd">
+<td>Exact k-NN</td>
+<td>O(n·d)</td>
+<td>O(1)</td>
+<td>Brute-force search</td>
+</tr>
+<tr class="even">
+<td>MinHash dedup</td>
+<td>O(n·b)</td>
+<td>O(n)</td>
+<td>b = num hash bands</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="activation-functions" class="level2" data-number="B.9">
+<h2 data-number="B.9" class="anchored" data-anchor-id="activation-functions"><span class="header-section-number">B.9</span> Activation Functions</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+<col style="width: 20%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Function</th>
+<th>Formula</th>
+<th>Range</th>
+<th>Use Case</th>
+<th>Avoid When</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Sigmoid</td>
+<td><span class="math inline">\(\frac{1}{1+e^{-x}}\)</span></td>
+<td>(0,1)</td>
+<td>Binary output layer</td>
+<td>Hidden layers (vanishing gradient)</td>
+</tr>
+<tr class="even">
+<td>Tanh</td>
+<td><span class="math inline">\(\frac{e^x-e^{-x}}{e^x+e^{-x}}\)</span></td>
+<td>(-1,1)</td>
+<td>RNN hidden states</td>
+<td>Deep nets (vanishing gradient)</td>
+</tr>
+<tr class="odd">
+<td>ReLU</td>
+<td><span class="math inline">\(\max(0,x)\)</span></td>
+<td>[0,∞)</td>
+<td>CNNs, MLPs</td>
+<td>Deep nets with poor init (dead neurons)</td>
+</tr>
+<tr class="even">
+<td>Leaky ReLU</td>
+<td><span class="math inline">\(\max(0.01x, x)\)</span></td>
+<td>(-∞,∞)</td>
+<td>When dead ReLUs are a problem</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td>GELU</td>
+<td><span class="math inline">\(x\cdot\Phi(x)\)</span></td>
+<td>≈(-0.17,∞)</td>
+<td>Transformers (BERT, GPT)</td>
+<td>Compute-constrained edge devices</td>
+</tr>
+<tr class="even">
+<td>SiLU/Swish</td>
+<td><span class="math inline">\(x\cdot\sigma(x)\)</span></td>
+<td>≈(-0.28,∞)</td>
+<td>LLaMA, Mistral FFN</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td>Softmax</td>
+<td><span class="math inline">\(\frac{e^{x_i}}{\sum_j e^{x_j}}\)</span></td>
+<td>(0,1), sum=1</td>
+<td>Attention, output layer</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="genai-acronym-reference" class="level2" data-number="B.10">
+<h2 data-number="B.10" class="anchored" data-anchor-id="genai-acronym-reference"><span class="header-section-number">B.10</span> GenAI Acronym Reference</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Acronym</th>
+<th>Full Form</th>
+<th>Key Idea</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>LLM</td>
+<td>Large Language Model</td>
+<td>Autoregressive transformer pretrained on text</td>
+</tr>
+<tr class="even">
+<td>SFT</td>
+<td>Supervised Fine-Tuning</td>
+<td>Train on (instruction, response) pairs</td>
+</tr>
+<tr class="odd">
+<td>RLHF</td>
+<td>Reinforcement Learning from Human Feedback</td>
+<td>PPO on human preference reward</td>
+</tr>
+<tr class="even">
+<td>DPO</td>
+<td>Direct Preference Optimization</td>
+<td>Implicit reward from preference pairs</td>
+</tr>
+<tr class="odd">
+<td>PPO</td>
+<td>Proximal Policy Optimization</td>
+<td>RL algorithm with clipped objective</td>
+</tr>
+<tr class="even">
+<td>GRPO</td>
+<td>Group Relative Policy Optimization</td>
+<td>Group sampling replaces critic model</td>
+</tr>
+<tr class="odd">
+<td>LoRA</td>
+<td>Low-Rank Adaptation</td>
+<td>ΔW = BA, small rank matrices</td>
+</tr>
+<tr class="even">
+<td>QLoRA</td>
+<td>Quantized LoRA</td>
+<td>NF4 4-bit base + LoRA adapter</td>
+</tr>
+<tr class="odd">
+<td>PEFT</td>
+<td>Parameter-Efficient Fine-Tuning</td>
+<td>Umbrella: LoRA, prefix, prompt tuning</td>
+</tr>
+<tr class="even">
+<td>RAG</td>
+<td>Retrieval-Augmented Generation</td>
+<td>Retrieve docs → augment prompt → generate</td>
+</tr>
+<tr class="odd">
+<td>KV Cache</td>
+<td>Key-Value Cache</td>
+<td>Cached attention keys/values for decode</td>
+</tr>
+<tr class="even">
+<td>GQA</td>
+<td>Grouped Query Attention</td>
+<td>Multiple query heads share K/V heads</td>
+</tr>
+<tr class="odd">
+<td>MQA</td>
+<td>Multi-Query Attention</td>
+<td>All query heads share one K/V head</td>
+</tr>
+<tr class="even">
+<td>MHA</td>
+<td>Multi-Head Attention</td>
+<td>Original: Q/K/V heads all equal</td>
+</tr>
+<tr class="odd">
+<td>RoPE</td>
+<td>Rotary Position Embedding</td>
+<td>Positional encoding via rotation</td>
+</tr>
+<tr class="even">
+<td>ALiBi</td>
+<td>Attention with Linear Biases</td>
+<td>Position bias in attention score</td>
+</tr>
+<tr class="odd">
+<td>SAE</td>
+<td>Sparse Autoencoder</td>
+<td>Decomposes activations into sparse features</td>
+</tr>
+<tr class="even">
+<td>MoE</td>
+<td>Mixture of Experts</td>
+<td>Sparse activation of expert FFN layers</td>
+</tr>
+<tr class="odd">
+<td>SSM</td>
+<td>State Space Model</td>
+<td>Recurrent with selective state (Mamba)</td>
+</tr>
+<tr class="even">
+<td>HNSW</td>
+<td>Hierarchical Navigable Small World</td>
+<td>ANN graph index for vector search</td>
+</tr>
+<tr class="odd">
+<td>IVF</td>
+<td>Inverted File Index</td>
+<td>Cluster-based ANN for vector search</td>
+</tr>
+<tr class="even">
+<td>PQ</td>
+<td>Product Quantization</td>
+<td>Compress vectors via subspace quantization</td>
+</tr>
+<tr class="odd">
+<td>TTFT</td>
+<td>Time to First Token</td>
+<td>Latency of prefill phase (user experience)</td>
+</tr>
+<tr class="even">
+<td>TPOT</td>
+<td>Time Per Output Token</td>
+<td>Decode latency per generated token</td>
+</tr>
+<tr class="odd">
+<td>TPS</td>
+<td>Tokens Per Second</td>
+<td>Throughput metric for serving</td>
+</tr>
+<tr class="even">
+<td>vLLM</td>
+<td>Virtual LLM (PagedAttention)</td>
+<td>GPU memory manager for KV cache</td>
+</tr>
+<tr class="odd">
+<td>BPE</td>
+<td>Byte Pair Encoding</td>
+<td>Subword tokenizer via frequency merges</td>
+</tr>
+<tr class="even">
+<td>CFG</td>
+<td>Classifier-Free Guidance</td>
+<td>Scale between conditional and unconditional</td>
+</tr>
+<tr class="odd">
+<td>DDPM</td>
+<td>Denoising Diffusion Probabilistic Model</td>
+<td>Gaussian noise diffusion training</td>
+</tr>
+<tr class="even">
+<td>DDIM</td>
+<td>Denoising Diffusion Implicit Models</td>
+<td>Deterministic, fewer steps</td>
+</tr>
+<tr class="odd">
+<td>MCP</td>
+<td>Model Context Protocol</td>
+<td>Anthropic’s standard for model-tool APIs</td>
+</tr>
+<tr class="even">
+<td>ReAct</td>
+<td>Reason + Act</td>
+<td>Interleaved thought-action agent loop</td>
+</tr>
+<tr class="odd">
+<td>TIES</td>
+<td>Trim, Elect Sign, Merge</td>
+<td>Multi-model merge interference reduction</td>
+</tr>
+<tr class="even">
+<td>DARE</td>
+<td>Drop And REscale</td>
+<td>Sparse task vectors for cleaner merges</td>
+</tr>
+<tr class="odd">
+<td>SLERP</td>
+<td>Spherical Linear Interpolation</td>
+<td>Norm-preserving 2-model merge</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="key-papers-reference" class="level2" data-number="B.11">
+<h2 data-number="B.11" class="anchored" data-anchor-id="key-papers-reference"><span class="header-section-number">B.11</span> Key Papers Reference</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Paper</th>
+<th>Year</th>
+<th>Contribution</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Attention Is All You Need (Vaswani et al.)</td>
+<td>2017</td>
+<td>Transformer architecture</td>
+</tr>
+<tr class="even">
+<td>BERT (Devlin et al.)</td>
+<td>2018</td>
+<td>Bidirectional encoder pretraining</td>
+</tr>
+<tr class="odd">
+<td>GPT-2 (Radford et al.)</td>
+<td>2019</td>
+<td>Autoregressive language model scaling</td>
+</tr>
+<tr class="even">
+<td>GPT-3 (Brown et al.)</td>
+<td>2020</td>
+<td>Few-shot in-context learning</td>
+</tr>
+<tr class="odd">
+<td>LoRA (Hu et al.)</td>
+<td>2021</td>
+<td>Low-rank fine-tuning</td>
+</tr>
+<tr class="even">
+<td>Chinchilla (Hoffmann et al.)</td>
+<td>2022</td>
+<td>Compute-optimal scaling laws</td>
+</tr>
+<tr class="odd">
+<td>RLHF / InstructGPT (Ouyang et al.)</td>
+<td>2022</td>
+<td>Fine-tune with human preferences</td>
+</tr>
+<tr class="even">
+<td>Chain-of-Thought (Wei et al.)</td>
+<td>2022</td>
+<td>Step-by-step reasoning prompting</td>
+</tr>
+<tr class="odd">
+<td>Flash Attention (Dao et al.)</td>
+<td>2022</td>
+<td>IO-efficient exact attention</td>
+</tr>
+<tr class="even">
+<td>DPO (Rafailov et al.)</td>
+<td>2023</td>
+<td>Preference optimization without RL</td>
+</tr>
+<tr class="odd">
+<td>Llama 2 (Touvron et al.)</td>
+<td>2023</td>
+<td>Open-weight instruction-tuned LLMs</td>
+</tr>
+<tr class="even">
+<td>Mamba (Gu &amp; Dao)</td>
+<td>2023</td>
+<td>Selective SSM, O(n) vs O(n²)</td>
+</tr>
+<tr class="odd">
+<td>TIES-Merging (Yadav et al.)</td>
+<td>2023</td>
+<td>Multi-model merging via trim+elect+merge</td>
+</tr>
+<tr class="even">
+<td>Mixtral MoE (Mistral AI)</td>
+<td>2023</td>
+<td>Sparse MoE, 2 of 8 experts active</td>
+</tr>
+<tr class="odd">
+<td>DARE (Yu et al.)</td>
+<td>2023</td>
+<td>Drop 90% of delta, merge cleaner</td>
+</tr>
+<tr class="even">
+<td>DeepSeek R1</td>
+<td>2025</td>
+<td>GRPO + verifiable RL for reasoning</td>
+</tr>
+<tr class="odd">
+<td>LIMA (Zhou et al.)</td>
+<td>2023</td>
+<td>1k curated examples ≈ 52k Alpaca</td>
+</tr>
+<tr class="even">
+<td>QLoRA (Dettmers et al.)</td>
+<td>2023</td>
+<td>4-bit quantized + LoRA fine-tuning</td>
+</tr>
+<tr class="odd">
+<td>Speculative Decoding (Leviathan et al.)</td>
+<td>2023</td>
+<td>Draft-verify for faster decode</td>
+</tr>
+<tr class="even">
+<td>RAGAS</td>
+<td>2023</td>
+<td>RAG evaluation: faithfulness/relevancy</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="interview-qa-entry-level-screening" class="level2" data-number="B.12">
+<h2 data-number="B.12" class="anchored" data-anchor-id="interview-qa-entry-level-screening"><span class="header-section-number">B.12</span> Interview Q&amp;A: Entry-Level Screening</h2>
+<p><strong>Q: What is the bias-variance tradeoff?</strong></p>
+<p>Bias = systematic error from wrong model assumptions (underfitting). Variance = error from sensitivity to training data fluctuations (overfitting). High-bias example: linear regression on a nonlinear problem. High-variance example: decision tree with no depth limit. Increasing complexity reduces bias but raises variance. The goal is the minimum of bias² + variance + irreducible noise.</p>
+<hr>
+<p><strong>Q: When use L1 vs L2 regularization?</strong></p>
+<p>L2 (Ridge): shrinks all weights proportionally, rarely to zero. Use for dense feature sets, neural networks (as weight decay). L1 (Lasso): drives weights to exactly zero, producing sparse models. Use for feature selection, high-dimensional sparse data (NLP bag-of-words). Elastic Net combines both when you’re uncertain.</p>
+<hr>
+<p><strong>Q: Your model has 95% accuracy on a 95/5 class split. Is it good?</strong></p>
+<p>Probably not. A trivial “always predict majority class” baseline achieves 95% accuracy on a 95/5 split. Check: precision = 0, recall = 0, F1 = 0 for the minority class. Use AUC-ROC, F1, or MCC to evaluate imbalanced classifiers, not raw accuracy.</p>
+<hr>
+<p><strong>Q: What is cross-validation and when do you use it?</strong></p>
+<p>k-fold CV trains on k-1 folds, validates on 1, rotates k times, reports average. Use when: dataset is small (reduces variance of performance estimate), hyperparameter tuning (prevents test set leakage), or when you need confidence intervals on performance. Computationally expensive: k=5 means 5× training runs. For large datasets, a single holdout split is often sufficient.</p>
+<hr>
+<p><strong>Q: How does gradient descent work?</strong></p>
+<p>Compute gradient of loss with respect to all parameters (backpropagation). Step in the negative gradient direction: θ ← θ - α·∇L. Repeat until convergence. Mini-batch SGD (batches of 32–256) is the standard variant. Adam extends this with adaptive per-parameter learning rates based on first and second moment estimates of the gradient.</p>
 
 
 <!-- -->
 
+</section>
 </section>
 
 </main> <!-- /main -->
@@ -1321,155 +2433,298 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../chapters/32-observability.html" class="pagination-link" aria-label="LLM Observability &amp; Production Monitoring">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span>
+      <a href="../chapters/38-coding-interview.html" class="pagination-link" aria-label="LLM Coding Interview: Implementing Core Concepts">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">43</span>&nbsp; <span class="chapter-title">LLM Coding Interview: Implementing Core Concepts</span></span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
   </div>
 </nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
-<div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># ML Fundamentals Refresher {#sec-appendix-ml}</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>::: {.callout-note}</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>This appendix covers classical ML concepts that frequently appear in entry-level GenAI interview screening rounds. It assumes you have seen these topics before and need a quick recall pass, not a first introduction.</span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>:::</span>
+<div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="an">title:</span><span class="co"> "ML Fundamentals Refresher"</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu"># ML Fundamentals Refresher {#sec-appendix-ml}</span></span>
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="fu">## Core Algorithms</span></span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>**Linear Regression** — Fits a line (or hyperplane) by minimizing mean squared error. Closed-form solution via normal equations; gradient descent for large datasets. Key assumption: linear relationship between features and target.</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>::: {.callout-note}</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>This appendix is a fast-recall reference for concepts that appear in screening rounds and onsite interviews across all experience levels. Detailed treatment of each topic is in the main chapters.</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>:::</span>
 <span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>**Logistic Regression** — Classification via sigmoid-squashed linear output. Minimizes cross-entropy loss. Despite the name, it's a classifier. Interpretable coefficients. L1/L2 regularization applied directly.</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="fu">## Core Algorithm Quick Reference</span></span>
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>**Decision Trees** — Recursively partition feature space using information gain (entropy) or Gini impurity. Prone to overfitting; depth and min-samples hyperparameters control this.</span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>**SVMs** — Find the maximum-margin hyperplane. Kernel trick extends to non-linear boundaries (RBF, polynomial). Effective in high-dimensional spaces; expensive at scale.</span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>**k-NN** — Classify by majority vote of k nearest neighbors. No training phase (lazy learner). Distance metric choice matters. Degrades in high dimensions (curse of dimensionality).</span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>**K-Means Clustering** — Assign points to k centroids, recompute centroids, repeat. Sensitive to initialization (k-means++). Choose k with elbow method or silhouette score.</span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>**PCA** — Project data onto directions of maximum variance (eigenvectors of covariance matrix). Reduces dimensionality. Features become uninterpretable linear combinations.</span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="fu">## Key Concepts</span></span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>**Bias-Variance Tradeoff** — High bias = underfitting (model too simple). High variance = overfitting (model memorizes training data). Increasing model complexity moves bias down and variance up.</span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>**Regularization** — L2 (Ridge): penalizes large weights, shrinks all weights. L1 (Lasso): can zero out weights, producing sparse models. Both added as λ||w|| term to the loss.</span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>**Cross-Validation** — k-fold CV partitions data into k folds, trains on k-1, evaluates on 1, rotates. Produces more reliable generalization estimates than a single train/val split.</span>
-<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>**Evaluation Metrics**</span>
-<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>| Metric | Formula | When to use |</span>
-<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>| Accuracy | (TP+TN)/(P+N) | Balanced classes |</span>
-<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>| Precision | TP/(TP+FP) | False positives are costly |</span>
-<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>| Recall | TP/(TP+FN) | False negatives are costly |</span>
-<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>| F1 | 2·P·R/(P+R) | Imbalanced classes |</span>
-<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>| AUC-ROC | Area under ROC curve | Comparing classifiers |</span>
-<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>| Algorithm | Loss Function | Output | Regularization | Scale |</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|---|</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>| Linear Regression | MSE | Continuous | L1 (Lasso), L2 (Ridge) | Normal equations: O(n·d²); GD: O(n·d) |</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>| Logistic Regression | Cross-entropy | Probability <span class="co">[</span><span class="ot">0,1</span><span class="co">]</span> | L1/L2 | O(n·d) per epoch |</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>| Decision Tree | Gini/Entropy | Class/Value | max_depth, min_samples | O(n·d·log n) |</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>| Random Forest | Avg of trees | Class/Value | n_estimators, max_features | O(k·n·d·log n) |</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>| Gradient Boosting | Residual MSE/log-loss | Class/Value | learning_rate, max_depth | O(n·d·T) |</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>| SVM | Hinge loss | Class | C (margin width) | O(n²–n³) |</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>| k-NN | — | Majority/mean | k, distance metric | O(n·d) per query |</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>| K-Means | Inertia (SSE) | Cluster ID | k, max_iter | O(n·k·d·T) |</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>| PCA | Variance explained | Low-dim projection | n_components | O(n·d²) or randomized O(n·d·k) |</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>| Naive Bayes | Log-likelihood | Probability | α (Laplace smoothing) | O(n·d) |</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="fu">## Essential Math Reference</span></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a><span class="fu">### Linear Algebra</span></span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>| Symbol/Operation | Meaning | ML Use |</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>| $\mathbf{A}^\top$ | Transpose | Swap rows/cols; $(\mathbf{AB})^\top = \mathbf{B}^\top\mathbf{A}^\top$ |</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>| $\mathbf{A}^{-1}$ | Inverse | Solve $\mathbf{Ax}=\mathbf{b}$: $\mathbf{x}=\mathbf{A}^{-1}\mathbf{b}$ |</span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>| $\|\mathbf{x}\|_2$ | L2 norm | $\sqrt{\sum x_i^2}$ — Euclidean distance |</span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>| $\|\mathbf{x}\|_1$ | L1 norm | $\sum \lvert x_i\rvert$ — Manhattan distance; promotes sparsity |</span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>| $\mathbf{x} \cdot \mathbf{y}$ | Dot product | $\sum x_i y_i = \|\mathbf{x}\|\|\mathbf{y}\|\cos\theta$ |</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>| $\cos\theta$ | Cosine similarity | $\frac{\mathbf{x}\cdot\mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|}$ — embedding similarity |</span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>| Eigenvalue $\lambda$ | $\mathbf{Av} = \lambda\mathbf{v}$ | PCA directions; gradient signal |</span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>| SVD | $\mathbf{A}=\mathbf{U\Sigma V}^\top$ | Dimensionality reduction; LoRA |</span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a>| Rank | Independent rows/cols | LoRA rank r controls parameter budget |</span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>| Trace | $\sum_i A_{ii}$ | $\text{tr}(\mathbf{AB})=\text{tr}(\mathbf{BA})$ |</span>
 <span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Questions</span></span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a><span class="fu">### Probability</span></span>
 <span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip title="Entry Level — ML Screening"}</span>
-<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a>**Q1. What is the bias-variance tradeoff? Give an example of a high-bias and high-variance model.**</span>
-<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
-<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a>Bias and variance are two sources of prediction error that trade off against each other as you change model complexity.</span>
-<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>**Bias** is systematic error — the model's assumption structure causes it to consistently miss the true pattern. A high-bias model underfits: it can't capture the complexity of the data even with unlimited training examples.</span>
-<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>**Variance** is sensitivity error — the model fits the training data too closely, including noise, and fails to generalize to new data. A high-variance model overfits: it memorizes the training set rather than learning the underlying pattern.</span>
-<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>**High-bias example:** a linear regression model trained to predict house prices using only square footage, on a dataset where price depends on neighborhood, age, and school district in complex nonlinear ways. The model is too simple to capture the true relationship — it will consistently underpredict expensive houses in good neighborhoods and overpredict cheap houses in poor ones.</span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a>| Concept | Formula | ML Relevance |</span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a>| Bayes theorem | $P(A\|B) = \frac{P(B\|A)P(A)}{P(B)}$ | Posterior = likelihood × prior / evidence |</span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>| MLE | $\hat\theta = \arg\max_\theta \prod_i P(x_i\|\theta)$ | Maximizes data likelihood |</span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>| MAP | $\hat\theta = \arg\max_\theta P(\theta)\prod_i P(x_i\|\theta)$ | MLE + prior = regularization |</span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a>| KL divergence | $\sum_x p(x)\log\frac{p(x)}{q(x)}$ | Asymmetric; RLHF KL penalty, VAE |</span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a>| Cross-entropy | $-\sum_x p(x)\log q(x) = H(p) + D_{KL}(p\|q)$ | Classification loss |</span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>| Entropy | $H(X) = -\sum_x p(x)\log p(x)$ | Decision tree splits, information theory |</span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a>| Gaussian | $\mathcal{N}(\mu, \sigma^2)$: $f(x) = \frac{1}{\sigma\sqrt{2\pi}}e^{-\frac{(x-\mu)^2}{2\sigma^2}}$ | Weight init, noise modeling |</span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>| CLT | $\bar X \to \mathcal{N}(\mu, \sigma^2/n)$ | Justifies averaging, A/B test stats |</span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a>| p-value | $P(\text{data this extreme} \| H_0 \text{ true})$ | Reject $H_0$ if $p &lt; \alpha = 0.05$ |</span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>| Type I/II error | False positive / False negative | $\alpha$ controls Type I; power = 1 - Type II |</span>
 <span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a>**High-variance example:** a decision tree with no depth limit trained on 1,000 samples. It will achieve near-zero training error by creating a unique leaf for every training example. On new data, it performs poorly because it learned the noise in the training set rather than the underlying patterns.</span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a><span class="fu">### Calculus for ML</span></span>
 <span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a>The tradeoff: as you increase model complexity (more parameters, deeper trees, smaller regularization), bias decreases but variance increases. The optimal model sits at the minimum of total error (bias² + variance + irreducible noise). In practice, regularization, cross-validation, and ensemble methods (bagging reduces variance, boosting reduces bias) are the tools for navigating this tradeoff.</span>
-<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a>**Q2. When would you use L1 vs. L2 regularization?**</span>
-<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
-<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a>Both L1 and L2 regularization add a penalty term to the loss function to discourage large weights and reduce overfitting, but they have different mathematical properties that make each useful in different situations.</span>
-<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a>**L2 regularization (Ridge)** adds the sum of squared weights: λΣwᵢ². This shrinks all weights proportionally toward zero but rarely to exactly zero. L2 is the default choice when you believe all features are potentially relevant and you want to reduce their individual influence without eliminating any. It also has a closed-form solution for linear models (unlike L1) and is numerically stable.</span>
-<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-70"><a href="#cb1-70" aria-hidden="true" tabindex="-1"></a>**L1 regularization (Lasso)** adds the sum of absolute weights: λΣ|wᵢ|. The absolute value geometry creates corner solutions — many weights get driven to exactly zero, producing sparse models. Use L1 when you suspect many features are irrelevant and want the model to perform automatic feature selection. A model with 500 features where only 20 truly matter will benefit from L1 producing a 20-feature model rather than a 500-feature model with small weights.</span>
-<span id="cb1-71"><a href="#cb1-71" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-72"><a href="#cb1-72" aria-hidden="true" tabindex="-1"></a>**Practical decision criteria:**</span>
-<span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>High-dimensional data with expected feature sparsity (NLP bag-of-words, genomics): L1</span>
-<span id="cb1-74"><a href="#cb1-74" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Dense feature sets where most features are predictive (tabular data with curated features): L2</span>
-<span id="cb1-75"><a href="#cb1-75" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Uncertainty about which: Elastic Net, which combines both (α·L1 + (1-α)·L2)</span>
-<span id="cb1-76"><a href="#cb1-76" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Neural networks: almost always L2 (weight decay), as L1 is harder to optimize with gradient descent</span>
-<span id="cb1-77"><a href="#cb1-77" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-78"><a href="#cb1-78" aria-hidden="true" tabindex="-1"></a>One important note: in deep learning, L2 regularization applied to weights is mathematically equivalent to "weight decay" in Adam optimization, and the two terms are often used interchangeably.</span>
-<span id="cb1-79"><a href="#cb1-79" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb1-80"><a href="#cb1-80" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-81"><a href="#cb1-81" aria-hidden="true" tabindex="-1"></a>**Q3. You have a dataset with 95% class A and 5% class B. Your model predicts class A 100% of the time. What is the accuracy, and why is it misleading?**</span>
-<span id="cb1-82"><a href="#cb1-82" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-83"><a href="#cb1-83" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
-<span id="cb1-84"><a href="#cb1-84" aria-hidden="true" tabindex="-1"></a>The accuracy is 95%. If the test set reflects the same 95/5 distribution and the model always predicts class A, it's correct on all class A examples and wrong on all class B examples: (0.95 × 1.0 + 0.05 × 0.0) = 0.95 = 95% accuracy.</span>
-<span id="cb1-85"><a href="#cb1-85" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-86"><a href="#cb1-86" aria-hidden="true" tabindex="-1"></a>This is misleading because it creates the illusion of a performing model where there is none. The model has learned nothing — it's equivalent to a hardcoded "always predict A" rule. It will be completely useless in any application that cares about class B.</span>
-<span id="cb1-87"><a href="#cb1-87" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a>Why this matters: in most imbalanced classification problems, the minority class is the reason the model exists. Fraud detection: 99% of transactions are legitimate, but you're building the system to catch the 1% that are fraudulent. Cancer screening: most patients are healthy, but the value is detecting the rare positive. A 99% accurate "predict healthy always" model for cancer detection is catastrophically wrong.</span>
-<span id="cb1-89"><a href="#cb1-89" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a>**Better metrics for imbalanced classification:**</span>
-<span id="cb1-91"><a href="#cb1-91" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Precision** (of the class B predictions the model makes, what fraction are actually class B) — irrelevant here since no class B predictions exist</span>
-<span id="cb1-92"><a href="#cb1-92" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Recall** (of all actual class B cases, what fraction does the model catch) — 0% for this model, which immediately exposes the failure</span>
-<span id="cb1-93"><a href="#cb1-93" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**F1 score** (harmonic mean of precision and recall) — 0 for this model</span>
-<span id="cb1-94"><a href="#cb1-94" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**AUC-ROC** (area under the ROC curve) — measures ranking quality across all thresholds, insensitive to class imbalance</span>
-<span id="cb1-95"><a href="#cb1-95" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-96"><a href="#cb1-96" aria-hidden="true" tabindex="-1"></a>The general lesson: always look at per-class metrics for imbalanced data, and validate that your baseline metric isn't trivially achievable by predicting the majority class.</span>
-<span id="cb1-97"><a href="#cb1-97" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb1-98"><a href="#cb1-98" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-99"><a href="#cb1-99" aria-hidden="true" tabindex="-1"></a>**Q4. What is cross-validation and why is it better than a single train/test split?**</span>
-<span id="cb1-100"><a href="#cb1-100" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-101"><a href="#cb1-101" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
-<span id="cb1-102"><a href="#cb1-102" aria-hidden="true" tabindex="-1"></a>Cross-validation is a model evaluation technique that partitions data into k folds and performs k training runs, each time using k-1 folds for training and 1 fold for validation. The final performance estimate is the average across all k held-out folds.</span>
-<span id="cb1-103"><a href="#cb1-103" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-104"><a href="#cb1-104" aria-hidden="true" tabindex="-1"></a>The standard variant is k-fold CV, typically with k=5 or k=10. For each fold, the model trains on 80% (for k=5) of the data and evaluates on the remaining 20%. After 5 runs, every example has served as a validation example exactly once.</span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a>| Concept | Formula | ML Use |</span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a>| Gradient | $\nabla_\theta L$ — vector of partial derivatives | Direction of steepest ascent |</span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a>| Chain rule | $\frac{\partial L}{\partial w} = \frac{\partial L}{\partial z}\frac{\partial z}{\partial w}$ | Backpropagation |</span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a>| Jacobian | $J_{ij} = \frac{\partial f_i}{\partial x_j}$ | Multi-output gradients |</span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a>| Hessian | $H_{ij} = \frac{\partial^2 L}{\partial w_i \partial w_j}$ | Second-order optimization |</span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a>| Sigmoid derivative | $\sigma'(x) = \sigma(x)(1-\sigma(x))$ | Vanishes for large $\lvert x\rvert$ — saturation |</span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a>| ReLU derivative | $\text{ReLU}'(x) = \mathbb{1}<span class="co">[</span><span class="ot">x &gt; 0</span><span class="co">]</span>$ | Dead neurons if always $x &lt; 0$ |</span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a><span class="fu">## Regularization Reference</span></span>
+<span id="cb1-70"><a href="#cb1-70" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-71"><a href="#cb1-71" aria-hidden="true" tabindex="-1"></a>| Method | Penalty | Effect | Use When |</span>
+<span id="cb1-72"><a href="#cb1-72" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|</span>
+<span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a>| L2 (Ridge, Weight Decay) | $\lambda\|\mathbf{w}\|_2^2$ | Shrinks all weights | Dense features; neural nets (as weight decay) |</span>
+<span id="cb1-74"><a href="#cb1-74" aria-hidden="true" tabindex="-1"></a>| L1 (Lasso) | $\lambda\|\mathbf{w}\|_1$ | Zeros out weights | Sparse features; feature selection |</span>
+<span id="cb1-75"><a href="#cb1-75" aria-hidden="true" tabindex="-1"></a>| Elastic Net | $\alpha\|\mathbf{w}\|_1 + (1-\alpha)\|\mathbf{w}\|_2^2$ | Both effects | High-dim with correlated features |</span>
+<span id="cb1-76"><a href="#cb1-76" aria-hidden="true" tabindex="-1"></a>| Dropout | Random zero at rate $p$ | Ensemble effect | Neural nets; during training only |</span>
+<span id="cb1-77"><a href="#cb1-77" aria-hidden="true" tabindex="-1"></a>| Early Stopping | Stop at min val loss | Implicit regularization | Always — simple and free |</span>
+<span id="cb1-78"><a href="#cb1-78" aria-hidden="true" tabindex="-1"></a>| Data Augmentation | Transform inputs | Reduces variance | Computer vision; text (synonym swap) |</span>
+<span id="cb1-79"><a href="#cb1-79" aria-hidden="true" tabindex="-1"></a>| BatchNorm | Normalize layer activations | Smooths loss landscape | Deep nets (especially CNNs) |</span>
+<span id="cb1-80"><a href="#cb1-80" aria-hidden="true" tabindex="-1"></a>| Label Smoothing | Replace 1/0 with 0.9/0.1 | Reduces overconfidence | Classification with noisy labels |</span>
+<span id="cb1-81"><a href="#cb1-81" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-82"><a href="#cb1-82" aria-hidden="true" tabindex="-1"></a><span class="fu">## Optimizer Reference</span></span>
+<span id="cb1-83"><a href="#cb1-83" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-84"><a href="#cb1-84" aria-hidden="true" tabindex="-1"></a>| Optimizer | Update Rule | Adaptive LR | Memory Overhead | Best For |</span>
+<span id="cb1-85"><a href="#cb1-85" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|---|</span>
+<span id="cb1-86"><a href="#cb1-86" aria-hidden="true" tabindex="-1"></a>| SGD | $\theta \leftarrow \theta - \alpha g$ | No | 0 | Simple problems; when Adam diverges |</span>
+<span id="cb1-87"><a href="#cb1-87" aria-hidden="true" tabindex="-1"></a>| Momentum | $v \leftarrow \beta v + g$; $\theta \leftarrow \theta - \alpha v$ | No | 1× params | Smooth loss landscapes |</span>
+<span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a>| AdaGrad | $\theta \leftarrow \theta - \frac{\alpha}{\sqrt{G+\epsilon}} g$ | Yes (per-param) | 1× params | Sparse features; embeddings |</span>
+<span id="cb1-89"><a href="#cb1-89" aria-hidden="true" tabindex="-1"></a>| RMSprop | EMA of $g^2$; divide update | Yes | 1× params | RNNs; non-stationary objectives |</span>
+<span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a>| Adam | Momentum + RMSprop | Yes | 2× params | Default for most deep learning |</span>
+<span id="cb1-91"><a href="#cb1-91" aria-hidden="true" tabindex="-1"></a>| AdamW | Adam + explicit weight decay | Yes | 2× params | Transformers (decouples decay from Adam) |</span>
+<span id="cb1-92"><a href="#cb1-92" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-93"><a href="#cb1-93" aria-hidden="true" tabindex="-1"></a>Adam memory: $m_t$ (first moment) + $v_t$ (second moment) = 2× the parameter count in additional optimizer state.</span>
+<span id="cb1-94"><a href="#cb1-94" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-95"><a href="#cb1-95" aria-hidden="true" tabindex="-1"></a><span class="fu">## GPU Hardware Reference</span></span>
+<span id="cb1-96"><a href="#cb1-96" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-97"><a href="#cb1-97" aria-hidden="true" tabindex="-1"></a>| GPU | VRAM | BF16 TFLOPS | Memory BW | NVLink | Use Case |</span>
+<span id="cb1-98"><a href="#cb1-98" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|---|---|</span>
+<span id="cb1-99"><a href="#cb1-99" aria-hidden="true" tabindex="-1"></a>| A100 80GB | 80 GB | 312 | 2.0 TB/s | Yes (600 GB/s) | Training frontier models |</span>
+<span id="cb1-100"><a href="#cb1-100" aria-hidden="true" tabindex="-1"></a>| H100 SXM | 80 GB | 989 | 3.35 TB/s | Yes (900 GB/s) | Current training standard |</span>
+<span id="cb1-101"><a href="#cb1-101" aria-hidden="true" tabindex="-1"></a>| H200 | 141 GB | 989 | 4.8 TB/s | Yes | Large model training/inference |</span>
+<span id="cb1-102"><a href="#cb1-102" aria-hidden="true" tabindex="-1"></a>| A10G | 24 GB | 125 | 600 GB/s | No | Small model inference |</span>
+<span id="cb1-103"><a href="#cb1-103" aria-hidden="true" tabindex="-1"></a>| L40S | 48 GB | 366 | 864 GB/s | No | Mid-size inference |</span>
+<span id="cb1-104"><a href="#cb1-104" aria-hidden="true" tabindex="-1"></a>| RTX 4090 | 24 GB | 82 | 1.0 TB/s | No | Consumer dev/LoRA training |</span>
 <span id="cb1-105"><a href="#cb1-105" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-106"><a href="#cb1-106" aria-hidden="true" tabindex="-1"></a>**Why it's better than a single train/test split:**</span>
+<span id="cb1-106"><a href="#cb1-106" aria-hidden="true" tabindex="-1"></a><span class="fu">## Model Sizing Formulas</span></span>
 <span id="cb1-107"><a href="#cb1-107" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-108"><a href="#cb1-108" aria-hidden="true" tabindex="-1"></a>*High variance in small datasets.* With a small dataset, a single train/test split can yield wildly different performance estimates depending on which examples land in the test set. If your 20% test set happens to contain mostly easy examples, you overestimate performance. Cross-validation averages this variance over multiple splits, giving a more reliable estimate.</span>
-<span id="cb1-109"><a href="#cb1-109" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-110"><a href="#cb1-110" aria-hidden="true" tabindex="-1"></a>*Better use of data.* A single 80/20 split means 20% of your data is never used for training. Cross-validation trains on 100% of the data (across different folds), which produces better models and better estimates, especially critical when data is limited.</span>
+<span id="cb1-108"><a href="#cb1-108" aria-hidden="true" tabindex="-1"></a>**Parameters from architecture:**</span>
+<span id="cb1-109"><a href="#cb1-109" aria-hidden="true" tabindex="-1"></a>$$\text{Params} \approx 12 \cdot n_{layers} \cdot d_{model}^2$$</span>
+<span id="cb1-110"><a href="#cb1-110" aria-hidden="true" tabindex="-1"></a>(Accounts for: 4 attention weight matrices of $d_{model}^2/4$ each, 2 FFN layers of $4 \cdot d_{model}^2$ each)</span>
 <span id="cb1-111"><a href="#cb1-111" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-112"><a href="#cb1-112" aria-hidden="true" tabindex="-1"></a>*Honest hyperparameter tuning.* If you tune hyperparameters to maximize performance on a single test set, you're effectively training on that test set and the reported performance is optimistic. Cross-validation on the training data for hyperparameter tuning keeps the test set truly held-out.</span>
-<span id="cb1-113"><a href="#cb1-113" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-114"><a href="#cb1-114" aria-hidden="true" tabindex="-1"></a>*Confidence intervals.* k-fold gives you k performance estimates, from which you can compute mean and standard deviation — quantifying how stable the performance is, not just its point estimate.</span>
+<span id="cb1-112"><a href="#cb1-112" aria-hidden="true" tabindex="-1"></a>**Memory for inference (BF16):**</span>
+<span id="cb1-113"><a href="#cb1-113" aria-hidden="true" tabindex="-1"></a>$$\text{VRAM (GB)} = \frac{\text{Params} \times 2}{10^9}$$</span>
+<span id="cb1-114"><a href="#cb1-114" aria-hidden="true" tabindex="-1"></a>(2 bytes per parameter in BF16)</span>
 <span id="cb1-115"><a href="#cb1-115" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-116"><a href="#cb1-116" aria-hidden="true" tabindex="-1"></a>Leave-one-out cross-validation (LOOCV) is the extreme case: k=n, maximum data usage but computationally expensive. For most use cases, k=5 or k=10 is the practical standard.</span>
-<span id="cb1-117"><a href="#cb1-117" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb1-118"><a href="#cb1-118" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-119"><a href="#cb1-119" aria-hidden="true" tabindex="-1"></a>**Q5. How does gradient descent work at a high level?**</span>
-<span id="cb1-120"><a href="#cb1-120" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-121"><a href="#cb1-121" aria-hidden="true" tabindex="-1"></a>::: {.callout-note collapse="true" title="Model Answer"}</span>
-<span id="cb1-122"><a href="#cb1-122" aria-hidden="true" tabindex="-1"></a>Gradient descent is an iterative optimization algorithm that minimizes a loss function by repeatedly moving model parameters in the direction that most steeply decreases the loss.</span>
+<span id="cb1-116"><a href="#cb1-116" aria-hidden="true" tabindex="-1"></a>**Memory for training (full precision + Adam):**</span>
+<span id="cb1-117"><a href="#cb1-117" aria-hidden="true" tabindex="-1"></a>$$\text{VRAM (GB)} = \frac{\text{Params} \times 16}{10^9}$$</span>
+<span id="cb1-118"><a href="#cb1-118" aria-hidden="true" tabindex="-1"></a>(2 for weights + 2 for gradients + 4 for Adam $m_t$ + 4 for Adam $v_t$ + 4 for optimizer fp32 copy)</span>
+<span id="cb1-119"><a href="#cb1-119" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-120"><a href="#cb1-120" aria-hidden="true" tabindex="-1"></a>**KV cache per token per layer:**</span>
+<span id="cb1-121"><a href="#cb1-121" aria-hidden="true" tabindex="-1"></a>$$\text{KV cache per token} = 4 \times d_{model} \times \text{bytes per param}$$</span>
+<span id="cb1-122"><a href="#cb1-122" aria-hidden="true" tabindex="-1"></a>(2 for K, 2 for V; each of size $d_{model}$)</span>
 <span id="cb1-123"><a href="#cb1-123" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-124"><a href="#cb1-124" aria-hidden="true" tabindex="-1"></a>The core intuition: imagine you're blindfolded on a hilly landscape and want to reach the lowest valley. You feel the slope of the ground under your feet (the gradient) and take a step in the downhill direction. Repeat until you're no longer going downhill.</span>
+<span id="cb1-124"><a href="#cb1-124" aria-hidden="true" tabindex="-1"></a>**Quick estimates:**</span>
 <span id="cb1-125"><a href="#cb1-125" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-126"><a href="#cb1-126" aria-hidden="true" tabindex="-1"></a>Mathematically: at each iteration, compute the gradient of the loss with respect to every parameter — ∂L/∂θ. This vector points in the direction of steepest ascent. Update parameters by stepping in the opposite direction: θ ← θ - α · ∂L/∂θ, where α (the learning rate) controls step size.</span>
-<span id="cb1-127"><a href="#cb1-127" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-128"><a href="#cb1-128" aria-hidden="true" tabindex="-1"></a>**Three variants differ in how many examples compute each gradient update:**</span>
-<span id="cb1-129"><a href="#cb1-129" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-130"><a href="#cb1-130" aria-hidden="true" tabindex="-1"></a>*Batch gradient descent* computes the gradient over the entire dataset before each update. Accurate gradient estimate, but slow and memory-intensive for large datasets.</span>
-<span id="cb1-131"><a href="#cb1-131" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-132"><a href="#cb1-132" aria-hidden="true" tabindex="-1"></a>*Stochastic gradient descent (SGD)* computes the gradient from a single training example per update. Fast iterations, noisy gradient estimates. The noise can actually help escape shallow local minima.</span>
-<span id="cb1-133"><a href="#cb1-133" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-134"><a href="#cb1-134" aria-hidden="true" tabindex="-1"></a>*Mini-batch gradient descent* (what nearly everyone uses) computes gradients from a batch of 32–256 examples. Balances accuracy and speed, vectorizes well on GPUs.</span>
-<span id="cb1-135"><a href="#cb1-135" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-136"><a href="#cb1-136" aria-hidden="true" tabindex="-1"></a>**Key challenges in practice:**</span>
-<span id="cb1-137"><a href="#cb1-137" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>*Learning rate:* too high → oscillates and diverges; too low → converges slowly or gets stuck. Learning rate schedules (warmup + decay) and adaptive optimizers (Adam, which maintains per-parameter learning rates) address this.</span>
-<span id="cb1-138"><a href="#cb1-138" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>*Local minima:* in high-dimensional spaces, most critical points are saddle points, not local minima — less of a problem in practice than theoretical concerns suggest.</span>
-<span id="cb1-139"><a href="#cb1-139" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>*Gradient vanishing/exploding:* gradients become near-zero (vanish) or very large (explode) in deep networks — addressed by careful initialization, gradient clipping, and architectural choices like residual connections.</span>
-<span id="cb1-140"><a href="#cb1-140" aria-hidden="true" tabindex="-1"></a>:::</span>
-<span id="cb1-141"><a href="#cb1-141" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-142"><a href="#cb1-142" aria-hidden="true" tabindex="-1"></a>:::</span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+<span id="cb1-126"><a href="#cb1-126" aria-hidden="true" tabindex="-1"></a>| Model | Params | BF16 inference | Full train |</span>
+<span id="cb1-127"><a href="#cb1-127" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|</span>
+<span id="cb1-128"><a href="#cb1-128" aria-hidden="true" tabindex="-1"></a>| 7B | 7B | ~14 GB | ~112 GB |</span>
+<span id="cb1-129"><a href="#cb1-129" aria-hidden="true" tabindex="-1"></a>| 13B | 13B | ~26 GB | ~208 GB |</span>
+<span id="cb1-130"><a href="#cb1-130" aria-hidden="true" tabindex="-1"></a>| 70B | 70B | ~140 GB | ~1.1 TB |</span>
+<span id="cb1-131"><a href="#cb1-131" aria-hidden="true" tabindex="-1"></a>| 405B | 405B | ~810 GB | ~6.5 TB |</span>
+<span id="cb1-132"><a href="#cb1-132" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-133"><a href="#cb1-133" aria-hidden="true" tabindex="-1"></a><span class="fu">## Evaluation Metrics Quick Reference</span></span>
+<span id="cb1-134"><a href="#cb1-134" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-135"><a href="#cb1-135" aria-hidden="true" tabindex="-1"></a><span class="fu">### Classification</span></span>
+<span id="cb1-136"><a href="#cb1-136" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-137"><a href="#cb1-137" aria-hidden="true" tabindex="-1"></a>| Metric | Formula | Use When |</span>
+<span id="cb1-138"><a href="#cb1-138" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-139"><a href="#cb1-139" aria-hidden="true" tabindex="-1"></a>| Accuracy | (TP+TN)/(P+N) | Balanced classes only |</span>
+<span id="cb1-140"><a href="#cb1-140" aria-hidden="true" tabindex="-1"></a>| Precision | TP/(TP+FP) | False positives are costly (spam filter) |</span>
+<span id="cb1-141"><a href="#cb1-141" aria-hidden="true" tabindex="-1"></a>| Recall | TP/(TP+FN) | False negatives are costly (cancer screening) |</span>
+<span id="cb1-142"><a href="#cb1-142" aria-hidden="true" tabindex="-1"></a>| F1 | 2·P·R/(P+R) | Imbalanced; single metric needed |</span>
+<span id="cb1-143"><a href="#cb1-143" aria-hidden="true" tabindex="-1"></a>| AUC-ROC | Area under ROC curve | Ranking quality; threshold-independent |</span>
+<span id="cb1-144"><a href="#cb1-144" aria-hidden="true" tabindex="-1"></a>| MCC | Correlation between predicted/actual | Best single metric for imbalanced |</span>
+<span id="cb1-145"><a href="#cb1-145" aria-hidden="true" tabindex="-1"></a>| Log loss | $-\frac{1}{n}\sum y_i\log\hat{p}_i$ | Probabilistic predictions |</span>
+<span id="cb1-146"><a href="#cb1-146" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-147"><a href="#cb1-147" aria-hidden="true" tabindex="-1"></a><span class="fu">### Regression</span></span>
+<span id="cb1-148"><a href="#cb1-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-149"><a href="#cb1-149" aria-hidden="true" tabindex="-1"></a>| Metric | Formula | Sensitive To |</span>
+<span id="cb1-150"><a href="#cb1-150" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-151"><a href="#cb1-151" aria-hidden="true" tabindex="-1"></a>| MAE | $\frac{1}{n}\sum\lvert y_i - \hat{y}_i\rvert$ | All errors equally |</span>
+<span id="cb1-152"><a href="#cb1-152" aria-hidden="true" tabindex="-1"></a>| MSE | $\frac{1}{n}\sum(y_i - \hat{y}_i)^2$ | Large errors (squared) |</span>
+<span id="cb1-153"><a href="#cb1-153" aria-hidden="true" tabindex="-1"></a>| RMSE | $\sqrt{\text{MSE}}$ | Large errors; same units as target |</span>
+<span id="cb1-154"><a href="#cb1-154" aria-hidden="true" tabindex="-1"></a>| R² | $1 - \frac{SS_{res}}{SS_{tot}}$ | Fraction of variance explained |</span>
+<span id="cb1-155"><a href="#cb1-155" aria-hidden="true" tabindex="-1"></a>| MAPE | $\frac{1}{n}\sum\left\lvert\frac{y_i-\hat{y}_i}{y_i}\right\rvert$ | Relative error (undefined if $y_i=0$) |</span>
+<span id="cb1-156"><a href="#cb1-156" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-157"><a href="#cb1-157" aria-hidden="true" tabindex="-1"></a><span class="fu">### Information Retrieval / RAG</span></span>
+<span id="cb1-158"><a href="#cb1-158" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-159"><a href="#cb1-159" aria-hidden="true" tabindex="-1"></a>| Metric | Formula | What It Measures |</span>
+<span id="cb1-160"><a href="#cb1-160" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-161"><a href="#cb1-161" aria-hidden="true" tabindex="-1"></a>| Precision@k | Relevant in top-k / k | Quality of top-k results |</span>
+<span id="cb1-162"><a href="#cb1-162" aria-hidden="true" tabindex="-1"></a>| Recall@k | Relevant found in k / total relevant | Coverage at k |</span>
+<span id="cb1-163"><a href="#cb1-163" aria-hidden="true" tabindex="-1"></a>| MRR | $\frac{1}{\lvert Q\rvert}\sum_q \frac{1}{\text{rank}_q}$ | Rank of first relevant result |</span>
+<span id="cb1-164"><a href="#cb1-164" aria-hidden="true" tabindex="-1"></a>| NDCG@k | Normalized discounted cumulative gain | Graded relevance with position discount |</span>
+<span id="cb1-165"><a href="#cb1-165" aria-hidden="true" tabindex="-1"></a>| Faithfulness | Is answer grounded in context? | RAG hallucination rate |</span>
+<span id="cb1-166"><a href="#cb1-166" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-167"><a href="#cb1-167" aria-hidden="true" tabindex="-1"></a><span class="fu">## Big-O Complexity Reference</span></span>
+<span id="cb1-168"><a href="#cb1-168" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-169"><a href="#cb1-169" aria-hidden="true" tabindex="-1"></a>| Operation | Time | Space | Notes |</span>
+<span id="cb1-170"><a href="#cb1-170" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|</span>
+<span id="cb1-171"><a href="#cb1-171" aria-hidden="true" tabindex="-1"></a>| Matrix multiply (n×n) | O(n³) | O(n²) | Strassen: O(n^2.37) |</span>
+<span id="cb1-172"><a href="#cb1-172" aria-hidden="true" tabindex="-1"></a>| Self-attention (seq len n) | O(n²·d) | O(n²) | Quadratic in sequence length |</span>
+<span id="cb1-173"><a href="#cb1-173" aria-hidden="true" tabindex="-1"></a>| FlashAttention | O(n²·d) | O(n) | Same FLOPs, IO-efficient |</span>
+<span id="cb1-174"><a href="#cb1-174" aria-hidden="true" tabindex="-1"></a>| KV cache lookup | O(1) | O(n·d) per layer | Per-token at inference |</span>
+<span id="cb1-175"><a href="#cb1-175" aria-hidden="true" tabindex="-1"></a>| HNSW search | O(log n) | O(n) | ANN approximate |</span>
+<span id="cb1-176"><a href="#cb1-176" aria-hidden="true" tabindex="-1"></a>| IVF search | O(√n·d) | O(n) | Exact within clusters |</span>
+<span id="cb1-177"><a href="#cb1-177" aria-hidden="true" tabindex="-1"></a>| Exact k-NN | O(n·d) | O(1) | Brute-force search |</span>
+<span id="cb1-178"><a href="#cb1-178" aria-hidden="true" tabindex="-1"></a>| MinHash dedup | O(n·b) | O(n) | b = num hash bands |</span>
+<span id="cb1-179"><a href="#cb1-179" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-180"><a href="#cb1-180" aria-hidden="true" tabindex="-1"></a><span class="fu">## Activation Functions</span></span>
+<span id="cb1-181"><a href="#cb1-181" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-182"><a href="#cb1-182" aria-hidden="true" tabindex="-1"></a>| Function | Formula | Range | Use Case | Avoid When |</span>
+<span id="cb1-183"><a href="#cb1-183" aria-hidden="true" tabindex="-1"></a>|---|---|---|---|---|</span>
+<span id="cb1-184"><a href="#cb1-184" aria-hidden="true" tabindex="-1"></a>| Sigmoid | $\frac{1}{1+e^{-x}}$ | (0,1) | Binary output layer | Hidden layers (vanishing gradient) |</span>
+<span id="cb1-185"><a href="#cb1-185" aria-hidden="true" tabindex="-1"></a>| Tanh | $\frac{e^x-e^{-x}}{e^x+e^{-x}}$ | (-1,1) | RNN hidden states | Deep nets (vanishing gradient) |</span>
+<span id="cb1-186"><a href="#cb1-186" aria-hidden="true" tabindex="-1"></a>| ReLU | $\max(0,x)$ | [0,∞) | CNNs, MLPs | Deep nets with poor init (dead neurons) |</span>
+<span id="cb1-187"><a href="#cb1-187" aria-hidden="true" tabindex="-1"></a>| Leaky ReLU | $\max(0.01x, x)$ | (-∞,∞) | When dead ReLUs are a problem | — |</span>
+<span id="cb1-188"><a href="#cb1-188" aria-hidden="true" tabindex="-1"></a>| GELU | $x\cdot\Phi(x)$ | ≈(-0.17,∞) | Transformers (BERT, GPT) | Compute-constrained edge devices |</span>
+<span id="cb1-189"><a href="#cb1-189" aria-hidden="true" tabindex="-1"></a>| SiLU/Swish | $x\cdot\sigma(x)$ | ≈(-0.28,∞) | LLaMA, Mistral FFN | — |</span>
+<span id="cb1-190"><a href="#cb1-190" aria-hidden="true" tabindex="-1"></a>| Softmax | $\frac{e^{x_i}}{\sum_j e^{x_j}}$ | (0,1), sum=1 | Attention, output layer | — |</span>
+<span id="cb1-191"><a href="#cb1-191" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-192"><a href="#cb1-192" aria-hidden="true" tabindex="-1"></a><span class="fu">## GenAI Acronym Reference</span></span>
+<span id="cb1-193"><a href="#cb1-193" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-194"><a href="#cb1-194" aria-hidden="true" tabindex="-1"></a>| Acronym | Full Form | Key Idea |</span>
+<span id="cb1-195"><a href="#cb1-195" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-196"><a href="#cb1-196" aria-hidden="true" tabindex="-1"></a>| LLM | Large Language Model | Autoregressive transformer pretrained on text |</span>
+<span id="cb1-197"><a href="#cb1-197" aria-hidden="true" tabindex="-1"></a>| SFT | Supervised Fine-Tuning | Train on (instruction, response) pairs |</span>
+<span id="cb1-198"><a href="#cb1-198" aria-hidden="true" tabindex="-1"></a>| RLHF | Reinforcement Learning from Human Feedback | PPO on human preference reward |</span>
+<span id="cb1-199"><a href="#cb1-199" aria-hidden="true" tabindex="-1"></a>| DPO | Direct Preference Optimization | Implicit reward from preference pairs |</span>
+<span id="cb1-200"><a href="#cb1-200" aria-hidden="true" tabindex="-1"></a>| PPO | Proximal Policy Optimization | RL algorithm with clipped objective |</span>
+<span id="cb1-201"><a href="#cb1-201" aria-hidden="true" tabindex="-1"></a>| GRPO | Group Relative Policy Optimization | Group sampling replaces critic model |</span>
+<span id="cb1-202"><a href="#cb1-202" aria-hidden="true" tabindex="-1"></a>| LoRA | Low-Rank Adaptation | ΔW = BA, small rank matrices |</span>
+<span id="cb1-203"><a href="#cb1-203" aria-hidden="true" tabindex="-1"></a>| QLoRA | Quantized LoRA | NF4 4-bit base + LoRA adapter |</span>
+<span id="cb1-204"><a href="#cb1-204" aria-hidden="true" tabindex="-1"></a>| PEFT | Parameter-Efficient Fine-Tuning | Umbrella: LoRA, prefix, prompt tuning |</span>
+<span id="cb1-205"><a href="#cb1-205" aria-hidden="true" tabindex="-1"></a>| RAG | Retrieval-Augmented Generation | Retrieve docs → augment prompt → generate |</span>
+<span id="cb1-206"><a href="#cb1-206" aria-hidden="true" tabindex="-1"></a>| KV Cache | Key-Value Cache | Cached attention keys/values for decode |</span>
+<span id="cb1-207"><a href="#cb1-207" aria-hidden="true" tabindex="-1"></a>| GQA | Grouped Query Attention | Multiple query heads share K/V heads |</span>
+<span id="cb1-208"><a href="#cb1-208" aria-hidden="true" tabindex="-1"></a>| MQA | Multi-Query Attention | All query heads share one K/V head |</span>
+<span id="cb1-209"><a href="#cb1-209" aria-hidden="true" tabindex="-1"></a>| MHA | Multi-Head Attention | Original: Q/K/V heads all equal |</span>
+<span id="cb1-210"><a href="#cb1-210" aria-hidden="true" tabindex="-1"></a>| RoPE | Rotary Position Embedding | Positional encoding via rotation |</span>
+<span id="cb1-211"><a href="#cb1-211" aria-hidden="true" tabindex="-1"></a>| ALiBi | Attention with Linear Biases | Position bias in attention score |</span>
+<span id="cb1-212"><a href="#cb1-212" aria-hidden="true" tabindex="-1"></a>| SAE | Sparse Autoencoder | Decomposes activations into sparse features |</span>
+<span id="cb1-213"><a href="#cb1-213" aria-hidden="true" tabindex="-1"></a>| MoE | Mixture of Experts | Sparse activation of expert FFN layers |</span>
+<span id="cb1-214"><a href="#cb1-214" aria-hidden="true" tabindex="-1"></a>| SSM | State Space Model | Recurrent with selective state (Mamba) |</span>
+<span id="cb1-215"><a href="#cb1-215" aria-hidden="true" tabindex="-1"></a>| HNSW | Hierarchical Navigable Small World | ANN graph index for vector search |</span>
+<span id="cb1-216"><a href="#cb1-216" aria-hidden="true" tabindex="-1"></a>| IVF | Inverted File Index | Cluster-based ANN for vector search |</span>
+<span id="cb1-217"><a href="#cb1-217" aria-hidden="true" tabindex="-1"></a>| PQ | Product Quantization | Compress vectors via subspace quantization |</span>
+<span id="cb1-218"><a href="#cb1-218" aria-hidden="true" tabindex="-1"></a>| TTFT | Time to First Token | Latency of prefill phase (user experience) |</span>
+<span id="cb1-219"><a href="#cb1-219" aria-hidden="true" tabindex="-1"></a>| TPOT | Time Per Output Token | Decode latency per generated token |</span>
+<span id="cb1-220"><a href="#cb1-220" aria-hidden="true" tabindex="-1"></a>| TPS | Tokens Per Second | Throughput metric for serving |</span>
+<span id="cb1-221"><a href="#cb1-221" aria-hidden="true" tabindex="-1"></a>| vLLM | Virtual LLM (PagedAttention) | GPU memory manager for KV cache |</span>
+<span id="cb1-222"><a href="#cb1-222" aria-hidden="true" tabindex="-1"></a>| BPE | Byte Pair Encoding | Subword tokenizer via frequency merges |</span>
+<span id="cb1-223"><a href="#cb1-223" aria-hidden="true" tabindex="-1"></a>| CFG | Classifier-Free Guidance | Scale between conditional and unconditional |</span>
+<span id="cb1-224"><a href="#cb1-224" aria-hidden="true" tabindex="-1"></a>| DDPM | Denoising Diffusion Probabilistic Model | Gaussian noise diffusion training |</span>
+<span id="cb1-225"><a href="#cb1-225" aria-hidden="true" tabindex="-1"></a>| DDIM | Denoising Diffusion Implicit Models | Deterministic, fewer steps |</span>
+<span id="cb1-226"><a href="#cb1-226" aria-hidden="true" tabindex="-1"></a>| MCP | Model Context Protocol | Anthropic's standard for model-tool APIs |</span>
+<span id="cb1-227"><a href="#cb1-227" aria-hidden="true" tabindex="-1"></a>| ReAct | Reason + Act | Interleaved thought-action agent loop |</span>
+<span id="cb1-228"><a href="#cb1-228" aria-hidden="true" tabindex="-1"></a>| TIES | Trim, Elect Sign, Merge | Multi-model merge interference reduction |</span>
+<span id="cb1-229"><a href="#cb1-229" aria-hidden="true" tabindex="-1"></a>| DARE | Drop And REscale | Sparse task vectors for cleaner merges |</span>
+<span id="cb1-230"><a href="#cb1-230" aria-hidden="true" tabindex="-1"></a>| SLERP | Spherical Linear Interpolation | Norm-preserving 2-model merge |</span>
+<span id="cb1-231"><a href="#cb1-231" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-232"><a href="#cb1-232" aria-hidden="true" tabindex="-1"></a><span class="fu">## Key Papers Reference</span></span>
+<span id="cb1-233"><a href="#cb1-233" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-234"><a href="#cb1-234" aria-hidden="true" tabindex="-1"></a>| Paper | Year | Contribution |</span>
+<span id="cb1-235"><a href="#cb1-235" aria-hidden="true" tabindex="-1"></a>|---|---|---|</span>
+<span id="cb1-236"><a href="#cb1-236" aria-hidden="true" tabindex="-1"></a>| Attention Is All You Need (Vaswani et al.) | 2017 | Transformer architecture |</span>
+<span id="cb1-237"><a href="#cb1-237" aria-hidden="true" tabindex="-1"></a>| BERT (Devlin et al.) | 2018 | Bidirectional encoder pretraining |</span>
+<span id="cb1-238"><a href="#cb1-238" aria-hidden="true" tabindex="-1"></a>| GPT-2 (Radford et al.) | 2019 | Autoregressive language model scaling |</span>
+<span id="cb1-239"><a href="#cb1-239" aria-hidden="true" tabindex="-1"></a>| GPT-3 (Brown et al.) | 2020 | Few-shot in-context learning |</span>
+<span id="cb1-240"><a href="#cb1-240" aria-hidden="true" tabindex="-1"></a>| LoRA (Hu et al.) | 2021 | Low-rank fine-tuning |</span>
+<span id="cb1-241"><a href="#cb1-241" aria-hidden="true" tabindex="-1"></a>| Chinchilla (Hoffmann et al.) | 2022 | Compute-optimal scaling laws |</span>
+<span id="cb1-242"><a href="#cb1-242" aria-hidden="true" tabindex="-1"></a>| RLHF / InstructGPT (Ouyang et al.) | 2022 | Fine-tune with human preferences |</span>
+<span id="cb1-243"><a href="#cb1-243" aria-hidden="true" tabindex="-1"></a>| Chain-of-Thought (Wei et al.) | 2022 | Step-by-step reasoning prompting |</span>
+<span id="cb1-244"><a href="#cb1-244" aria-hidden="true" tabindex="-1"></a>| Flash Attention (Dao et al.) | 2022 | IO-efficient exact attention |</span>
+<span id="cb1-245"><a href="#cb1-245" aria-hidden="true" tabindex="-1"></a>| DPO (Rafailov et al.) | 2023 | Preference optimization without RL |</span>
+<span id="cb1-246"><a href="#cb1-246" aria-hidden="true" tabindex="-1"></a>| Llama 2 (Touvron et al.) | 2023 | Open-weight instruction-tuned LLMs |</span>
+<span id="cb1-247"><a href="#cb1-247" aria-hidden="true" tabindex="-1"></a>| Mamba (Gu &amp; Dao) | 2023 | Selective SSM, O(n) vs O(n²) |</span>
+<span id="cb1-248"><a href="#cb1-248" aria-hidden="true" tabindex="-1"></a>| TIES-Merging (Yadav et al.) | 2023 | Multi-model merging via trim+elect+merge |</span>
+<span id="cb1-249"><a href="#cb1-249" aria-hidden="true" tabindex="-1"></a>| Mixtral MoE (Mistral AI) | 2023 | Sparse MoE, 2 of 8 experts active |</span>
+<span id="cb1-250"><a href="#cb1-250" aria-hidden="true" tabindex="-1"></a>| DARE (Yu et al.) | 2023 | Drop 90% of delta, merge cleaner |</span>
+<span id="cb1-251"><a href="#cb1-251" aria-hidden="true" tabindex="-1"></a>| DeepSeek R1 | 2025 | GRPO + verifiable RL for reasoning |</span>
+<span id="cb1-252"><a href="#cb1-252" aria-hidden="true" tabindex="-1"></a>| LIMA (Zhou et al.) | 2023 | 1k curated examples ≈ 52k Alpaca |</span>
+<span id="cb1-253"><a href="#cb1-253" aria-hidden="true" tabindex="-1"></a>| QLoRA (Dettmers et al.) | 2023 | 4-bit quantized + LoRA fine-tuning |</span>
+<span id="cb1-254"><a href="#cb1-254" aria-hidden="true" tabindex="-1"></a>| Speculative Decoding (Leviathan et al.) | 2023 | Draft-verify for faster decode |</span>
+<span id="cb1-255"><a href="#cb1-255" aria-hidden="true" tabindex="-1"></a>| RAGAS | 2023 | RAG evaluation: faithfulness/relevancy |</span>
+<span id="cb1-256"><a href="#cb1-256" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-257"><a href="#cb1-257" aria-hidden="true" tabindex="-1"></a><span class="fu">## Interview Q&amp;A: Entry-Level Screening</span></span>
+<span id="cb1-258"><a href="#cb1-258" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-259"><a href="#cb1-259" aria-hidden="true" tabindex="-1"></a>**Q: What is the bias-variance tradeoff?**</span>
+<span id="cb1-260"><a href="#cb1-260" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-261"><a href="#cb1-261" aria-hidden="true" tabindex="-1"></a>Bias = systematic error from wrong model assumptions (underfitting). Variance = error from sensitivity to training data fluctuations (overfitting). High-bias example: linear regression on a nonlinear problem. High-variance example: decision tree with no depth limit. Increasing complexity reduces bias but raises variance. The goal is the minimum of bias² + variance + irreducible noise.</span>
+<span id="cb1-262"><a href="#cb1-262" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-263"><a href="#cb1-263" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-264"><a href="#cb1-264" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-265"><a href="#cb1-265" aria-hidden="true" tabindex="-1"></a>**Q: When use L1 vs L2 regularization?**</span>
+<span id="cb1-266"><a href="#cb1-266" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-267"><a href="#cb1-267" aria-hidden="true" tabindex="-1"></a>L2 (Ridge): shrinks all weights proportionally, rarely to zero. Use for dense feature sets, neural networks (as weight decay). L1 (Lasso): drives weights to exactly zero, producing sparse models. Use for feature selection, high-dimensional sparse data (NLP bag-of-words). Elastic Net combines both when you're uncertain.</span>
+<span id="cb1-268"><a href="#cb1-268" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-269"><a href="#cb1-269" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-270"><a href="#cb1-270" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-271"><a href="#cb1-271" aria-hidden="true" tabindex="-1"></a>**Q: Your model has 95% accuracy on a 95/5 class split. Is it good?**</span>
+<span id="cb1-272"><a href="#cb1-272" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-273"><a href="#cb1-273" aria-hidden="true" tabindex="-1"></a>Probably not. A trivial "always predict majority class" baseline achieves 95% accuracy on a 95/5 split. Check: precision = 0, recall = 0, F1 = 0 for the minority class. Use AUC-ROC, F1, or MCC to evaluate imbalanced classifiers, not raw accuracy.</span>
+<span id="cb1-274"><a href="#cb1-274" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-275"><a href="#cb1-275" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-276"><a href="#cb1-276" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-277"><a href="#cb1-277" aria-hidden="true" tabindex="-1"></a>**Q: What is cross-validation and when do you use it?**</span>
+<span id="cb1-278"><a href="#cb1-278" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-279"><a href="#cb1-279" aria-hidden="true" tabindex="-1"></a>k-fold CV trains on k-1 folds, validates on 1, rotates k times, reports average. Use when: dataset is small (reduces variance of performance estimate), hyperparameter tuning (prevents test set leakage), or when you need confidence intervals on performance. Computationally expensive: k=5 means 5× training runs. For large datasets, a single holdout split is often sufficient.</span>
+<span id="cb1-280"><a href="#cb1-280" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-281"><a href="#cb1-281" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-282"><a href="#cb1-282" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-283"><a href="#cb1-283" aria-hidden="true" tabindex="-1"></a>**Q: How does gradient descent work?**</span>
+<span id="cb1-284"><a href="#cb1-284" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-285"><a href="#cb1-285" aria-hidden="true" tabindex="-1"></a>Compute gradient of loss with respect to all parameters (backpropagation). Step in the negative gradient direction: θ ← θ - α·∇L. Repeat until convergence. Mini-batch SGD (batches of 32–256) is the standard variant. Adam extends this with adaptive per-parameter learning rates based on first and second moment estimates of the gradient.</span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->
 
