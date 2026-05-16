@@ -100,7 +100,7 @@ Key constraint categories:
 |---|---|
 | Data residency / compliance | "Can data leave your infrastructure? Are you HIPAA/GDPR/SOC2 constrained?" |
 | Latency | "What's the maximum acceptable response time for a user-facing feature?" |
-| Budget | "What's the rough budget envelope — are we talking a $5K POC or a $500K platform?" |
+| Budget | "What's the rough budget envelope — are we talking a \$5K POC or a \$500K platform?" |
 | Integration | "What does this need to connect to — specific CRMs, databases, auth systems?" |
 | Ownership | "Who will maintain this system after we build it? Does your team have ML engineers?" |
 | Change management | "How will you get users to adopt this? Is there a training plan?" |

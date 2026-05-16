@@ -347,7 +347,7 @@ This comparison is a common FDE question. Know it cold.
 | Architecture | Unknown (likely dense or MoE) | MoE: 671B total, ~37B active |
 | Training method | RL + heavy process supervision (PRM) | GRPO with verifiable ORMs + SFT warm-start |
 | Reasoning trace | Hidden (not returned to user) | Exposed in `<think>` tags |
-| Cost (API) | ~$10-60 / 1M output tokens | ~$0.55 / 1M tokens (R1) |
+| Cost (API) | ~\$10-60 / 1M output tokens | ~\$0.55 / 1M tokens (R1) |
 | Latency | 10-120s per hard query | 10-60s per hard query |
 | MATH benchmark | ~97% | ~97% (o1-comparable) |
 | AIME 2024 | ~91% | ~79% |

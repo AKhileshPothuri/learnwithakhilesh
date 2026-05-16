@@ -369,12 +369,12 @@ Three distinct latency metrics matter in LLM serving. Conflating them in an inte
 
 | GPU | HBM Capacity | HBM Bandwidth | FP16 TFLOPS | Cost/hr (est.) | Best For |
 |---|---|---|---|---|---|
-| A10G | 24 GB | 600 GB/s | 125 | ~$1.50 | Small models (7B–13B), cost-optimized |
-| A100 40GB | 40 GB | 1.6 TB/s | 312 | ~$3.00 | 13B–34B models |
-| A100 80GB | 80 GB | 2.0 TB/s | 312 | ~$4.50 | 70B models (TP=2), workhorse |
-| H100 80GB SXM | 80 GB | 3.35 TB/s | 989 (w/ sparsity) | ~$8–10 | Fastest decode, 70B+ |
-| L40S | 48 GB | 864 GB/s | 362 | ~$4.00 | Cost-efficient for mid-size models |
-| H100 NVL 94GB | 94 GB | 3.9 TB/s | 835 | ~$10+ | Large single-GPU models |
+| A10G | 24 GB | 600 GB/s | 125 | ~\$1.50 | Small models (7B–13B), cost-optimized |
+| A100 40GB | 40 GB | 1.6 TB/s | 312 | ~\$3.00 | 13B–34B models |
+| A100 80GB | 80 GB | 2.0 TB/s | 312 | ~\$4.50 | 70B models (TP=2), workhorse |
+| H100 80GB SXM | 80 GB | 3.35 TB/s | 989 (w/ sparsity) | ~\$8–10 | Fastest decode, 70B+ |
+| L40S | 48 GB | 864 GB/s | 362 | ~\$4.00 | Cost-efficient for mid-size models |
+| H100 NVL 94GB | 94 GB | 3.9 TB/s | 835 | ~\$10+ | Large single-GPU models |
 
 **A100 vs H100 for LLM serving:**
 - **Decode-bound workloads (most inference):** H100 is ~1.7x faster due to HBM bandwidth advantage (3.35 vs 2.0 TB/s). Cost per token is often similar to A100 because H100 processes tokens faster.
@@ -504,11 +504,11 @@ overhead = ~5% of total
 
 | Option | Input $/MTok | Output $/MTok | Notes |
 |---|---|---|---|
-| GPT-4o | $5 | $15 | Highest quality managed |
-| Claude Sonnet | $3 | $15 | Strong reasoning, managed |
-| GPT-4o-mini | $0.15 | $0.60 | Budget managed |
-| Self-hosted 70B (A100) | ~$0.30 | ~$0.30 | Flat cost/token at scale |
-| Self-hosted 7B (A10G) | ~$0.05 | ~$0.05 | Extremely cheap at scale |
+| GPT-4o | \$5 | \$15 | Highest quality managed |
+| Claude Sonnet | \$3 | \$15 | Strong reasoning, managed |
+| GPT-4o-mini | \$0.15 | \$0.60 | Budget managed |
+| Self-hosted 70B (A100) | ~\$0.30 | ~\$0.30 | Flat cost/token at scale |
+| Self-hosted 7B (A10G) | ~\$0.05 | ~\$0.05 | Extremely cheap at scale |
 
 At > 10M tokens/day, self-hosted open-source models are typically 5–20x cheaper than managed APIs.
 

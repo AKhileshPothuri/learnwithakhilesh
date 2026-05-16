@@ -32,7 +32,7 @@ This appendix is a fast-recall reference for concepts that appear in screening r
 | $\mathbf{A}^\top$ | Transpose | Swap rows/cols; $(\mathbf{AB})^\top = \mathbf{B}^\top\mathbf{A}^\top$ |
 | $\mathbf{A}^{-1}$ | Inverse | Solve $\mathbf{Ax}=\mathbf{b}$: $\mathbf{x}=\mathbf{A}^{-1}\mathbf{b}$ |
 | $\|\mathbf{x}\|_2$ | L2 norm | $\sqrt{\sum x_i^2}$ — Euclidean distance |
-| $\|\mathbf{x}\|_1$ | L1 norm | $\sum |x_i|$ — Manhattan distance; promotes sparsity |
+| $\|\mathbf{x}\|_1$ | L1 norm | $\sum \lvert x_i\rvert$ — Manhattan distance; promotes sparsity |
 | $\mathbf{x} \cdot \mathbf{y}$ | Dot product | $\sum x_i y_i = \|\mathbf{x}\|\|\mathbf{y}\|\cos\theta$ |
 | $\cos\theta$ | Cosine similarity | $\frac{\mathbf{x}\cdot\mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|}$ — embedding similarity |
 | Eigenvalue $\lambda$ | $\mathbf{Av} = \lambda\mathbf{v}$ | PCA directions; gradient signal |
@@ -63,7 +63,7 @@ This appendix is a fast-recall reference for concepts that appear in screening r
 | Chain rule | $\frac{\partial L}{\partial w} = \frac{\partial L}{\partial z}\frac{\partial z}{\partial w}$ | Backpropagation |
 | Jacobian | $J_{ij} = \frac{\partial f_i}{\partial x_j}$ | Multi-output gradients |
 | Hessian | $H_{ij} = \frac{\partial^2 L}{\partial w_i \partial w_j}$ | Second-order optimization |
-| Sigmoid derivative | $\sigma'(x) = \sigma(x)(1-\sigma(x))$ | Vanishes for large $|x|$ — saturation |
+| Sigmoid derivative | $\sigma'(x) = \sigma(x)(1-\sigma(x))$ | Vanishes for large $\lvert x\rvert$ — saturation |
 | ReLU derivative | $\text{ReLU}'(x) = \mathbb{1}[x > 0]$ | Dead neurons if always $x < 0$ |
 
 ## Regularization Reference
@@ -148,11 +148,11 @@ $$\text{KV cache per token} = 4 \times d_{model} \times \text{bytes per param}$$
 
 | Metric | Formula | Sensitive To |
 |---|---|---|
-| MAE | $\frac{1}{n}\sum|y_i - \hat{y}_i|$ | All errors equally |
+| MAE | $\frac{1}{n}\sum\lvert y_i - \hat{y}_i\rvert$ | All errors equally |
 | MSE | $\frac{1}{n}\sum(y_i - \hat{y}_i)^2$ | Large errors (squared) |
 | RMSE | $\sqrt{\text{MSE}}$ | Large errors; same units as target |
 | R² | $1 - \frac{SS_{res}}{SS_{tot}}$ | Fraction of variance explained |
-| MAPE | $\frac{1}{n}\sum\left|\frac{y_i-\hat{y}_i}{y_i}\right|$ | Relative error (undefined if $y_i=0$) |
+| MAPE | $\frac{1}{n}\sum\left\lvert\frac{y_i-\hat{y}_i}{y_i}\right\rvert$ | Relative error (undefined if $y_i=0$) |
 
 ### Information Retrieval / RAG
 
@@ -160,7 +160,7 @@ $$\text{KV cache per token} = 4 \times d_{model} \times \text{bytes per param}$$
 |---|---|---|
 | Precision@k | Relevant in top-k / k | Quality of top-k results |
 | Recall@k | Relevant found in k / total relevant | Coverage at k |
-| MRR | $\frac{1}{|Q|}\sum_q \frac{1}{\text{rank}_q}$ | Rank of first relevant result |
+| MRR | $\frac{1}{\lvert Q\rvert}\sum_q \frac{1}{\text{rank}_q}$ | Rank of first relevant result |
 | NDCG@k | Normalized discounted cumulative gain | Graded relevance with position discount |
 | Faithfulness | Is answer grounded in context? | RAG hallucination rate |
 

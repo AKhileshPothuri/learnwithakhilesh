@@ -212,12 +212,12 @@ results = vector_db.search(
 
 | Component | Build | Buy | Recommendation |
 |---|---|---|---|
-| OCR | — | AWS Textract ($0.0015/page) | Buy — specialized, well-priced |
+| OCR | — | AWS Textract (\$0.0015/page) | Buy — specialized, well-priced |
 | Vector DB | — | Qdrant (OSS) / Pinecone | Qdrant self-hosted at this scale |
 | BM25 | — | Elasticsearch | Buy — proven at scale |
 | Reranker | Train | ms-marco-MiniLM | Buy first, fine-tune if recall <0.8 |
 | Embedding | Train | text-embedding-3-large | Buy — fine-tune only if domain shifts NDCG |
-| LLM | Train 70B | GPT-4o via API | Buy — self-host only above $5k/month |
+| LLM | Train 70B | GPT-4o via API | Buy — self-host only above \$5k/month |
 
 ### Failure Modes
 

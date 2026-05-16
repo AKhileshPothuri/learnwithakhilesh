@@ -444,7 +444,7 @@ USE RAG when:
 | Dimension | RAG (8k context) | Long Context (128k) |
 |-----------|-----------------|---------------------|
 | Latency | 200-500ms | 15-60s |
-| Cost per query | $0.002-0.03 | $0.50-2.00 |
+| Cost per query | \$0.002-0.03 | \$0.50-2.00 |
 | Quality on targeted retrieval | High (with good chunking) | Same or worse |
 | Quality on cross-document reasoning | Lower (misses cross-chunk links) | Higher |
 | Scales to 1M token documents | Yes (with retrieval) | No |

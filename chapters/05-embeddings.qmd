@@ -221,13 +221,13 @@ The leaderboard: [huggingface.co/spaces/mteb/leaderboard](https://huggingface.co
 
 | Model | Dimensions | Context | MTEB Avg | Retrieval | Cost | Notes |
 |---|---|---|---|---|---|---|
-| OpenAI text-embedding-3-small | 1536 (MRL: 512+) | 8191 tokens | ~62 | Good | $0.02/1M tokens | MRL support, fast, reliable |
-| OpenAI text-embedding-3-large | 3072 (MRL: 256+) | 8191 tokens | ~64 | Excellent | $0.13/1M tokens | Best OpenAI, MRL support |
-| text-embedding-ada-002 | 1536 | 8191 tokens | ~61 | Good | $0.10/1M tokens | Legacy, superseded by v3 |
+| OpenAI text-embedding-3-small | 1536 (MRL: 512+) | 8191 tokens | ~62 | Good | \$0.02/1M tokens | MRL support, fast, reliable |
+| OpenAI text-embedding-3-large | 3072 (MRL: 256+) | 8191 tokens | ~64 | Excellent | \$0.13/1M tokens | Best OpenAI, MRL support |
+| text-embedding-ada-002 | 1536 | 8191 tokens | ~61 | Good | \$0.10/1M tokens | Legacy, superseded by v3 |
 | BGE-large-en-v1.5 | 1024 | 512 tokens | ~64 | Excellent | Free (self-hosted) | Top open-source for English |
 | BGE-m3 | 1024 | 8192 tokens | ~63 | Excellent | Free (self-hosted) | Multilingual, dense+sparse+colbert |
 | E5-large-v2 | 1024 | 512 tokens | ~62 | Very Good | Free (self-hosted) | Strong retrieval, needs "query:" prefix |
-| Cohere embed-english-v3.0 | 1024 | 512 tokens | ~63 | Excellent | $0.10/1M tokens | Int8 compressed, good for large scale |
+| Cohere embed-english-v3.0 | 1024 | 512 tokens | ~63 | Excellent | \$0.10/1M tokens | Int8 compressed, good for large scale |
 | Nomic-embed-text-v1 | 768 | 8192 tokens | ~62 | Very Good | Free (self-hosted) | Long context, open-source |
 | all-MiniLM-L6-v2 | 384 | 256 tokens | ~57 | Moderate | Free (self-hosted) | Fast, small — good for prototyping |
 

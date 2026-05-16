@@ -480,12 +480,12 @@ print(f"ColPali retrieval score: {score:.4f}")
 
 Vision APIs charge visual tokens at the same per-token rate as text tokens.
 
-| Image Config | Approx Tokens | Cost at $0.003/1K | 10K images/day |
+| Image Config | Approx Tokens | Cost at \$0.003/1K | 10K images/day |
 |---|---|---|---|
-| 512×512 low detail | ~256 | $0.00077 | $7.68/day |
-| 512×512 high detail | ~576 | $0.00173 | $17.28/day |
-| 1024×1024 high detail | ~1,024 | $0.00307 | $30.72/day |
-| 2048×2048 high detail | ~2,304 | $0.00691 | $69.12/day |
+| 512×512 low detail | ~256 | \$0.00077 | \$7.68/day |
+| 512×512 high detail | ~576 | \$0.00173 | \$17.28/day |
+| 1024×1024 high detail | ~1,024 | \$0.00307 | \$30.72/day |
+| 2048×2048 high detail | ~2,304 | \$0.00691 | \$69.12/day |
 
 **Optimization strategies:**
 1. Resize to minimum resolution that maintains task accuracy (benchmark this explicitly).

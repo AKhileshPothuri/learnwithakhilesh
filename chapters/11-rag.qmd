@@ -230,12 +230,12 @@ The vector database stores embeddings and executes approximate nearest neighbor 
 | Database | Hosting | Hybrid Search | Scale | Cost | Index Types | Best For |
 |---|---|---|---|---|---|---|
 | **FAISS** | Self-hosted only | No (retrieval only) | 100M+ vectors | Free | Flat, IVF, HNSW | Research, offline batch |
-| **Pinecone** | Fully managed | Yes (sparse-dense) | 1B+ vectors | $$$ | Proprietary | Teams wanting zero ops |
-| **Weaviate** | Self-hosted + managed | Yes (BM25 native) | 100M+ vectors | $ / $$ | HNSW | Open source + hybrid search |
-| **Qdrant** | Self-hosted + managed | Yes | 100M+ vectors | $ / $$ | HNSW | High perf, memory efficiency |
-| **pgvector** | Self-hosted (Postgres) | Possible (FTS) | ~10M vectors | $ | IVFFlat, HNSW | Existing Postgres users |
-| **Chroma** | Self-hosted + managed | Limited | ~1M vectors | Free / $ | HNSW | Local dev, prototyping |
-| **Milvus** | Self-hosted + managed | Yes | 1B+ vectors | $ / $$ | HNSW, IVF, DiskANN | Large-scale, distributed |
+| **Pinecone** | Fully managed | Yes (sparse-dense) | 1B+ vectors | \$\$\$ | Proprietary | Teams wanting zero ops |
+| **Weaviate** | Self-hosted + managed | Yes (BM25 native) | 100M+ vectors | \$ / \$\$ | HNSW | Open source + hybrid search |
+| **Qdrant** | Self-hosted + managed | Yes | 100M+ vectors | \$ / \$\$ | HNSW | High perf, memory efficiency |
+| **pgvector** | Self-hosted (Postgres) | Possible (FTS) | ~10M vectors | \$ | IVFFlat, HNSW | Existing Postgres users |
+| **Chroma** | Self-hosted + managed | Limited | ~1M vectors | Free / \$ | HNSW | Local dev, prototyping |
+| **Milvus** | Self-hosted + managed | Yes | 1B+ vectors | \$ / \$\$ | HNSW, IVF, DiskANN | Large-scale, distributed |
 
 ### FAISS Index Types
 
