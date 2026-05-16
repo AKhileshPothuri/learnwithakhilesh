@@ -1,142 +1,285 @@
+---
+title: "ML Fundamentals Refresher"
+---
+
 # ML Fundamentals Refresher {#sec-appendix-ml}
 
 ::: {.callout-note}
-This appendix covers classical ML concepts that frequently appear in entry-level GenAI interview screening rounds. It assumes you have seen these topics before and need a quick recall pass, not a first introduction.
+This appendix is a fast-recall reference for concepts that appear in screening rounds and onsite interviews across all experience levels. Detailed treatment of each topic is in the main chapters.
 :::
 
-## Core Algorithms
+## Core Algorithm Quick Reference
 
-**Linear Regression** — Fits a line (or hyperplane) by minimizing mean squared error. Closed-form solution via normal equations; gradient descent for large datasets. Key assumption: linear relationship between features and target.
+| Algorithm | Loss Function | Output | Regularization | Scale |
+|---|---|---|---|---|
+| Linear Regression | MSE | Continuous | L1 (Lasso), L2 (Ridge) | Normal equations: O(n·d²); GD: O(n·d) |
+| Logistic Regression | Cross-entropy | Probability [0,1] | L1/L2 | O(n·d) per epoch |
+| Decision Tree | Gini/Entropy | Class/Value | max_depth, min_samples | O(n·d·log n) |
+| Random Forest | Avg of trees | Class/Value | n_estimators, max_features | O(k·n·d·log n) |
+| Gradient Boosting | Residual MSE/log-loss | Class/Value | learning_rate, max_depth | O(n·d·T) |
+| SVM | Hinge loss | Class | C (margin width) | O(n²–n³) |
+| k-NN | — | Majority/mean | k, distance metric | O(n·d) per query |
+| K-Means | Inertia (SSE) | Cluster ID | k, max_iter | O(n·k·d·T) |
+| PCA | Variance explained | Low-dim projection | n_components | O(n·d²) or randomized O(n·d·k) |
+| Naive Bayes | Log-likelihood | Probability | α (Laplace smoothing) | O(n·d) |
 
-**Logistic Regression** — Classification via sigmoid-squashed linear output. Minimizes cross-entropy loss. Despite the name, it's a classifier. Interpretable coefficients. L1/L2 regularization applied directly.
+## Essential Math Reference
 
-**Decision Trees** — Recursively partition feature space using information gain (entropy) or Gini impurity. Prone to overfitting; depth and min-samples hyperparameters control this.
+### Linear Algebra
 
-**SVMs** — Find the maximum-margin hyperplane. Kernel trick extends to non-linear boundaries (RBF, polynomial). Effective in high-dimensional spaces; expensive at scale.
-
-**k-NN** — Classify by majority vote of k nearest neighbors. No training phase (lazy learner). Distance metric choice matters. Degrades in high dimensions (curse of dimensionality).
-
-**K-Means Clustering** — Assign points to k centroids, recompute centroids, repeat. Sensitive to initialization (k-means++). Choose k with elbow method or silhouette score.
-
-**PCA** — Project data onto directions of maximum variance (eigenvectors of covariance matrix). Reduces dimensionality. Features become uninterpretable linear combinations.
-
-## Key Concepts
-
-**Bias-Variance Tradeoff** — High bias = underfitting (model too simple). High variance = overfitting (model memorizes training data). Increasing model complexity moves bias down and variance up.
-
-**Regularization** — L2 (Ridge): penalizes large weights, shrinks all weights. L1 (Lasso): can zero out weights, producing sparse models. Both added as λ||w|| term to the loss.
-
-**Cross-Validation** — k-fold CV partitions data into k folds, trains on k-1, evaluates on 1, rotates. Produces more reliable generalization estimates than a single train/val split.
-
-**Evaluation Metrics**
-
-| Metric | Formula | When to use |
+| Symbol/Operation | Meaning | ML Use |
 |---|---|---|
-| Accuracy | (TP+TN)/(P+N) | Balanced classes |
-| Precision | TP/(TP+FP) | False positives are costly |
-| Recall | TP/(TP+FN) | False negatives are costly |
-| F1 | 2·P·R/(P+R) | Imbalanced classes |
-| AUC-ROC | Area under ROC curve | Comparing classifiers |
+| $\mathbf{A}^\top$ | Transpose | Swap rows/cols; $(\mathbf{AB})^\top = \mathbf{B}^\top\mathbf{A}^\top$ |
+| $\mathbf{A}^{-1}$ | Inverse | Solve $\mathbf{Ax}=\mathbf{b}$: $\mathbf{x}=\mathbf{A}^{-1}\mathbf{b}$ |
+| $\|\mathbf{x}\|_2$ | L2 norm | $\sqrt{\sum x_i^2}$ — Euclidean distance |
+| $\|\mathbf{x}\|_1$ | L1 norm | $\sum |x_i|$ — Manhattan distance; promotes sparsity |
+| $\mathbf{x} \cdot \mathbf{y}$ | Dot product | $\sum x_i y_i = \|\mathbf{x}\|\|\mathbf{y}\|\cos\theta$ |
+| $\cos\theta$ | Cosine similarity | $\frac{\mathbf{x}\cdot\mathbf{y}}{\|\mathbf{x}\|\|\mathbf{y}\|}$ — embedding similarity |
+| Eigenvalue $\lambda$ | $\mathbf{Av} = \lambda\mathbf{v}$ | PCA directions; gradient signal |
+| SVD | $\mathbf{A}=\mathbf{U\Sigma V}^\top$ | Dimensionality reduction; LoRA |
+| Rank | Independent rows/cols | LoRA rank r controls parameter budget |
+| Trace | $\sum_i A_{ii}$ | $\text{tr}(\mathbf{AB})=\text{tr}(\mathbf{BA})$ |
+
+### Probability
+
+| Concept | Formula | ML Relevance |
+|---|---|---|
+| Bayes theorem | $P(A\|B) = \frac{P(B\|A)P(A)}{P(B)}$ | Posterior = likelihood × prior / evidence |
+| MLE | $\hat\theta = \arg\max_\theta \prod_i P(x_i\|\theta)$ | Maximizes data likelihood |
+| MAP | $\hat\theta = \arg\max_\theta P(\theta)\prod_i P(x_i\|\theta)$ | MLE + prior = regularization |
+| KL divergence | $\sum_x p(x)\log\frac{p(x)}{q(x)}$ | Asymmetric; RLHF KL penalty, VAE |
+| Cross-entropy | $-\sum_x p(x)\log q(x) = H(p) + D_{KL}(p\|q)$ | Classification loss |
+| Entropy | $H(X) = -\sum_x p(x)\log p(x)$ | Decision tree splits, information theory |
+| Gaussian | $\mathcal{N}(\mu, \sigma^2)$: $f(x) = \frac{1}{\sigma\sqrt{2\pi}}e^{-\frac{(x-\mu)^2}{2\sigma^2}}$ | Weight init, noise modeling |
+| CLT | $\bar X \to \mathcal{N}(\mu, \sigma^2/n)$ | Justifies averaging, A/B test stats |
+| p-value | $P(\text{data this extreme} \| H_0 \text{ true})$ | Reject $H_0$ if $p < \alpha = 0.05$ |
+| Type I/II error | False positive / False negative | $\alpha$ controls Type I; power = 1 - Type II |
+
+### Calculus for ML
+
+| Concept | Formula | ML Use |
+|---|---|---|
+| Gradient | $\nabla_\theta L$ — vector of partial derivatives | Direction of steepest ascent |
+| Chain rule | $\frac{\partial L}{\partial w} = \frac{\partial L}{\partial z}\frac{\partial z}{\partial w}$ | Backpropagation |
+| Jacobian | $J_{ij} = \frac{\partial f_i}{\partial x_j}$ | Multi-output gradients |
+| Hessian | $H_{ij} = \frac{\partial^2 L}{\partial w_i \partial w_j}$ | Second-order optimization |
+| Sigmoid derivative | $\sigma'(x) = \sigma(x)(1-\sigma(x))$ | Vanishes for large $|x|$ — saturation |
+| ReLU derivative | $\text{ReLU}'(x) = \mathbb{1}[x > 0]$ | Dead neurons if always $x < 0$ |
+
+## Regularization Reference
+
+| Method | Penalty | Effect | Use When |
+|---|---|---|---|
+| L2 (Ridge, Weight Decay) | $\lambda\|\mathbf{w}\|_2^2$ | Shrinks all weights | Dense features; neural nets (as weight decay) |
+| L1 (Lasso) | $\lambda\|\mathbf{w}\|_1$ | Zeros out weights | Sparse features; feature selection |
+| Elastic Net | $\alpha\|\mathbf{w}\|_1 + (1-\alpha)\|\mathbf{w}\|_2^2$ | Both effects | High-dim with correlated features |
+| Dropout | Random zero at rate $p$ | Ensemble effect | Neural nets; during training only |
+| Early Stopping | Stop at min val loss | Implicit regularization | Always — simple and free |
+| Data Augmentation | Transform inputs | Reduces variance | Computer vision; text (synonym swap) |
+| BatchNorm | Normalize layer activations | Smooths loss landscape | Deep nets (especially CNNs) |
+| Label Smoothing | Replace 1/0 with 0.9/0.1 | Reduces overconfidence | Classification with noisy labels |
+
+## Optimizer Reference
+
+| Optimizer | Update Rule | Adaptive LR | Memory Overhead | Best For |
+|---|---|---|---|---|
+| SGD | $\theta \leftarrow \theta - \alpha g$ | No | 0 | Simple problems; when Adam diverges |
+| Momentum | $v \leftarrow \beta v + g$; $\theta \leftarrow \theta - \alpha v$ | No | 1× params | Smooth loss landscapes |
+| AdaGrad | $\theta \leftarrow \theta - \frac{\alpha}{\sqrt{G+\epsilon}} g$ | Yes (per-param) | 1× params | Sparse features; embeddings |
+| RMSprop | EMA of $g^2$; divide update | Yes | 1× params | RNNs; non-stationary objectives |
+| Adam | Momentum + RMSprop | Yes | 2× params | Default for most deep learning |
+| AdamW | Adam + explicit weight decay | Yes | 2× params | Transformers (decouples decay from Adam) |
+
+Adam memory: $m_t$ (first moment) + $v_t$ (second moment) = 2× the parameter count in additional optimizer state.
+
+## GPU Hardware Reference
+
+| GPU | VRAM | BF16 TFLOPS | Memory BW | NVLink | Use Case |
+|---|---|---|---|---|---|
+| A100 80GB | 80 GB | 312 | 2.0 TB/s | Yes (600 GB/s) | Training frontier models |
+| H100 SXM | 80 GB | 989 | 3.35 TB/s | Yes (900 GB/s) | Current training standard |
+| H200 | 141 GB | 989 | 4.8 TB/s | Yes | Large model training/inference |
+| A10G | 24 GB | 125 | 600 GB/s | No | Small model inference |
+| L40S | 48 GB | 366 | 864 GB/s | No | Mid-size inference |
+| RTX 4090 | 24 GB | 82 | 1.0 TB/s | No | Consumer dev/LoRA training |
+
+## Model Sizing Formulas
+
+**Parameters from architecture:**
+$$\text{Params} \approx 12 \cdot n_{layers} \cdot d_{model}^2$$
+(Accounts for: 4 attention weight matrices of $d_{model}^2/4$ each, 2 FFN layers of $4 \cdot d_{model}^2$ each)
+
+**Memory for inference (BF16):**
+$$\text{VRAM (GB)} = \frac{\text{Params} \times 2}{10^9}$$
+(2 bytes per parameter in BF16)
+
+**Memory for training (full precision + Adam):**
+$$\text{VRAM (GB)} = \frac{\text{Params} \times 16}{10^9}$$
+(2 for weights + 2 for gradients + 4 for Adam $m_t$ + 4 for Adam $v_t$ + 4 for optimizer fp32 copy)
+
+**KV cache per token per layer:**
+$$\text{KV cache per token} = 4 \times d_{model} \times \text{bytes per param}$$
+(2 for K, 2 for V; each of size $d_{model}$)
+
+**Quick estimates:**
+
+| Model | Params | BF16 inference | Full train |
+|---|---|---|---|
+| 7B | 7B | ~14 GB | ~112 GB |
+| 13B | 13B | ~26 GB | ~208 GB |
+| 70B | 70B | ~140 GB | ~1.1 TB |
+| 405B | 405B | ~810 GB | ~6.5 TB |
+
+## Evaluation Metrics Quick Reference
+
+### Classification
+
+| Metric | Formula | Use When |
+|---|---|---|
+| Accuracy | (TP+TN)/(P+N) | Balanced classes only |
+| Precision | TP/(TP+FP) | False positives are costly (spam filter) |
+| Recall | TP/(TP+FN) | False negatives are costly (cancer screening) |
+| F1 | 2·P·R/(P+R) | Imbalanced; single metric needed |
+| AUC-ROC | Area under ROC curve | Ranking quality; threshold-independent |
+| MCC | Correlation between predicted/actual | Best single metric for imbalanced |
+| Log loss | $-\frac{1}{n}\sum y_i\log\hat{p}_i$ | Probabilistic predictions |
+
+### Regression
+
+| Metric | Formula | Sensitive To |
+|---|---|---|
+| MAE | $\frac{1}{n}\sum|y_i - \hat{y}_i|$ | All errors equally |
+| MSE | $\frac{1}{n}\sum(y_i - \hat{y}_i)^2$ | Large errors (squared) |
+| RMSE | $\sqrt{\text{MSE}}$ | Large errors; same units as target |
+| R² | $1 - \frac{SS_{res}}{SS_{tot}}$ | Fraction of variance explained |
+| MAPE | $\frac{1}{n}\sum\left|\frac{y_i-\hat{y}_i}{y_i}\right|$ | Relative error (undefined if $y_i=0$) |
+
+### Information Retrieval / RAG
+
+| Metric | Formula | What It Measures |
+|---|---|---|
+| Precision@k | Relevant in top-k / k | Quality of top-k results |
+| Recall@k | Relevant found in k / total relevant | Coverage at k |
+| MRR | $\frac{1}{|Q|}\sum_q \frac{1}{\text{rank}_q}$ | Rank of first relevant result |
+| NDCG@k | Normalized discounted cumulative gain | Graded relevance with position discount |
+| Faithfulness | Is answer grounded in context? | RAG hallucination rate |
+
+## Big-O Complexity Reference
+
+| Operation | Time | Space | Notes |
+|---|---|---|---|
+| Matrix multiply (n×n) | O(n³) | O(n²) | Strassen: O(n^2.37) |
+| Self-attention (seq len n) | O(n²·d) | O(n²) | Quadratic in sequence length |
+| FlashAttention | O(n²·d) | O(n) | Same FLOPs, IO-efficient |
+| KV cache lookup | O(1) | O(n·d) per layer | Per-token at inference |
+| HNSW search | O(log n) | O(n) | ANN approximate |
+| IVF search | O(√n·d) | O(n) | Exact within clusters |
+| Exact k-NN | O(n·d) | O(1) | Brute-force search |
+| MinHash dedup | O(n·b) | O(n) | b = num hash bands |
+
+## Activation Functions
+
+| Function | Formula | Range | Use Case | Avoid When |
+|---|---|---|---|---|
+| Sigmoid | $\frac{1}{1+e^{-x}}$ | (0,1) | Binary output layer | Hidden layers (vanishing gradient) |
+| Tanh | $\frac{e^x-e^{-x}}{e^x+e^{-x}}$ | (-1,1) | RNN hidden states | Deep nets (vanishing gradient) |
+| ReLU | $\max(0,x)$ | [0,∞) | CNNs, MLPs | Deep nets with poor init (dead neurons) |
+| Leaky ReLU | $\max(0.01x, x)$ | (-∞,∞) | When dead ReLUs are a problem | — |
+| GELU | $x\cdot\Phi(x)$ | ≈(-0.17,∞) | Transformers (BERT, GPT) | Compute-constrained edge devices |
+| SiLU/Swish | $x\cdot\sigma(x)$ | ≈(-0.28,∞) | LLaMA, Mistral FFN | — |
+| Softmax | $\frac{e^{x_i}}{\sum_j e^{x_j}}$ | (0,1), sum=1 | Attention, output layer | — |
+
+## GenAI Acronym Reference
+
+| Acronym | Full Form | Key Idea |
+|---|---|---|
+| LLM | Large Language Model | Autoregressive transformer pretrained on text |
+| SFT | Supervised Fine-Tuning | Train on (instruction, response) pairs |
+| RLHF | Reinforcement Learning from Human Feedback | PPO on human preference reward |
+| DPO | Direct Preference Optimization | Implicit reward from preference pairs |
+| PPO | Proximal Policy Optimization | RL algorithm with clipped objective |
+| GRPO | Group Relative Policy Optimization | Group sampling replaces critic model |
+| LoRA | Low-Rank Adaptation | ΔW = BA, small rank matrices |
+| QLoRA | Quantized LoRA | NF4 4-bit base + LoRA adapter |
+| PEFT | Parameter-Efficient Fine-Tuning | Umbrella: LoRA, prefix, prompt tuning |
+| RAG | Retrieval-Augmented Generation | Retrieve docs → augment prompt → generate |
+| KV Cache | Key-Value Cache | Cached attention keys/values for decode |
+| GQA | Grouped Query Attention | Multiple query heads share K/V heads |
+| MQA | Multi-Query Attention | All query heads share one K/V head |
+| MHA | Multi-Head Attention | Original: Q/K/V heads all equal |
+| RoPE | Rotary Position Embedding | Positional encoding via rotation |
+| ALiBi | Attention with Linear Biases | Position bias in attention score |
+| SAE | Sparse Autoencoder | Decomposes activations into sparse features |
+| MoE | Mixture of Experts | Sparse activation of expert FFN layers |
+| SSM | State Space Model | Recurrent with selective state (Mamba) |
+| HNSW | Hierarchical Navigable Small World | ANN graph index for vector search |
+| IVF | Inverted File Index | Cluster-based ANN for vector search |
+| PQ | Product Quantization | Compress vectors via subspace quantization |
+| TTFT | Time to First Token | Latency of prefill phase (user experience) |
+| TPOT | Time Per Output Token | Decode latency per generated token |
+| TPS | Tokens Per Second | Throughput metric for serving |
+| vLLM | Virtual LLM (PagedAttention) | GPU memory manager for KV cache |
+| BPE | Byte Pair Encoding | Subword tokenizer via frequency merges |
+| CFG | Classifier-Free Guidance | Scale between conditional and unconditional |
+| DDPM | Denoising Diffusion Probabilistic Model | Gaussian noise diffusion training |
+| DDIM | Denoising Diffusion Implicit Models | Deterministic, fewer steps |
+| MCP | Model Context Protocol | Anthropic's standard for model-tool APIs |
+| ReAct | Reason + Act | Interleaved thought-action agent loop |
+| TIES | Trim, Elect Sign, Merge | Multi-model merge interference reduction |
+| DARE | Drop And REscale | Sparse task vectors for cleaner merges |
+| SLERP | Spherical Linear Interpolation | Norm-preserving 2-model merge |
+
+## Key Papers Reference
+
+| Paper | Year | Contribution |
+|---|---|---|
+| Attention Is All You Need (Vaswani et al.) | 2017 | Transformer architecture |
+| BERT (Devlin et al.) | 2018 | Bidirectional encoder pretraining |
+| GPT-2 (Radford et al.) | 2019 | Autoregressive language model scaling |
+| GPT-3 (Brown et al.) | 2020 | Few-shot in-context learning |
+| LoRA (Hu et al.) | 2021 | Low-rank fine-tuning |
+| Chinchilla (Hoffmann et al.) | 2022 | Compute-optimal scaling laws |
+| RLHF / InstructGPT (Ouyang et al.) | 2022 | Fine-tune with human preferences |
+| Chain-of-Thought (Wei et al.) | 2022 | Step-by-step reasoning prompting |
+| Flash Attention (Dao et al.) | 2022 | IO-efficient exact attention |
+| DPO (Rafailov et al.) | 2023 | Preference optimization without RL |
+| Llama 2 (Touvron et al.) | 2023 | Open-weight instruction-tuned LLMs |
+| Mamba (Gu & Dao) | 2023 | Selective SSM, O(n) vs O(n²) |
+| TIES-Merging (Yadav et al.) | 2023 | Multi-model merging via trim+elect+merge |
+| Mixtral MoE (Mistral AI) | 2023 | Sparse MoE, 2 of 8 experts active |
+| DARE (Yu et al.) | 2023 | Drop 90% of delta, merge cleaner |
+| DeepSeek R1 | 2025 | GRPO + verifiable RL for reasoning |
+| LIMA (Zhou et al.) | 2023 | 1k curated examples ≈ 52k Alpaca |
+| QLoRA (Dettmers et al.) | 2023 | 4-bit quantized + LoRA fine-tuning |
+| Speculative Decoding (Leviathan et al.) | 2023 | Draft-verify for faster decode |
+| RAGAS | 2023 | RAG evaluation: faithfulness/relevancy |
+
+## Interview Q&A: Entry-Level Screening
+
+**Q: What is the bias-variance tradeoff?**
+
+Bias = systematic error from wrong model assumptions (underfitting). Variance = error from sensitivity to training data fluctuations (overfitting). High-bias example: linear regression on a nonlinear problem. High-variance example: decision tree with no depth limit. Increasing complexity reduces bias but raises variance. The goal is the minimum of bias² + variance + irreducible noise.
 
 ---
 
-## Interview Questions
+**Q: When use L1 vs L2 regularization?**
 
-::: {.callout-tip title="Entry Level — ML Screening"}
+L2 (Ridge): shrinks all weights proportionally, rarely to zero. Use for dense feature sets, neural networks (as weight decay). L1 (Lasso): drives weights to exactly zero, producing sparse models. Use for feature selection, high-dimensional sparse data (NLP bag-of-words). Elastic Net combines both when you're uncertain.
 
-**Q1. What is the bias-variance tradeoff? Give an example of a high-bias and high-variance model.**
+---
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Bias and variance are two sources of prediction error that trade off against each other as you change model complexity.
+**Q: Your model has 95% accuracy on a 95/5 class split. Is it good?**
 
-**Bias** is systematic error — the model's assumption structure causes it to consistently miss the true pattern. A high-bias model underfits: it can't capture the complexity of the data even with unlimited training examples.
+Probably not. A trivial "always predict majority class" baseline achieves 95% accuracy on a 95/5 split. Check: precision = 0, recall = 0, F1 = 0 for the minority class. Use AUC-ROC, F1, or MCC to evaluate imbalanced classifiers, not raw accuracy.
 
-**Variance** is sensitivity error — the model fits the training data too closely, including noise, and fails to generalize to new data. A high-variance model overfits: it memorizes the training set rather than learning the underlying pattern.
+---
 
-**High-bias example:** a linear regression model trained to predict house prices using only square footage, on a dataset where price depends on neighborhood, age, and school district in complex nonlinear ways. The model is too simple to capture the true relationship — it will consistently underpredict expensive houses in good neighborhoods and overpredict cheap houses in poor ones.
+**Q: What is cross-validation and when do you use it?**
 
-**High-variance example:** a decision tree with no depth limit trained on 1,000 samples. It will achieve near-zero training error by creating a unique leaf for every training example. On new data, it performs poorly because it learned the noise in the training set rather than the underlying patterns.
+k-fold CV trains on k-1 folds, validates on 1, rotates k times, reports average. Use when: dataset is small (reduces variance of performance estimate), hyperparameter tuning (prevents test set leakage), or when you need confidence intervals on performance. Computationally expensive: k=5 means 5× training runs. For large datasets, a single holdout split is often sufficient.
 
-The tradeoff: as you increase model complexity (more parameters, deeper trees, smaller regularization), bias decreases but variance increases. The optimal model sits at the minimum of total error (bias² + variance + irreducible noise). In practice, regularization, cross-validation, and ensemble methods (bagging reduces variance, boosting reduces bias) are the tools for navigating this tradeoff.
-:::
+---
 
-**Q2. When would you use L1 vs. L2 regularization?**
+**Q: How does gradient descent work?**
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Both L1 and L2 regularization add a penalty term to the loss function to discourage large weights and reduce overfitting, but they have different mathematical properties that make each useful in different situations.
-
-**L2 regularization (Ridge)** adds the sum of squared weights: λΣwᵢ². This shrinks all weights proportionally toward zero but rarely to exactly zero. L2 is the default choice when you believe all features are potentially relevant and you want to reduce their individual influence without eliminating any. It also has a closed-form solution for linear models (unlike L1) and is numerically stable.
-
-**L1 regularization (Lasso)** adds the sum of absolute weights: λΣ|wᵢ|. The absolute value geometry creates corner solutions — many weights get driven to exactly zero, producing sparse models. Use L1 when you suspect many features are irrelevant and want the model to perform automatic feature selection. A model with 500 features where only 20 truly matter will benefit from L1 producing a 20-feature model rather than a 500-feature model with small weights.
-
-**Practical decision criteria:**
-- High-dimensional data with expected feature sparsity (NLP bag-of-words, genomics): L1
-- Dense feature sets where most features are predictive (tabular data with curated features): L2
-- Uncertainty about which: Elastic Net, which combines both (α·L1 + (1-α)·L2)
-- Neural networks: almost always L2 (weight decay), as L1 is harder to optimize with gradient descent
-
-One important note: in deep learning, L2 regularization applied to weights is mathematically equivalent to "weight decay" in Adam optimization, and the two terms are often used interchangeably.
-:::
-
-**Q3. You have a dataset with 95% class A and 5% class B. Your model predicts class A 100% of the time. What is the accuracy, and why is it misleading?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-The accuracy is 95%. If the test set reflects the same 95/5 distribution and the model always predicts class A, it's correct on all class A examples and wrong on all class B examples: (0.95 × 1.0 + 0.05 × 0.0) = 0.95 = 95% accuracy.
-
-This is misleading because it creates the illusion of a performing model where there is none. The model has learned nothing — it's equivalent to a hardcoded "always predict A" rule. It will be completely useless in any application that cares about class B.
-
-Why this matters: in most imbalanced classification problems, the minority class is the reason the model exists. Fraud detection: 99% of transactions are legitimate, but you're building the system to catch the 1% that are fraudulent. Cancer screening: most patients are healthy, but the value is detecting the rare positive. A 99% accurate "predict healthy always" model for cancer detection is catastrophically wrong.
-
-**Better metrics for imbalanced classification:**
-- **Precision** (of the class B predictions the model makes, what fraction are actually class B) — irrelevant here since no class B predictions exist
-- **Recall** (of all actual class B cases, what fraction does the model catch) — 0% for this model, which immediately exposes the failure
-- **F1 score** (harmonic mean of precision and recall) — 0 for this model
-- **AUC-ROC** (area under the ROC curve) — measures ranking quality across all thresholds, insensitive to class imbalance
-
-The general lesson: always look at per-class metrics for imbalanced data, and validate that your baseline metric isn't trivially achievable by predicting the majority class.
-:::
-
-**Q4. What is cross-validation and why is it better than a single train/test split?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Cross-validation is a model evaluation technique that partitions data into k folds and performs k training runs, each time using k-1 folds for training and 1 fold for validation. The final performance estimate is the average across all k held-out folds.
-
-The standard variant is k-fold CV, typically with k=5 or k=10. For each fold, the model trains on 80% (for k=5) of the data and evaluates on the remaining 20%. After 5 runs, every example has served as a validation example exactly once.
-
-**Why it's better than a single train/test split:**
-
-*High variance in small datasets.* With a small dataset, a single train/test split can yield wildly different performance estimates depending on which examples land in the test set. If your 20% test set happens to contain mostly easy examples, you overestimate performance. Cross-validation averages this variance over multiple splits, giving a more reliable estimate.
-
-*Better use of data.* A single 80/20 split means 20% of your data is never used for training. Cross-validation trains on 100% of the data (across different folds), which produces better models and better estimates, especially critical when data is limited.
-
-*Honest hyperparameter tuning.* If you tune hyperparameters to maximize performance on a single test set, you're effectively training on that test set and the reported performance is optimistic. Cross-validation on the training data for hyperparameter tuning keeps the test set truly held-out.
-
-*Confidence intervals.* k-fold gives you k performance estimates, from which you can compute mean and standard deviation — quantifying how stable the performance is, not just its point estimate.
-
-Leave-one-out cross-validation (LOOCV) is the extreme case: k=n, maximum data usage but computationally expensive. For most use cases, k=5 or k=10 is the practical standard.
-:::
-
-**Q5. How does gradient descent work at a high level?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Gradient descent is an iterative optimization algorithm that minimizes a loss function by repeatedly moving model parameters in the direction that most steeply decreases the loss.
-
-The core intuition: imagine you're blindfolded on a hilly landscape and want to reach the lowest valley. You feel the slope of the ground under your feet (the gradient) and take a step in the downhill direction. Repeat until you're no longer going downhill.
-
-Mathematically: at each iteration, compute the gradient of the loss with respect to every parameter — ∂L/∂θ. This vector points in the direction of steepest ascent. Update parameters by stepping in the opposite direction: θ ← θ - α · ∂L/∂θ, where α (the learning rate) controls step size.
-
-**Three variants differ in how many examples compute each gradient update:**
-
-*Batch gradient descent* computes the gradient over the entire dataset before each update. Accurate gradient estimate, but slow and memory-intensive for large datasets.
-
-*Stochastic gradient descent (SGD)* computes the gradient from a single training example per update. Fast iterations, noisy gradient estimates. The noise can actually help escape shallow local minima.
-
-*Mini-batch gradient descent* (what nearly everyone uses) computes gradients from a batch of 32–256 examples. Balances accuracy and speed, vectorizes well on GPUs.
-
-**Key challenges in practice:**
-- *Learning rate:* too high → oscillates and diverges; too low → converges slowly or gets stuck. Learning rate schedules (warmup + decay) and adaptive optimizers (Adam, which maintains per-parameter learning rates) address this.
-- *Local minima:* in high-dimensional spaces, most critical points are saddle points, not local minima — less of a problem in practice than theoretical concerns suggest.
-- *Gradient vanishing/exploding:* gradients become near-zero (vanish) or very large (explode) in deep networks — addressed by careful initialization, gradient clipping, and architectural choices like residual connections.
-:::
-
-:::
+Compute gradient of loss with respect to all parameters (backpropagation). Step in the negative gradient direction: θ ← θ - α·∇L. Repeat until convergence. Mini-batch SGD (batches of 32–256) is the standard variant. Adam extends this with adaptive per-parameter learning rates based on first and second moment estimates of the gradient.

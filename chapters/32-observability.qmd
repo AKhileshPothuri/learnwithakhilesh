@@ -1,271 +1,367 @@
+---
+title: "LLM Observability & Production Monitoring"
+chapter: 32
+---
+
 # LLM Observability & Production Monitoring {#sec-32}
 
-::: {.callout-note}
-**Who this chapter is for:** Mid Level → FDE
-**What you'll be able to answer after reading this:**
+> 💡 **Senior Tip:** The hardest part of LLM observability isn't logging — it's detecting *silent* degradation: no errors, no latency spikes, just gradually worse answers. Design your system to catch this from day one.
 
-- Why LLM systems require a different observability layer from traditional APM tools
-- How to structure traces and spans for multi-step LLM pipelines
-- How to measure both hard metrics (latency, cost, errors) and soft metrics (quality, faithfulness) in production
-- How semantic caching works and what hit rates to expect in production
-- How to implement model routing and cost governance for multi-team LLM platforms
-:::
+## What to Log
 
-## Why LLM Observability Is Different
+**The rule:** Log everything you need to diagnose failures and measure quality. Don't log what you don't need, especially PII.
 
-Traditional software observability — metrics, logs, traces via Prometheus, Datadog, or Grafana — is built on determinism. A request either succeeds or fails. Latency is a duration. Error rate is a fraction. The correctness of a computation is binary: the sort is either sorted or it isn't. Standard APM tools are excellent at these properties and have no concept of quality that lives between binary success and failure.
+| Field | Why | Type |
+|---|---|---|
+| `request_id` | Trace end-to-end | UUID |
+| `user_id` (hashed) | Per-user analysis | SHA-256 hash |
+| `session_id` | Conversation context | UUID |
+| `model_name` + version | Catch model update regressions | String |
+| `prompt` (input tokens) | Reproduce issues | Text (encrypted) |
+| `completion` (output) | Quality analysis | Text (encrypted) |
+| `ttft_ms` | Time To First Token | Float |
+| `tpot_ms` | Time Per Output Token | Float |
+| `latency_ms` | End-to-end | Float |
+| `input_tokens` | Cost attribution | Int |
+| `output_tokens` | Cost attribution | Int |
+| `cost_usd` | Budget tracking | Float |
+| `error_type` | Failure analysis | Enum |
+| `retrieval_docs` | RAG quality | List[str] |
+| `user_feedback` | Quality signal | thumbs_up/down/None |
 
-LLMs break every one of these assumptions. Two successful API calls with zero errors and normal latency can produce vastly different quality outcomes: one call generates a precise, well-grounded answer; the other generates a confident hallucination. Standard observability will show both as successful, identical requests. The system appears healthy while the product is delivering wrong answers to users.
+**What NOT to log:** Raw PII (names, SSNs, credit cards, passwords), unencrypted medical/legal content. Log the SHA-256 hash of user ID, not the ID itself.
 
-The second difference is the multi-step nature of LLM applications. A simple RAG pipeline involves at minimum: a query embedding call, a vector search, a prompt construction step, an LLM generation call, and often a reranking step or output parsing step. Each step has its own latency, its own failure modes, and its own quality implications. Knowing that the end-to-end p95 latency is 3.2 seconds tells you nothing about where the time is going — whether to fix it you should look at the embedding model, the vector store, or the LLM call. Standard APM shows you the aggregate; LLM observability shows you the anatomy.
+## Tracing Platforms
 
-The third difference is that quality degrades gradually. A traditional service either works or is down. LLMs degrade: as documents in a knowledge base go stale, as the model's behavior drifts with versions, as user query patterns evolve, the quality of answers slowly worsens while the system reports 100% uptime and normal error rates. Detecting this gradual drift requires statistical quality monitoring that has no analog in traditional infrastructure monitoring.
+| Platform | Hosted | Open Source | Key Strength | Best For |
+|---|---|---|---|---|
+| LangSmith | Yes | No | LangChain native, chain visualization | LangChain apps |
+| Arize AI | Yes | Partial | Embedding drift, performance monitoring | Production ML |
+| Helicone | Yes | Yes | Zero-code proxy, instant setup | Quick observability |
+| Phoenix (Arize) | Self-host | Yes | Embedding viz, retrieval analysis | RAG debugging |
+| Langfuse | Both | Yes | Self-hostable, full tracing | Privacy-sensitive |
+| Braintrust | Yes | No | Evals + tracing unified | Eval-first teams |
 
-## Traces, Spans, and the Observability Stack
+```python
+from langsmith import Client, traceable
+from openai import OpenAI
 
-The observability data model borrows from distributed tracing but is extended for LLM-specific semantics. A **trace** represents the full lifecycle of one user request through the system. Within the trace, **spans** represent individual operations: one span per LLM call, one span per retrieval, one span per tool call, one span per embedding computation. Spans are hierarchical — an agent turn span contains child spans for each tool call made during that turn.
+ls_client = Client()
+oai_client = OpenAI()
 
-The attributes that must be captured on LLM-specific spans go beyond what standard tracing captures. For LLM call spans: input tokens, output tokens, model name and version, sampling parameters (temperature, top-p), total latency, time-to-first-token (important for streaming UX), finish reason (stop, length, content_filter), and the full prompt and completion (for quality debugging). For retrieval spans: query text, number of results returned, similarity scores of results, and the retrieved document identifiers (so you can trace which chunks influenced a response). For tool call spans: tool name, input arguments, output, and whether the call succeeded.
+@traceable(name="rag_pipeline", run_type="chain")
+def rag_pipeline(query: str) -> dict:
+    """Full RAG pipeline with LangSmith tracing."""
+    # Each step is automatically traced as a child span
+    docs = retrieve_documents(query)         # traced as retrieval span
+    context = "\n".join(d["text"] for d in docs)
+    response = generate_response(query, context)  # traced as LLM span
 
-The leading production observability platforms for LLM applications are: **LangSmith** (LangChain's native platform, tight integration with LangChain/LangGraph, good for teams already on LangChain), **Langfuse** (open-source, cloud or self-hosted, model-agnostic, strong cost tracking and dataset management), **Arize Phoenix** (strong for retrieval quality visualization and online evaluation), **Helicone** (simple proxy-based integration, good for cost monitoring without code changes), and **Braintrust** (strong for experiment tracking and prompt evaluation). All support the **OpenLLMetry** OpenTelemetry semantic conventions for LLMs, which standardizes attribute names across tools.
+    return {
+        "answer": response,
+        "sources": [d["id"] for d in docs],
+        "retrieved_count": len(docs)
+    }
 
-Instrumentation strategy: instrument at the highest semantic level possible (wrap the full agent execution, not just individual LLM calls) so that each trace captures a meaningful user interaction. Use context propagation so that a user ID, session ID, and feature name tag flows through all child spans — this enables aggregation by feature ("what is the RAG pipeline's average faithfulness score for the customer support feature vs. the code review feature?").
+@traceable(name="retrieve", run_type="retriever")
+def retrieve_documents(query: str) -> list[dict]:
+    # Your vector DB retrieval here
+    return []
 
-## Quality Metrics in Production
+@traceable(name="generate", run_type="llm")
+def generate_response(query: str, context: str) -> str:
+    response = oai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": f"Answer using this context:\n{context}"},
+            {"role": "user", "content": query}
+        ]
+    )
+    return response.choices[0].message.content
 
-The observability challenge in LLM systems is measuring quality at scale. Human evaluation of every response is impossible beyond small samples; automated evaluation via LLM-as-judge is feasible but costly. Production quality monitoring requires a sampling strategy that balances coverage against cost.
+# Production Gotcha: LangSmith logs ALL inputs including prompts.
+# If your prompts contain user PII, add a pre-logging scrubbing step.
+```
 
-**Hard metrics** are deterministic and cheap: total tokens consumed, input vs. output token split, latency at each step, cost per request (calculated from token counts and pricing), error rate (API failures, parsing failures, content filter triggers), and retry rate. These should be collected for 100% of traffic. Hard metrics alone are insufficient for quality monitoring but are essential for cost governance and SLA compliance.
+## Cost Attribution
 
-**Soft metrics** require LLM-as-judge evaluation: a secondary LLM call that scores the response on quality dimensions. For RAG systems, the RAGAS dimensions apply: faithfulness (claims in response supported by retrieved context), answer relevance (response addresses the question), context precision (retrieved docs are relevant), context recall (retrieved docs cover the required information). For general generation: helpfulness, instruction following, response completeness. LLM-as-judge is expensive ($0.001-0.01 per evaluation depending on model choice) — use a fast, cheap judge model (Haiku, GPT-4o-mini) for online evaluation and a more capable model for periodic batch evaluation of sampled traffic.
+Track cost at the granularity you need to make decisions:
 
-**Sampling strategy:** Evaluate 100% of requests using hard metrics. For soft metrics, use stratified sampling: (1) random sample of 5-10% of traffic for baseline quality estimation, (2) all user-flagged responses (thumbs-down, reported, escalated), (3) all error cases and content filter triggers, (4) responses in the bottom 10% of hard-metric proxies (unusually short outputs, high latency, high retry count). This stratification ensures rare quality failures are not missed by pure random sampling.
+```python
+import json
+from datetime import datetime
 
-**Drift detection:** Establish a quality baseline during the first 2 weeks of deployment (or after each major pipeline change). Compute rolling averages of soft metrics over 24-hour windows. Alert when a metric drops 10%+ from baseline or when a 7-day trend is consistently negative. Drift is usually caused by: knowledge base staleness (documents that were current are now outdated), model version changes (an upgrade that improved average quality degraded specific behaviors), or query distribution shift (users are asking different questions than the system was optimized for).
+PRICING = {  # Per 1M tokens as of 2024
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
+}
+
+def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    pricing = PRICING.get(model, {"input": 0, "output": 0})
+    return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+
+def log_request(request_id: str, user_id: str, feature: str,
+                model: str, input_tokens: int, output_tokens: int) -> dict:
+    cost = calculate_cost(model, input_tokens, output_tokens)
+    record = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "request_id": request_id,
+        "user_id": hash(user_id),  # Never log raw user IDs
+        "feature": feature,         # "chat", "search", "summarize"
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": cost,
+    }
+    # Write to your logging backend (DataDog, Splunk, BigQuery, etc.)
+    return record
+```
+
+## Detecting Silent Degradation
+
+This is the hardest problem. No errors, no latency changes, but outputs gradually get worse.
+
+**Detection strategy:**
+
+```python
+from openai import OpenAI
+import random
+
+client = OpenAI()
+
+GOLDEN_SET = [
+    {"question": "What is the capital of France?", "expected_contains": ["Paris"]},
+    {"question": "Summarize our refund policy.", "expected_contains": ["30 days", "receipt"]},
+    # 50-100 representative queries with expected characteristics
+]
+
+def llm_judge_quality(question: str, answer: str, rubric: str) -> float:
+    """Use GPT-4 as judge to score a response 0-10."""
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "user",
+            "content": f"""Score this response 0-10 for {rubric}.
+Question: {question}
+Response: {answer}
+Score (just the integer):"""
+        }]
+    )
+    try:
+        return float(response.choices[0].message.content.strip())
+    except ValueError:
+        return -1.0
+
+def monitor_quality_on_production_sample(production_logs: list[dict],
+                                          sample_size: int = 50) -> dict:
+    """Sample production traffic and evaluate quality with LLM-as-judge."""
+    sample = random.sample(production_logs, min(sample_size, len(production_logs)))
+
+    scores = []
+    for log in sample:
+        score = llm_judge_quality(
+            log["prompt"], log["completion"],
+            rubric="helpfulness, accuracy, and coherence"
+        )
+        scores.append(score)
+
+    avg_score = sum(scores) / len(scores)
+    return {
+        "avg_quality_score": avg_score,
+        "p10_score": sorted(scores)[len(scores)//10],
+        "low_quality_rate": sum(1 for s in scores if s < 5) / len(scores)
+    }
+
+# Production Gotcha: LLM-as-judge has its own biases (verbosity, recency).
+# Calibrate against human labels on a test set before trusting it for monitoring.
+```
 
 ## Semantic Caching
 
-Standard HTTP caching is exact-match: the same request string returns the cached response. This is useless for LLMs, where two semantically identical questions phrased differently (e.g., "What is the capital of France?" vs. "Which city serves as France's capital?") are different strings. Semantic caching solves this by caching on semantic meaning rather than string identity.
+Cache responses for semantically similar queries — reduces cost and latency:
 
-The implementation: embed the incoming query using an embedding model, search the cache for stored query vectors with cosine similarity above a threshold, and if a match is found, return the cached response without calling the LLM. Cache entries store: the original query text, the query embedding vector, the cached response, the timestamp, and optionally the metadata tags used to scope invalidation.
+```python
+import numpy as np
+import redis
+import hashlib
+from openai import OpenAI
 
-The similarity threshold is the critical parameter. A threshold of 0.95 catches near-paraphrases (high precision, lower recall — misses some cacheably similar queries). A threshold of 0.85 catches broader semantic equivalents (higher recall — more cache hits — but risks returning wrong cached responses for questions that are similar but have different answers). Set the threshold based on your domain: factual question answering allows a higher threshold (similar questions likely have the same answer); nuanced advisory queries require a lower threshold to avoid serving stale or inapplicable cached responses.
+client = OpenAI()
+cache = redis.Redis(host='localhost', port=6379)
+SIMILARITY_THRESHOLD = 0.95
 
-**Cache invalidation** is the fundamental difficulty. When does a cached response become stale? Time-based TTL (expire after N days) is simple but crude — a response about a company's current CEO should expire quickly; a response about the speed of light can cache for years. Tag-based invalidation is more precise: tag cache entries with the knowledge base documents they drew from, and invalidate entries when those documents change. Implement this by storing document IDs in the cache entry metadata and running an invalidation sweep when the knowledge base is updated.
+def get_embedding(text: str) -> list[float]:
+    response = client.embeddings.create(model="text-embedding-3-small", input=text)
+    return response.data[0].embedding
 
-**Expected hit rates:** In typical enterprise RAG deployments, 30-60% of queries are semantically similar to previously answered queries within a 7-day cache window. Help desk and FAQ applications have higher hit rates (users ask the same questions repeatedly); analytical and research applications have lower hit rates (queries are more unique). Tool implementations: GPTCache (purpose-built semantic cache with pluggable backends), Redis with pgvector extension (for teams already running Redis), or Momento Cache (managed semantic cache service). Cost savings scale with hit rate: 50% hit rate on a $10,000/month LLM spend saves $5,000/month on LLM calls, at the cost of embedding computation for every request (typically 1-2% of LLM call cost).
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    a, b = np.array(a), np.array(b)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
-## Model Routing
+def cached_completion(prompt: str) -> str:
+    """Return cached response if semantically similar query exists."""
+    query_embedding = get_embedding(prompt)
 
-Model routing directs different queries to different models based on estimated complexity, cost, or required capability. The business case: not all queries require the most capable model. Simple FAQ questions ("what are your business hours?") can be answered by a smaller, faster, cheaper model with no quality loss. Complex analytical questions require the most capable available model. Routing optimally reduces cost while maintaining quality on complex queries.
+    # Check all cached embeddings (use a vector DB for scale)
+    for key in cache.scan_iter("emb:*"):
+        cached_emb = list(map(float, cache.lrange(key, 0, -1)))
+        if cosine_similarity(query_embedding, cached_emb) > SIMILARITY_THRESHOLD:
+            response_key = key.decode().replace("emb:", "resp:")
+            cached_response = cache.get(response_key)
+            if cached_response:
+                return cached_response.decode()  # Cache hit
 
-**LLM-as-router:** Use a cheap, fast model to classify the incoming query as simple or complex. The classifier prompt: "Rate this query from 1-5 on required reasoning complexity. Query: {query}." Queries rated 1-2 route to a fast/cheap model; queries rated 4-5 route to the powerful model; 3 routes based on context. This is a meta-LLM call that costs ~100 tokens and decides routing for a potentially expensive downstream call. Net savings are positive if the routing accuracy is above ~80% and the cost difference between simple and complex model is large (e.g., Haiku vs. Opus cost ratio is roughly 1:60).
+    # Cache miss — generate and cache
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    answer = response.choices[0].message.content
 
-**Rule-based routing:** Simpler and more predictable. Route based on query length (short queries to fast model), detected intent (FAQ intent → simple model, analysis intent → powerful model), or user tier (free users → smaller model, enterprise users → larger model). Rule-based routing requires no additional LLM call but is less nuanced than ML-based routing.
+    cache_key = hashlib.md5(prompt.encode()).hexdigest()
+    cache.rpush(f"emb:{cache_key}", *[str(v) for v in query_embedding])
+    cache.set(f"resp:{cache_key}", answer, ex=3600)  # 1 hour TTL
 
-**Semantic routing:** Embed the incoming query, compute cosine similarity to a set of category embeddings (pre-computed embeddings for "simple factual question," "complex reasoning," "code generation," etc.), and route to the model best suited for the nearest category. This is fast (one embedding + k nearest-neighbor lookups) and doesn't require an additional LLM call.
+    return answer
+```
 
-**Routing infrastructure:** Portkey and LiteLLM provide multi-model routing with a unified API — you call one endpoint and routing logic determines which model provider handles the request. OpenRouter is a hosted router with access to 100+ models from multiple providers. For custom routing logic, implement a routing layer in your API gateway that intercepts requests, applies the routing policy, and forwards to the appropriate model endpoint.
+## The Production Feedback Loop
 
-## Cost Governance
+```
+User feedback → Evaluation dataset → Regression tests → Model/prompt improvements → Production
+       ↑                                                                                  |
+       └──────────────────────── New examples added ────────────────────────────────────┘
+```
 
-LLM costs can scale unexpectedly fast. A pipeline that costs $0.01/query at 1,000 daily users costs $10,000/day at 1 million daily users — a 1000x scale-up that surprises many teams. Cost governance requires: visibility into what is driving cost, attribution to specific features and teams, budgetary controls, and efficiency optimization.
+**Feedback signal hierarchy (best to worst):**
+1. Explicit corrections ("Actually the answer should be...")
+2. Thumbs down + regenerate
+3. Thumbs down
+4. Session abandonment after a response
+5. No feedback (assume OK)
 
-**Cost attribution** is the foundation. Tag every LLM call with: user ID, team ID, feature name, and pipeline step name. These tags flow through the observability stack and enable aggregation: cost per user, cost per team per month, cost per feature per query. This attribution reveals which features are cost drivers and enables teams to optimize without a company-wide optimization effort.
+## Cheat Sheet
 
-**Budget alerts** are straightforward to implement: set per-team and per-feature budget limits and trigger alerts when spending reaches 70% and 90% of the limit. Set hard cutoffs at 100% (route to a cheaper fallback model or return an error rather than exceeding budget). Implement these at the routing layer, not the model provider — provider-level rate limits are coarse and react too slowly for budget enforcement.
-
-**Prompt cache hit rate** is a first-order cost efficiency metric. Many providers (Anthropic, OpenAI) offer prompt caching: if the beginning of a prompt is the same as a previous call, the cached KV computation is reused at a lower price (typically 90% discount on cached input tokens). System prompts and fixed instruction preambles should always be at the beginning of the prompt to maximize cache hit rates. Monitor cache hit rate as a leading indicator of efficiency: hit rate below 50% for a pipeline with repetitive system prompts suggests prompt construction is adding variable content before the system prompt, which destroys cacheability.
-
-**Token efficiency metrics:** Track output tokens as a fraction of total tokens. For many applications, long outputs are not more valuable than shorter ones — they just cost more. Prompt instructions that explicitly limit response length ("Answer in 2-3 sentences" vs. no instruction) measurably reduce output token counts without degrading quality. Track "output tokens per successful task completion" as an efficiency signal. Anomaly detection on cost: compare daily cost to a 30-day rolling baseline. A 2x spike in daily cost that doesn't correspond to a traffic spike indicates a pipeline change (probably a prompt change that increased output length) that should be investigated.
-
-**Real cost model:** Input tokens × input_price + output tokens × output_price + (input tokens - cached tokens) × cache_write_premium + embedding calls × embedding_price + reranker calls × reranker_price. Many teams calculate cost as (input + output) × average_price, which underestimates cost for output-heavy pipelines (output tokens are typically 3-5x more expensive than input tokens on leading models) and misses embedding and reranking infrastructure costs.
+- Log: request_id, hashed user_id, model+version, prompt, completion, TTFT, latency, tokens, cost, error_type
+- Never log: raw PII, passwords, payment info — use hashed/encrypted versions
+- Silent degradation: no errors but worse outputs — detect with LLM-as-judge on production samples vs golden set
+- Semantic cache: embed queries, cache responses for similar ones (cosine sim > 0.95) — 20-40% cost reduction typical
+- Cost attribution: track at user, feature, and team level; set budget alerts
+- LangSmith: traces LangChain apps automatically; Helicone: zero-code proxy for any OpenAI API call
+- Feedback loop: user feedback → eval dataset → regression tests → improvements → production
+- TTFT vs TPOT: separate these — TTFT degrades with prefill load, TPOT degrades with decode load
+- Sampling rate for quality monitoring: 1-5% of traffic for LLM-as-judge scoring is sufficient
+- Golden set: 50-100 representative queries with expected characteristics — monitor score weekly
+- Drift detection: watch embedding distribution of queries (cosine similarity to training distribution)
+- A/B testing: run prompt/model changes on 5-10% traffic, measure downstream metrics not just LLM scores
+- Anomaly alerts: cost/request spike > 2σ, refusal rate spike > 2σ, latency p99 > threshold
+- Trace granularity: separate spans for retrieval, generation, tool calls — trace IDs link them
+- Never use synthetic queries for your quality golden set — they don't reflect real user behavior
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
-**Q1. Why is observability for LLM systems different from traditional software monitoring?**
+### 🟢 Entry Level (0–2 years)
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Traditional software monitoring is designed around deterministic, binary outcomes. A request either succeeds or fails. Latency is measurable. Error rate is calculable. Tools like Prometheus, Datadog, and Grafana are excellent at these properties.
+**Q: What should you always log for an LLM application in production?**
 
-LLMs are fundamentally different in three ways.
+**Weak answer:** "The inputs and outputs."
 
-First, quality is fuzzy and non-binary. An LLM API call can return 200 OK with a grammatically correct response that is factually wrong, unhelpful, or harmful. Standard monitoring counts this as a success. The system appears healthy while delivering bad answers. You need a separate quality measurement layer — LLM-as-judge, human sampling, user feedback signals — that standard monitoring has no concept of.
+**Strong answer:** Log: request ID (for tracing), hashed user ID (never raw PII), model name and version, input prompt, completion, time to first token, end-to-end latency, input/output token counts, cost, and any error types. Also log user feedback (thumbs up/down) when available. Version the model explicitly — a model update without a version change is one of the hardest production bugs to diagnose.
 
-Second, LLM applications are multi-step pipelines. A RAG system involves embedding calls, vector searches, prompt construction, and LLM generation. Standard monitoring might show end-to-end latency of 3 seconds. LLM-specific observability shows you: 80ms embedding, 200ms vector search, 2720ms LLM call. Without the step-level breakdown, you cannot diagnose or fix latency problems.
+---
 
-Third, quality degrades gradually and silently. Traditional services are up or down. LLM quality slowly worsens as knowledge bases go stale, model versions change, and query distributions shift — while error rates remain zero. Detecting this requires statistical drift monitoring against a quality baseline, which traditional APM has no mechanism for.
+**Q: What is semantic caching and why does it matter in production?**
 
-In short: standard APM tells you whether your system is running. LLM observability tells you whether it is producing good outputs.
-:::
-:::
+Semantic caching stores LLM responses and retrieves them for semantically similar future queries (cosine similarity above a threshold like 0.95). Unlike exact-match caching, it handles paraphrases. Benefits: 20-40% cost reduction on typical workloads, latency improvement for cached queries. Tradeoff: stale responses if the underlying data changes, and the cache itself has memory costs. Use a vector database or Redis with embedding storage.
 
-::: {.callout-tip title="Entry Level"}
-**Q2. What is semantic caching and how does it reduce LLM costs?**
+---
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Semantic caching stores LLM responses indexed by the meaning of the query rather than the exact query string. When a new query arrives, it is compared semantically to cached queries — if a sufficiently similar query was asked before, the cached response is returned without calling the LLM.
+**Q: How do you detect that your LLM application's quality is degrading in production?**
 
-The implementation uses embedding similarity. Each incoming query is embedded into a vector. The cache holds previous query vectors. A nearest-neighbor search finds whether any cached vector is within a cosine similarity threshold (typically 0.90-0.95). If a match is found, the cached response is returned in milliseconds, with no LLM API call, no token consumption, and no token cost.
+Set up periodic LLM-as-judge evaluation on sampled production traffic (1-5% sample), compared against a golden set of representative queries with expected characteristics. Track average quality scores over time. Alert when the rolling 7-day average drops below a threshold. Also monitor implicit signals: thumbs-down rate, session abandonment rate after specific response types, regeneration rate.
 
-The cost reduction is direct: every cache hit is a query that costs only the embedding computation (typically < 1% of the LLM call cost) instead of a full LLM call. In production enterprise applications where users frequently ask similar questions (help desks, FAQ bots, internal knowledge bases), cache hit rates of 30-60% are achievable within a 7-day cache window. A 50% hit rate on a $10,000/month LLM spend translates to approximately $5,000/month in savings.
+---
 
-Beyond cost, semantic caching reduces latency significantly: a cache hit response comes back in 50-100ms instead of the 1-5 second LLM call latency. This improves user experience on common questions.
+**Q: What is the difference between TTFT and TPOT latency?**
 
-The key parameter is the similarity threshold: too high (e.g., 0.98) means only near-exact rephrases hit the cache; too low (e.g., 0.80) risks returning cached responses for semantically distinct questions with different correct answers. Calibrate the threshold for your domain.
-:::
-:::
+TTFT (Time To First Token) is how long until the user sees the first character — driven by prefill compute and request queue depth. TPOT (Time Per Output Token) is the rate at which tokens are generated after the first — driven by decode compute and memory bandwidth. A slow TTFT feels like the app is "thinking"; a slow TPOT feels like the response is "typing slowly." They have different root causes and different fixes.
 
-::: {.callout-tip title="Entry Level"}
-**Q3. What is model routing and when would you use it?**
+---
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Model routing is the practice of directing different incoming queries to different LLM models based on their estimated complexity and requirements. Instead of sending every query to one model, a routing layer decides which model should handle each specific request.
+**Q: How do you attribute LLM costs to specific features or teams?**
 
-The motivation is cost-quality optimization. The most capable models (e.g., Claude Opus, GPT-4o) are significantly more expensive than smaller models (e.g., Claude Haiku, GPT-4o-mini), but not every query needs the most capable model. Simple factual lookups, short-form responses, and FAQ-style questions can be answered just as well by a smaller model at a fraction of the cost. Complex reasoning, long-form analysis, and nuanced judgment calls benefit from the larger model.
+Tag each API call with a feature label (e.g., "chat", "search", "summarize", "document_extraction") and team ID. Store cost per request (input_tokens × price/M + output_tokens × price/M) in your logging backend. Aggregate in your data warehouse (BigQuery, Snowflake) for weekly cost reports per feature/team. Set budget alerts when a feature's daily cost exceeds a threshold. This is how you justify infrastructure decisions and catch runaway costs from prompt changes.
 
-A routing system classifies the incoming query — using rule-based logic, a cheap classifier LLM call, or embedding similarity to category prototypes — and routes accordingly: simple queries to the fast/cheap model, complex queries to the powerful model.
+---
 
-You would use model routing when: you have significant LLM spend and a query distribution with varying complexity; you can identify a meaningful subset of queries (20%+) that don't require your most capable model; and you have the ability to measure and validate that routing decisions maintain quality for routed queries. The risk is misclassification — routing a query that genuinely needs the powerful model to the cheap model and degrading quality. A/B test routing decisions to validate quality before deploying at scale.
-:::
-:::
+### 🟡 Mid Level (2–5 years)
 
-::: {.callout-warning title="Mid Level"}
-**Q1. Design an observability stack for a production RAG pipeline — what would you trace, what metrics would you monitor, and what would trigger an alert?**
+**Q: Design an LLM-as-judge monitoring system that runs continuously in production.**
 
-::: {.callout-note collapse="true" title="Model Answer"}
-A production RAG pipeline requires observability at the trace level (per-request anatomy), the metric level (aggregate trends), and the quality level (LLM-as-judge evaluation).
+Architecture: (1) Sampling service — intercept 2% of production requests, write to a monitoring queue. (2) Judge pipeline — pull from queue, call GPT-4o with a rubric prompt scoring on helpfulness/accuracy/safety 0-10. (3) Metrics store — write scores with request metadata to time-series DB (InfluxDB/Prometheus). (4) Dashboard — track rolling 7-day average, p10 score (catches worst cases), per-feature breakdown. (5) Alerting — PagerDuty alert if 7-day average drops > 0.5 points or p10 drops > 1 point.
 
-**Trace structure:**
+Calibration step: weekly sample 50 judged examples for human review to catch judge bias drift.
 
-Each user request produces one trace containing spans:
-1. `rag.query_embedding` — input: query text; attributes: latency, embedding model name, token count
-2. `rag.vector_search` — input: embedding vector; attributes: latency, k returned, top-k similarity scores, retrieved document IDs
-3. `rag.reranking` (if present) — input: query + chunks; attributes: latency, model name, final reranked scores
-4. `rag.prompt_construction` — attributes: final prompt length in tokens, context window utilization %
-5. `rag.llm_generation` — input: constructed prompt; attributes: model name, input tokens, output tokens, latency, TTFT (time to first token), finish reason
-6. `rag.output_parsing` — attributes: success/failure, extracted structured fields if applicable
+*Follow-up: How do you prevent the judge from being biased toward longer responses?*
+Add explicit length-control to the rubric ("score based on accuracy and conciseness, not length") and validate judge scores against a length-normalized human-labeled test set.
 
-All spans carry: user_id, session_id, feature_name, request_id for correlation.
+---
 
-**Metrics to monitor (dashboards):**
+**Q: How do you build an A/B testing framework for LLM prompt changes?**
 
-Hard (all 100% of traffic): end-to-end p50/p95/p99 latency, latency per span, total tokens/day, input vs. output token ratio, cost/day, error rate per span type, vector search similarity score distribution, context window utilization.
+Route 10% of traffic to the new prompt variant using a feature flag keyed on hashed user ID (consistent assignment per user). Collect implicit feedback (thumbs, abandonment, regeneration rate) and explicit feedback (ratings). After 7 days (minimum), check statistical significance: use a two-proportion z-test for binary signals (thumbs up rate) or a t-test for continuous scores. Require p < 0.05 and practical significance (effect size > your business threshold — e.g., > 2% thumbs-up improvement). Don't peek at results before the planned end date.
 
-Soft (sampled 5-10% + all flagged): faithfulness score, answer relevance score, context precision score, context recall score (via RAGAS or custom LLM-as-judge).
+---
 
-**Alert conditions:**
+**Q: Walk through how you'd set up observability for a RAG pipeline from scratch.**
 
-- P95 end-to-end latency > 5s (SLA violation)
-- LLM generation error rate > 0.5%
-- Vector search returning similarity scores below 0.6 consistently (retrieval degradation — knowledge base may need updating)
-- Faithfulness score drops >10% from 7-day baseline (generation quality degradation)
-- Context recall drops >10% (retrieval coverage degradation)
-- Cost per request spikes >2x from rolling average (prompt or model change)
-- Context window utilization >95% on average (prompt inflation — approaching context limit)
+Set up LangSmith or Langfuse with custom traces: one parent span per user request, child spans for (1) query embedding, (2) vector DB retrieval (log retrieval latency, number of docs, doc IDs), (3) reranking, (4) LLM generation (log TTFT, TPOT, tokens). Log retrieval metrics (recall@k estimated from user feedback). Set up RAGAS evaluation on a 1% sample — log faithfulness and context precision scores. Alert on: retrieval latency > 500ms (vector DB issue), generation latency > 3s, RAGAS faithfulness < 0.7.
 
-Tool recommendation: Langfuse for tracing + quality evaluation (open-source, self-hosted option), with Grafana for time-series metric dashboards pulling from Langfuse's API.
-:::
-:::
+---
 
-::: {.callout-warning title="Mid Level"}
-**Q2. Explain how semantic caching works at a technical level — what is the similarity threshold decision and what happens on a cache miss?**
+**Q: How do you detect embedding drift in a production RAG system?**
 
-::: {.callout-note collapse="true" title="Model Answer"}
-**Full technical flow:**
+Weekly: embed 500 sampled production queries, compute mean cosine similarity between them and your training/indexing query distribution. If the distribution is shifting (mean pairwise similarity dropping, or centroid distance increasing), your retrieval quality is degrading because users are asking questions your index wasn't built for. Also track retrieval quality directly: sample (query, retrieved docs) pairs, have LLM-as-judge score relevance. Alert when relevance score drops 5+ points.
 
-1. **Query arrives.** Compute the embedding of the incoming query text using a lightweight embedding model (text-embedding-3-small or similar — prioritize speed over accuracy here, since caching approximation errors are acceptable).
+---
 
-2. **Cache lookup.** Search the cache vector store for the k nearest cached query vectors by cosine similarity. The cache store can be: a Redis instance with the vector search module (RedisVL), a dedicated cache layer (GPTCache), or a pgvector table with an HNSW index for fast approximate nearest-neighbor search. Retrieve the top-1 match and its similarity score.
+**Q: What is the feedback loop from production to your eval suite?**
 
-3. **Threshold decision.** Compare the similarity score to the configured threshold:
-   - If similarity ≥ threshold: cache hit → return the stored response. Log: query text, matched cached query, similarity score, latency saved, cost saved.
-   - If similarity < threshold: cache miss → proceed to LLM call.
+Production feedback (thumbs down, corrections, session abandonment) → triage to identify patterns → extract representative examples → human review to label correctly → add to eval dataset → run regression tests on next model/prompt update. Key: distinguish between model failures (wrong answer) and product failures (right answer, wrong format). Model failures go into the eval dataset; product failures go into prompt engineering or UX fixes. Review the feedback weekly, add 10-20 new eval examples per sprint.
 
-4. **Threshold calibration:** The right threshold depends on the semantic precision required by your domain. Approach: sample 500 production query pairs labeled as "semantically equivalent" (same intended question, different phrasing) and "semantically distinct" (different question). Measure the cosine similarity distribution for each group. Set the threshold at the value that achieves the desired precision-recall tradeoff. For factual FAQ applications, 0.92 is typical. For analytical queries where small semantic differences matter, 0.95-0.97.
+---
 
-5. **On cache miss:** Call the LLM normally. After the response is received, store a new cache entry: `{id, query_text, query_embedding, response, metadata_tags, timestamp, ttl}`. The storage step adds <10ms overhead and should not block the response return — write to cache asynchronously after returning the response to the user.
+### 🔴 Senior / Lead / Staff Level (5+ years)
 
-6. **Cache invalidation:** Tag entries with knowledge base document IDs or version tags. When the knowledge base is updated, run an invalidation job: query the cache for entries tagged with updated document IDs and delete or mark as stale. Implement a maximum TTL (7-30 days depending on content volatility) as a backstop.
-:::
-:::
+**Q: Design an observability stack for a production RAG chatbot with 50k daily users. What do you monitor, what alerts do you set, and how do you detect silent quality degradation?**
 
-::: {.callout-warning title="Mid Level"}
-**Q3. How would you build a cost governance system for an org with 10 teams each using different LLM features?**
+**Strong answer:**
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Cost governance at multi-team scale requires attribution, visibility, budgetary controls, and a governance process — not just monitoring.
+*Instrumentation:* LangSmith (or Langfuse self-hosted for privacy) with traces: retrieval span (latency, doc count, doc IDs), generation span (TTFT, TPOT, input/output tokens). Cost tracker: BigQuery table with model, feature, user cohort, cost per request.
 
-**Step 1 — Attribution infrastructure:**
-Require every LLM call to carry team and feature tags. Implement this as a middleware layer in the LLM client wrapper: if a call lacks `team_id` or `feature_id` tags, reject it with a 400 error. This is more reliable than hoping teams apply tags voluntarily. The wrapper computes cost from token counts and model pricing and writes cost events to a central cost ledger (a database table or data warehouse).
+*Metrics dashboard:* TTFT p50/p95/p99, TPOT p50/p99, error rate by error type, cost/day by feature, thumbs-up rate 7-day rolling, retrieval latency p99.
 
-**Step 2 — Cost dashboard:**
-Provide each team a self-serve dashboard (Grafana, or a simple internal tool querying the cost ledger) showing: daily/monthly cost by feature, token breakdown (input vs. output vs. embedding vs. reranker), cost per query by feature, prompt cache hit rate, and trend over 30 days. Teams with visibility into their costs are far more likely to optimize than teams who see the cost only on a shared company bill.
+*Alerts (PagerDuty):* TTFT p99 > 3s, error rate > 1%, cost/day > 2σ from baseline, thumbs-down rate > 2σ.
 
-**Step 3 — Budget allocation and alerts:**
-Assign each team a monthly LLM budget. Implement budget alerts: automated notification when a team reaches 70% and 90% of budget, giving them time to optimize before overage. At 100% budget, automatically route to a cheaper fallback model or queue requests (depending on SLA). The platform team reviews budget vs. actual monthly and adjusts allocations based on business priority.
+*Silent degradation detection:* Daily sampling 0.5% of production (≈250 requests) → LLM-as-judge scoring on helpfulness + accuracy → plot 7-day rolling average per feature. Also run golden set (100 fixed queries) nightly against production model — alert if any score drops > 1 point.
 
-**Step 4 — Efficiency benchmarks:**
-Track per-team efficiency: cost per successful task completion. Provide cross-team percentile rankings so high-cost teams can see they are 3x more expensive per task than the median. This drives internal optimization pressure without requiring mandates.
+*Feedback loop:* Weekly triage of thumbs-down and zero-regeneration examples → label 20-30 most representative → add to eval suite → regression test before any prompt/model change ships.
 
-**Step 5 — Governance process:**
-Monthly cost review with team leads: review top-5 cost features, identify anomalies (teams significantly over their efficiency benchmark), share optimization wins. Require teams to include LLM cost projection in feature proposals. This embeds cost awareness into the product development process, not just operational monitoring.
-:::
-:::
+> 🎯 **What great looks like:** Candidates who separate infrastructure observability (latency, errors, cost) from quality observability (LLM-as-judge, golden sets, feedback signals) and who have a concrete plan for detecting silent degradation — not just "we'd look at the dashboard."
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q1. A customer's LLM product has been in production for 3 months and user satisfaction scores are dropping. Walk through your diagnostic process using observability data.**
+---
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Dropping user satisfaction in a running LLM product is almost always attributable to one of four causes: output quality degradation, latency regression, a mismatch between what users now expect and what the system delivers, or query distribution shift. Observability data lets you identify which.
+**Q: How do you build a production feedback loop that continuously improves your LLM system?**
 
-**Step 1 — Timeline correlation.**
-Pull the satisfaction score trend by week and overlay with deployment events (model version changes, prompt changes, knowledge base updates, traffic increases). Sharp drops coincide with deployments; gradual drops suggest drift. Identify the inflection point precisely — "scores have been declining since Week 10" is actionable; "scores are down" is not.
+**Strong answer:**
 
-**Step 2 — Hard metric check.**
-Rule out infrastructure problems first because they're easy to confirm. Check: end-to-end p95 latency trend (is it increasing?), error rate (has it crept up?), context window utilization (are prompts approaching the limit?), LLM output length distribution (are responses getting shorter or longer?). These are fast checks that eliminate the simplest explanations.
+Three feedback channels with different latency: (1) Explicit (thumbs, corrections) — highest signal, 0.5-2% response rate. (2) Implicit behavioral (regeneration, abandonment, downstream task success/failure) — higher volume, noisier. (3) Automated (LLM-as-judge on production sample) — scalable, requires calibration.
 
-**Step 3 — Quality metric decomposition.**
-If hard metrics are normal, pull the soft metric trends: faithfulness, answer relevance, context precision, context recall from the RAGAS pipeline (or equivalent). Each metric points to a different root cause:
-- Faithfulness dropping: the LLM is hallucinating beyond retrieved context — check for prompt changes, model version changes, context window saturation
-- Context recall dropping: retrieval is missing relevant documents — check knowledge base staleness, embedding model consistency (same model used for query and documents?), similarity threshold changes
-- Answer relevance dropping: responses are off-topic — check query distribution shift (users are asking different questions)
+Weekly process: collect feedback from all three channels → categorize by failure type (retrieval miss, hallucination, format error, wrong refusal, off-topic) → sample 50 examples per category → human review to confirm label and write correct response → add to eval dataset → update eval suite.
 
-**Step 4 — User behavior signals.**
-Analyze user feedback tags: which topics have the most negative feedback? This scopes the investigation. If 80% of negative feedback is on "product pricing" questions and the pricing knowledge base hasn't been updated in 3 months, the diagnosis is clear.
+Monthly process: full eval run on updated suite with current production model → compare to prior month → identify degrading categories → prioritize fixes.
 
-**Step 5 — Trace-level investigation.**
-For 20-30 negatively rated responses, pull the full trace. What did the retrieval step return? Was the context relevant? Did the LLM faithfully use the context? Inspect a representative sample to develop a failure taxonomy — "25% of failures are retrieving the old pricing document; 40% are the model over-generalizing from context." Taxonomy drives specific fixes rather than guessing.
+Critical discipline: never let the eval dataset get contaminated with examples from the current production model's training data. Track provenance of every eval example.
 
-**Likely hypotheses in order of frequency:** (1) knowledge base staleness, (2) query distribution shift, (3) model version change side effects, (4) a prompt change that improved one behavior and degraded another. Fix the top identified cause and monitor the satisfaction metric week-over-week to confirm improvement.
-:::
-:::
-
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q2. A customer is seeing 10x higher LLM costs than budgeted. What observability data do you pull first and what are the most common root causes?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-10x cost overrun is a large signal — it is almost certainly not caused by traffic volume alone (that would show in the metrics). The most common causes are: unexpected output token explosion, an unintended model upgrade, runaway tool-calling loops, or embedding infrastructure that wasn't accounted for in the budget.
-
-**First data pull — cost decomposition:**
-Break down cost by: (1) model name (confirm which model is actually being called — an unintentional upgrade from Haiku to Sonnet is a 10x cost increase on its own), (2) input vs. output tokens (if output tokens are dominant, a prompt change caused verbose responses; input tokens dominant means prompt inflation), (3) feature/team attribution (which feature is driving the cost), (4) calls per day (confirming traffic volume vs. per-call cost as the driver).
-
-**Second data pull — token distribution:**
-Pull the output token count histogram. If you see a long right tail (many calls generating 2000+ output tokens) that wasn't present before, a prompt change removed or changed length constraints. Compare the output token distribution to the pre-overrun baseline. Similarly, look at input token distribution — if it has shifted upward, prompt templates have grown (perhaps from adding retrieved context or a new system prompt section).
-
-**Root causes in rough order of frequency:**
-
-1. **Wrong model being called (most common).** A model name constant was updated, a default changed, or a flag was flipped. Fix: audit model name in all API call sites, add monitoring for "unexpected model name" alerts.
-
-2. **Output token explosion from prompt change.** Removing "be concise" instructions, adding "explain your reasoning" instructions, or changing output format to JSON (which can be more verbose) dramatically increases output tokens. Fix: compare current prompts to previous versions, restore or tune length constraints.
-
-3. **Runaway agentic loop.** An agent is calling tools in a loop without reaching a terminal condition. Each iteration calls LLM + tool, multiplying costs. Check: average steps per agent task (normal is 3-8; if you're seeing 30+, you have a loop). Fix: enforce a maximum step limit and add a termination condition check.
-
-4. **Embedding costs not included in budget.** If the application does embedding on every request (semantic caching, RAG), embedding costs can be significant at scale and are often omitted from initial estimates. Pull embedding API call volume and cost separately.
-
-5. **Traffic spike + no rate limiting.** Rule this out first by checking daily active users vs. budget assumption. Implement per-user and per-team rate limits to prevent unbounded cost exposure.
-
-Immediate mitigation while investigating: set hard spending caps at the router level (route to a cheaper fallback model once the budget threshold is crossed) to stop the bleeding before the root cause is fixed.
-:::
-:::
+> ⚠️ **Common Mistake:** Treating user feedback as ground truth without human review. Users often thumb-down correct answers (because the answer wasn't what they wanted, not because it was wrong). A lawyer telling an AI "that contract clause is wrong" might be wrong themselves. Always human-review before adding to training data.

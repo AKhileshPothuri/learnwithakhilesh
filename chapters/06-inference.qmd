@@ -1,203 +1,861 @@
-# Inference & Decoding Strategies
+---
+title: "LLM Inference & Decoding Strategies"
+---
 
 ::: {.callout-note}
 **Who this chapter is for:** Entry → Mid Level
+
 **What you'll be able to answer after reading this:**
 
-- What happens step-by-step during autoregressive generation
-- How temperature, top-p, and top-k shape output diversity
-- Why greedy decoding fails and when beam search helps
-- The KV cache and why it's critical for inference efficiency
+- What happens step-by-step during autoregressive generation and why it is inherently sequential
+- How temperature, top-p, top-k, and beam search shape output quality and diversity
+- Why the KV cache is the most important inference optimization and how to reason about its memory cost
+- How continuous batching works and why it is universal in production LLM serving
+- How constrained decoding guarantees structured outputs and when to use it
+- What to say in interviews at every level from entry to senior FDE
 :::
 
 ## Autoregressive Generation Step-by-Step
 
-At training time, an LLM processes complete sequences in parallel — the causal masking allows efficient parallel computation of all next-token predictions for every position in the sequence simultaneously. At inference time, this parallelism disappears. The model must generate output tokens one at a time, with each new token depending on all previous tokens, because the output of step $t$ is the input to step $t+1$. This sequential dependency is the defining characteristic of autoregressive generation, and it is why inference latency is fundamentally different from training throughput.
+At training time, an LLM processes complete sequences in parallel. Causal masking ensures each position predicts only from prior positions, but all positions are computed simultaneously via matrix operations — highly efficient on GPU tensor cores. At inference time, this parallelism disappears. The model must generate output tokens one at a time because each new token is the input to the next step. This sequential dependency is the defining constraint of autoregressive generation and the reason why inference engineering is its own discipline.
 
-The step-by-step process of autoregressive generation is: first, the user's prompt is tokenized into a sequence of integer token IDs. These tokens are embedded into continuous vectors and passed through the transformer's attention layers and feed-forward blocks. At the end of the transformer stack, the hidden state at the last position (the position after the final input token) is projected through a linear layer with weight matrix $W_\text{vocab} \in \mathbb{R}^{d_\text{model} \times |V|}$, producing a vector of logits over the entire vocabulary — one scalar value per token in the vocabulary, typically 32,000 to 100,000 values. These logits are passed through a decoding strategy (described in later sections) to select a single token. That token is appended to the sequence, and the entire process repeats with the extended sequence as input.
+The step-by-step process: the user's prompt is tokenized into integer token IDs. These are embedded into continuous vectors and passed through transformer attention layers and feed-forward blocks. At the final layer, the hidden state at the last position is projected through a vocabulary head $W_\text{vocab} \in \mathbb{R}^{d_\text{model} \times |V|}$, producing a logit vector over the entire vocabulary — typically 32,000 to 150,000 scalar values. A decoding strategy selects one token from this distribution. That token is appended to the sequence, and the full process repeats.
 
-A critical observation: on the second generation step, the model processes a sequence that is one token longer than on the first step. On the third step, one token longer still. By the hundredth step, the model is processing a sequence that is 99 tokens longer than the original prompt. Because transformer attention computes interactions between all pairs of positions, the computation grows as $O(n)$ per step where $n$ is the total sequence length (with the KV cache, discussed later). Without any optimization, the total computation over $T$ generation steps would be $O(T^2)$ — quadratic in the number of generated tokens. This is the fundamental computational challenge of autoregressive generation, and why every serious inference system implements KV caching.
+This loop has two distinct phases with very different performance characteristics:
 
-The autoregressive loop also explains why generation has two distinct phases in practice: the prefill phase and the decode phase. In the prefill phase, the entire prompt is processed in one parallel forward pass, producing the initial hidden states and (with KV caching) populating the KV cache for all prompt positions. This is the fast, batch-parallelizable part of inference. In the decode phase, the model generates tokens one at a time, with each step doing a forward pass over just the new token (reusing cached K/V for all previous positions). The prefill-decode split is why metrics like time-to-first-token (TTFT) and tokens-per-second (TPS) measure different things: TTFT is dominated by prompt length and prefill efficiency; TPS is dominated by decode efficiency and batch size.
+**Prefill phase:** The entire prompt is processed in one parallel forward pass, populating the KV cache for all prompt positions. Prefill is compute-bound — large matrix-matrix multiplications run at high tensor core utilization (60-80% of peak FLOPs). Prefill latency scales with prompt length. The metric is *time to first token* (TTFT).
 
-## Greedy Decoding and Its Failure Modes
+**Decode phase:** The model generates tokens one at a time, each requiring a new forward pass over the latest token. Decode is memory-bandwidth bound — on every step, the model must load the full weight matrices from HBM into tensor cores for a single matrix-vector multiply. GPU utilization drops to 5-15% of peak FLOPs because arithmetic is trivially fast compared to the memory load. The metric is *inter-token latency* (ITL) and *tokens per second* (TPS).
 
-Greedy decoding is the simplest possible decoding strategy: at each generation step, select the token with the highest probability in the vocabulary distribution — that is, take the $\text{argmax}$ over the logit vector after softmax. The process is deterministic (given the same input, you will always get the same output), requires no additional hyperparameters, and runs at the minimum possible computational overhead. For many constrained generation tasks where there is clearly one best answer, greedy decoding works well.
+::: {.callout-tip}
+**Analogy:** Prefill is like reading a book — you absorb a lot of information in one sitting, efficiently. Decode is like reciting it out loud — one word at a time, and there's an irreducible pause between each word while you recall the next one.
+:::
 
-The failure modes of greedy decoding become apparent quickly in open-ended generation. The most notorious is repetition: once the model has generated a repeated phrase (say, "The meeting is scheduled for" appears twice), the highest-probability continuation of that repeated phrase is often to repeat it again. This is because the training data is full of coherent text where common phrases continue in predictable ways, and the greedy strategy has no mechanism to penalize or detect that it is in a loop. The result is outputs like "The cat sat on the mat. The cat sat on the mat. The cat sat on the mat." — once the loop is entered, there is no escape. This repetition problem is fundamental to argmax decoding, not an artifact of small model size.
+Without the KV cache, computation over $T$ generation steps would be $O(T^2)$ — quadratic in the number of generated tokens because every step recomputes attention over all previous positions. With the KV cache, it drops to $O(T)$ per step for the attention dot product. This optimization is so critical that it is always enabled in any serious inference system.
 
-The second failure mode is myopia: greedy decoding is locally optimal but globally suboptimal. At step $t$, the highest-probability single token may be part of a sentence that, when completed, is incoherent or low-quality. A high-probability first word might lead into a low-probability continuation, whereas a slightly lower-probability first word might lead into a high-probability, high-quality continuation. Greedy decoding has no lookahead — it commits irrevocably to the locally optimal choice at each step without considering where that choice leads. The third failure mode is boringness: greedy decoding consistently produces the statistical "average" output — the most common, least surprising continuation of any given context. This is fine for factual questions where you want the most likely correct answer, but it produces generic, repetitive, flat text for creative tasks.
+::: {.callout-warning}
+**Common Misconception:** "Longer prompts make generation slower." Longer prompts increase prefill time (TTFT) but do not directly affect per-token decode speed once the KV cache is populated. What slows decode is the growing KV cache itself consuming GPU memory, which reduces the batch size you can run concurrently — indirectly reducing throughput.
+:::
 
-## Temperature, Top-k, and Top-p Sampling
+## Decoding Strategies
 
-Instead of deterministically selecting the argmax, sampling-based decoding strategies treat the model's output distribution as a probability distribution and draw a sample from it. This introduces stochasticity — the same prompt can produce different outputs on different runs — which is often desirable. The challenge is controlling the degree and character of that stochasticity to produce outputs that are diverse and interesting without being incoherent.
+### Greedy Decoding
 
-Temperature scaling is the most fundamental control. Before sampling, the logits vector $\mathbf{l}$ is divided by a temperature parameter $T$: the softmax is computed as $\text{softmax}(\mathbf{l}/T)$. When $T < 1$, the division amplifies the differences between logits: high-probability tokens become even higher probability relative to low-probability tokens, and the distribution sharpens (concentrates mass on the top tokens). At $T \to 0$, the distribution collapses to a point mass on the argmax — equivalent to greedy decoding. When $T > 1$, division compresses differences between logits: the distribution flattens, giving lower-probability tokens a higher chance of being selected, making outputs more random and creative. At $T = 1$, the model samples from its original unmodified distribution. At $T = 2$, the distribution is significantly flattened and outputs become noticeably more erratic and unpredictable.
+**Plain English:** At each step, pick the single most likely next word. No randomness, no alternatives considered.
 
-Top-k sampling addresses one weakness of pure temperature sampling: the long tail of the vocabulary. Even with temperature, there may be thousands of tokens with non-negligible probability in the distribution — including tokens that are grammatically wrong, factually absurd, or contextually impossible. Top-k sampling restricts the sampling distribution to only the $k$ highest-probability tokens, setting all others to zero and renormalizing. $k = 50$ is a common default. The problem with top-k is that $k$ is a fixed number that does not adapt to the shape of the distribution. When the model is highly confident (the distribution is sharply peaked, say 80% probability on the top token), $k = 50$ is overly permissive, allowing sampling from the long tail of implausible tokens. When the model is genuinely uncertain across many plausible continuations (a flat distribution), $k = 50$ might be too restrictive, artificially limiting creativity.
+**Technical definition:** Compute $\hat{t} = \text{argmax}_{v \in V} \text{ logit}_v$. This is deterministic — given the same input and model weights, you always get the same output. Zero additional hyperparameters.
 
-Top-p (nucleus) sampling, introduced by Holtzman et al. (2019) in "The Curious Case of Neural Text Degeneration," solves this adaptive shortcoming. Instead of fixing the number of tokens to sample from, top-p fixes the cumulative probability mass. Sort tokens by probability (highest first) and include tokens until their cumulative probability reaches $p$ (e.g., $p = 0.9$). This "nucleus" of tokens is then used as the sampling distribution. When the model is confident, the nucleus may contain only 5-10 tokens (most probability is concentrated on a few choices). When the model is uncertain, the nucleus expands to contain 100+ tokens. The sampling distribution adapts dynamically to the model's confidence, which is precisely the behavior you want: be selective when the model knows the answer, permissive when it doesn't. Top-p sampling is the default recommendation for most creative generation tasks and is used internally by most major LLM providers.
+**Analogy:** Greedy decoding is like autocomplete on a phone keyboard that always picks the top suggestion. It is fast and consistent, but it sounds robotic and falls into patterns because "most probable" is usually the most generic phrase.
 
-In production, temperature and top-p are typically combined. A common configuration for conversational generation is `temperature=0.7, top_p=0.9`: temperature reduces the probability mass on the very long tail before top-p selects the nucleus, and nucleus sampling prevents the occasional sampling from very low probability tokens that temperature alone would allow. For factual and deterministic tasks — answering a specific question, generating structured data, deterministic code generation — `temperature=0, top_p=1.0` (greedy) is often appropriate. For creative writing, `temperature=1.0-1.2, top_p=0.95` produces more surprising and varied output. The key insight: there is no universally optimal setting. The right temperature and top-p depend on the task, the desired level of diversity, and the tolerance for occasional incoherence.
+**When to use:** Factual QA where there is a single correct answer, structured extraction tasks, SQL/JSON generation where you want determinism, production pipelines requiring reproducibility (same input = same output for audit).
 
-## Beam Search
+**When not to use:** Creative writing, open-ended conversation, brainstorming, any task where diversity improves quality.
 
-Beam search was the dominant decoding strategy for sequence-to-sequence models (neural machine translation, abstractive summarization) before sampling-based methods became standard for generative LLMs. Understanding beam search — what it does, why it works for some tasks, and why it fails for others — is essential for understanding the space of decoding strategies.
+**Failure modes:**
+1. **Repetition loops.** Once a repeated phrase appears, the highest-probability continuation of that phrase is often more repetition, because the training data contains repetitive text. There is no escape mechanism. The model prints "The cat sat on the mat. The cat sat on the mat." indefinitely.
+2. **Myopia.** The locally optimal token at step $t$ may lead to a globally suboptimal completion. A high-probability word might begin a sentence that cannot be coherently completed, whereas a slightly lower-probability word leads to a much better sentence.
+3. **Boringness.** Greedy always selects the statistically "average" continuation — safe, predictable, clichéd. It consistently underperforms sampling for anything requiring nuance or variety.
 
-Beam search maintains $k$ candidate sequences (beams) in parallel throughout generation. At each step, each of the $k$ current beams is expanded by computing its probability-weighted continuations across the vocabulary, generating $k \times |V|$ possible next sequences. From all of these candidates, the $k$ highest-scoring sequences (by accumulated log-probability) are kept as the new set of beams. This continues until each beam hits an end-of-sequence token or the maximum length. The final output is the beam with the highest total score, optionally with a length normalization penalty to prevent the model from preferring shorter sequences just because they have fewer terms in the product.
+### Temperature Sampling
 
-Beam search is superior to greedy decoding at finding high-probability sequences because it avoids committing to the locally optimal token at each step. If the greedy choice at step 1 leads to a low-probability completion overall, beam search will retain other beams that start differently and may score higher globally. This lookahead is why beam search significantly outperforms greedy decoding on machine translation, where there is a correct target sequence and the objective is to find the most probable one.
+**Plain English:** Before sampling, scale the model's raw scores by a temperature parameter. Low temperature makes the model more decisive; high temperature makes it more adventurous.
 
-The failure of beam search for open-ended generation is well-documented empirically and has a compelling theoretical explanation. Beam search maximizes $\log P(\text{sequence})$ — it finds the sequence the model considers most probable. For open-ended tasks like creative writing and conversation, the most probable sequence is also the most generic, safest, and least interesting sequence. Probability mass in language models is concentrated on predictable, clichéd text because clichés appear frequently in training data. The highest-probability essay about climate change will be full of common phrases and will avoid all distinctive or creative choices. Additionally, beam search suffers from "anti-diversity": the $k$ beams tend to converge toward near-identical sequences that differ only in minor details, because they are all competing for high probability mass, which is concentrated in the same high-frequency regions. Finally, beam search is $k$ times more expensive than greedy decoding in computation and memory, making it impractical for interactive applications without a meaningful quality benefit. For these reasons, production chat and code generation models universally use sampling-based decoding, not beam search.
+**Technical definition:** Given logit vector $\mathbf{l}$, compute the softmax as $\text{softmax}(\mathbf{l}/T)$. Then sample a token from the resulting probability distribution.
+
+- $T \to 0$: logits divided by a tiny number → differences amplified enormously → near-deterministic argmax (greedy)
+- $T = 1$: unmodified distribution, sample from what the model learned
+- $T > 1$: logit differences compressed → distribution flattened → more uniform sampling → more randomness
+
+**Analogy:** Temperature is like a dial on a dartboard. At $T = 0$, every dart hits the bullseye (most likely token). At $T = 1$, darts land around the bullseye in proportion to how well-calibrated the model is. At $T = 2$, darts scatter across the whole board — you get surprising results, sometimes brilliantly so, sometimes catastrophically.
+
+**Practical starting points:**
+
+| Use Case | Recommended Temperature |
+|---|---|
+| SQL / JSON / structured data | 0.0 (greedy) |
+| Factual Q&A | 0.0 – 0.2 |
+| Chat / assistant | 0.5 – 0.8 |
+| Creative writing | 0.9 – 1.2 |
+| Brainstorming / diversity | 1.0 – 1.5 |
+| Rarely useful above | 1.5 |
+
+::: {.callout-warning}
+**Production Gotcha:** Temperature=0 and temperature=0.0001 are not the same thing numerically. Many inference frameworks treat `temperature=0` as a special case that uses argmax directly to avoid floating-point issues. Always check your serving framework's documentation for how near-zero temperatures are handled.
+:::
+
+### Top-k Sampling
+
+**Plain English:** After computing probabilities, keep only the top $k$ candidates. Sample from those, ignoring all others.
+
+**Technical definition:** Rank all vocabulary tokens by probability. Zero out all but the top $k$, renormalize, then sample from this truncated distribution.
+
+**Analogy:** Top-k is like a hiring manager who says "only interview the top 50 résumés, no matter what." This has a problem — if there are only 5 outstanding candidates but 45 mediocre ones, you still pull from a pool of 50. Conversely, if there are 200 equally qualified candidates, you arbitrarily cut to 50.
+
+**When to use:** When you want a hard cap on vocabulary diversity. Useful as a safety valve in combination with top-p. Common values: k = 20 to 100.
+
+**Weakness:** The size of the candidate pool is fixed regardless of the distribution shape. When the model is highly confident (one token at 90% probability), k = 50 includes 49 implausible tokens. When the model is genuinely uncertain across 200 equally plausible tokens, k = 50 is too restrictive.
+
+### Top-p (Nucleus) Sampling
+
+**Plain English:** Sample from the smallest set of tokens that together account for at least $p$ of the total probability. The set size adapts to the model's confidence.
+
+**Technical definition:** Sort tokens by probability descending. Include tokens until their cumulative probability reaches $p$ (e.g., 0.9). Sample uniformly from this "nucleus."
+
+**Analogy:** Instead of "top 50 candidates," nucleus sampling says "interview everyone in the top 90th percentile." When competition is fierce, that's 5 people. When it's weak, that's 200. The threshold is adaptive.
+
+**Why it's better than top-k:** Top-p automatically contracts when the model is confident (tight nucleus of 3-10 tokens) and expands when uncertain (nucleus of 100+ tokens). This is exactly the behavior you want.
+
+**Production default:** `temperature=0.7, top_p=0.9` is the starting point for most chat and assistant applications. Temperature reduces the long tail first; top-p then adaptively selects the nucleus from the redistributed probabilities.
+
+::: {.callout-tip}
+**When to combine top-k AND top-p:** Use top-k as a hard cap (e.g., k=200) plus top-p (p=0.9) together. This ensures you never sample from more than 200 tokens even if the distribution is very flat, while still getting nucleus behavior for normal distributions. This combination is what most production implementations default to.
+:::
+
+### Repetition Penalty
+
+**Plain English:** Penalize tokens that have already appeared in the output, making the model less likely to repeat itself.
+
+**Technical definition:** Before softmax, multiply the logit of any token that has appeared in the previous output by a factor $1/\rho$ where $\rho > 1$ (i.e., divide the logit by $\rho$). OpenAI's API splits this into:
+- `frequency_penalty`: scales penalty proportionally to how many times the token has appeared (tokens appearing 3× are penalized more than tokens appearing 1×)
+- `presence_penalty`: binary — penalizes any token that has appeared at all, regardless of count
+
+**When to use:** Long-form generation at low temperature where repetition loops are likely. List generation to prevent duplicate items. Creative writing tasks where varied vocabulary is valued.
+
+**When NOT to use:**
+- Legal, medical, or technical documents where domain terms must repeat ("the plaintiff," "return," `function`)
+- JSON / code where structural keywords (`{`, `}`, `"`, `true`) appear repeatedly by design
+- When the real fix is increasing temperature — repetition penalty is a band-aid over poor sampling settings
+
+### Beam Search
+
+**Plain English:** Instead of generating one sequence, maintain $k$ candidate sequences in parallel. At each step, expand each candidate by all vocabulary tokens, keep the $k$ best overall sequences, and discard the rest.
+
+**Technical definition:** At step $t$, the beam maintains $k$ sequences. Each generates $|V|$ extensions, producing $k \times |V|$ candidates scored by accumulated log-probability. Keep the top $k$ by total score. Continue until EOS or max length. Output the highest-scoring beam (optionally with length normalization).
+
+**Why beam search helps vs. greedy:** It has lookahead. If the greedy choice at step 1 leads to a dead end, beam search retains other candidates that started differently and may score higher globally. For machine translation — where there is a correct target sentence — beam search reliably outperforms greedy.
+
+**Why beam search fails for open-ended generation:**
+1. **Probability ≠ quality.** For open-ended tasks, the highest-probability sequence is the most generic, safest, most clichéd possible output. Beam search optimizes for probability mass concentration, which means boring text.
+2. **Anti-diversity.** All $k$ beams converge toward near-identical sequences. Running beam width 5 does not give 5 diverse alternatives — it gives 5 minor variations of the same high-probability phrase.
+3. **Cost.** Beam search is $k$× more expensive than greedy for no benefit on creative tasks.
+4. **Production reality.** No major chat model API uses beam search for response generation.
+
+**When beam search is appropriate:** Machine translation, constrained rewriting tasks, ASR decoding, formal summarization where a reference summary exists, tasks where quality is measured by proximity to a specific target.
+
+### Decoding Strategy Comparison Table
+
+| Strategy | Deterministic | Quality | Speed | Best For |
+|---|---|---|---|---|
+| Greedy | Yes | Medium (repetition-prone) | Fastest | Factual QA, structured extraction |
+| Beam Search | Yes | High for constrained tasks | $k$× slower | Translation, reference summarization |
+| Temperature Sampling | No | Tunable | Fast | Chat, general generation |
+| Top-k Sampling | No | Good | Fast | Creative tasks with diversity floor |
+| Top-p (Nucleus) | No | Best for open-ended | Fast | Creative writing, conversation |
+| Top-k + Top-p + Temp | No | Best overall | Fast | Production default for most use cases |
 
 ## The KV Cache
 
-The KV cache is the most important inference optimization for autoregressive generation, and understanding it is essential for reasoning about the cost, throughput, and memory requirements of LLM serving systems. Every serious LLM deployment uses KV caching; its absence would make interactive generation orders of magnitude slower.
+The KV cache is the most important inference optimization for autoregressive LLMs. Every production LLM serving system uses it. Without it, inference would be orders of magnitude slower and impossible to serve at scale.
 
-To understand why the KV cache exists, recall how transformer attention works. At each attention layer, every token position computes three vectors: a query $\mathbf{q}$, a key $\mathbf{k}$, and a value $\mathbf{v}$. The output at each position is a weighted sum of all value vectors, where the weights are computed as scaled dot products between the query at that position and the keys at all positions: $\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right)\mathbf{V}$. In causal generation, position $t$ attends only to positions $1$ through $t$, and its query is $\mathbf{q}_t$. The keys and values it attends over are $\mathbf{k}_1, \ldots, \mathbf{k}_t$ and $\mathbf{v}_1, \ldots, \mathbf{v}_t$.
+### Why It Exists
 
-Without caching, when generating token $t+1$, you would need to recompute $\mathbf{k}_i$ and $\mathbf{v}_i$ for all positions $i \leq t$. But these vectors depend only on the tokens at those positions and the attention weight matrices $W_K$ and $W_V$ — neither of which has changed since the last step. This is pure redundant computation. The KV cache stores the key and value matrices for all previously processed positions, so that on each new generation step, you only need to compute $\mathbf{k}_{t+1}$ and $\mathbf{v}_{t+1}$ for the new token, then concatenate these with the cached $\mathbf{k}_{1:t}$ and $\mathbf{v}_{1:t}$ to compute attention. The total computation per generation step drops from $O(n \cdot d)$ without caching to $O(d)$ for the new token (plus $O(n)$ for the attention dot product with the full cache), where $n$ is the sequence length and $d$ is the model dimension.
+In transformer attention, every token position computes three vectors: query $\mathbf{q}$, key $\mathbf{k}$, and value $\mathbf{v}$. Attention output at position $t$ is:
 
-The memory cost of the KV cache is substantial. For a model with $L$ attention layers, $H$ attention heads, head dimension $d_h$, and a context window of $n$ tokens, the KV cache requires $2 \cdot L \cdot H \cdot d_h \cdot n$ elements per sequence (the factor of 2 is for keys and values). For a Llama 2 7B model (32 layers, 32 heads, head dimension 128) with a 4,096-token context in float16, this is $2 \times 32 \times 32 \times 128 \times 4096 \times 2 \text{ bytes} \approx 2$ GB per sequence. For a 70B model with a 128k context window, the KV cache can exceed the model weights themselves in memory. This is why context window length is not "free": doubling the context window roughly doubles the KV cache memory requirement, which reduces the batch size you can serve simultaneously on a given GPU, which reduces throughput. KV cache memory management — including techniques like paged attention (vLLM), quantized KV caches, and sliding window attention (Mistral) — is an active area of inference systems research precisely because the memory-throughput tradeoff is one of the central constraints in production LLM serving.
+$$\text{Attention}(\mathbf{q}_t, \mathbf{K}_{1:t}, \mathbf{V}_{1:t}) = \text{softmax}\left(\frac{\mathbf{q}_t \mathbf{K}_{1:t}^T}{\sqrt{d_k}}\right)\mathbf{V}_{1:t}$$
+
+When generating token $t+1$, the query is $\mathbf{q}_{t+1}$. It attends over keys and values at all previous positions. Without caching, you would recompute $\mathbf{k}_i$ and $\mathbf{v}_i$ for every $i \leq t$ from scratch — even though those positions haven't changed. This is pure redundant computation.
+
+The KV cache stores $\mathbf{k}_i$ and $\mathbf{v}_i$ for all previously processed positions at every layer. On each new decode step:
+1. Compute $\mathbf{q}_{t+1}$, $\mathbf{k}_{t+1}$, $\mathbf{v}_{t+1}$ for the new token only
+2. Append $\mathbf{k}_{t+1}$, $\mathbf{v}_{t+1}$ to the cache
+3. Compute attention using the full cached $\mathbf{K}_{1:t+1}$ and $\mathbf{V}_{1:t+1}$
+
+Per-step computation drops from $O(n)$ matrix operations to $O(1)$ for new keys/values plus $O(n)$ for the attention dot product.
+
+**Analogy:** The KV cache is like keeping your work notes as you solve a long math problem. Instead of re-reading all previous steps from scratch each time you write a new line, you keep them in front of you and just write the next line. The math is the same, but the effort is far less.
+
+### Memory Cost Formula
+
+For a model with $L$ layers, $H$ attention heads, head dimension $d_h$, and sequence length $n$:
+
+$$\text{KV Cache Memory} = 2 \times L \times H \times d_h \times n \times \text{bytes\_per\_element}$$
+
+The factor of 2 is for keys and values. In float16 (2 bytes per element):
+
+$$\text{KV Cache Memory (FP16)} = 4 \times L \times H \times d_h \times n \text{ bytes}$$
+
+**Worked example — Llama 3 8B** ($L=32$, $H=32$, $d_h=128$):
+
+- Per token: $4 \times 32 \times 32 \times 128 = 524{,}288$ bytes $\approx 0.5$ MB
+- At 4,096 tokens: $0.5 \text{ MB} \times 4096 \approx 2$ GB per sequence
+
+**Worked example — Llama 3 70B** ($L=80$, $H=64$, $d_h=128$) at 128k context:
+
+- Per token: $4 \times 80 \times 64 \times 128 = 2{,}621{,}440$ bytes $\approx 2.5$ MB
+- At 128k tokens: $2.5 \text{ MB} \times 131{,}072 \approx 320$ GB
+
+That 320 GB is larger than the model weights themselves (~140 GB). This is not a hypothetical edge case — production 128k-context deployments face this constraint daily.
+
+::: {.callout-warning}
+**Production Gotcha:** KV cache memory is not shared across requests. Each concurrent user in a batch has their own KV cache. Doubling context length from 4k to 8k roughly doubles the KV cache per sequence, which roughly halves your maximum batch size (the number of concurrent users you can serve on a given GPU), which roughly halves your throughput. This is the direct tradeoff between "supporting longer contexts" and "serving more users."
+:::
+
+### KV Cache Optimizations
+
+**Multi-Query Attention (MQA) and Grouped-Query Attention (GQA):** Instead of having $H$ separate key and value heads, use 1 (MQA) or $G < H$ (GQA) shared heads for K and V while keeping $H$ query heads. This reduces KV cache size by a factor of $H$ (MQA) or $H/G$ (GQA). Llama 3, Mistral, and most modern production models use GQA. With GQA and 8 KV heads instead of 32, KV cache is 4× smaller.
+
+**KV Cache Quantization:** Store K and V in INT8 (1 byte) instead of FP16 (2 bytes), halving KV memory with minimal quality loss. KV activations are typically more tolerant of quantization than weights.
+
+**Paged Attention (vLLM):** Traditional KV caches allocate a contiguous memory block per sequence proportional to the maximum context length. This wastes memory for short sequences and causes fragmentation. vLLM's PagedAttention stores KV caches in non-contiguous pages (like virtual memory in an OS), enabling near-zero waste and sharing pages between sequences with common prefixes (e.g., a shared system prompt).
+
+**Sliding Window Attention (Mistral):** Only keep the KV cache for the most recent $w$ tokens in each layer. Memory cost becomes $O(w)$ instead of $O(n)$. Works well because most relevant context for next-token prediction is recent.
+
+**Prefix Caching:** If many requests share the same prefix (system prompt, few-shot examples), cache the KV values for that prefix once and reuse across all requests. Eliminates redundant prefill computation for the shared prefix.
+
+### Python Code: KV Cache Memory Calculator
+
+```python
+def kv_cache_memory_gb(
+    num_layers: int,
+    num_heads: int,
+    head_dim: int,
+    sequence_length: int,
+    num_sequences: int = 1,
+    bytes_per_element: float = 2.0,  # FP16 default
+) -> float:
+    """
+    Compute KV cache memory in GB.
+
+    Formula: 2 (K+V) × layers × heads × head_dim × seq_len × batch × bytes
+    """
+    elements = (
+        2 * num_layers * num_heads * head_dim * sequence_length * num_sequences
+    )
+    return (elements * bytes_per_element) / (1024 ** 3)
+
+
+# Model configs
+MODELS = {
+    "Llama-3-8B":  dict(num_layers=32, num_heads=32, head_dim=128),
+    "Llama-3-70B": dict(num_layers=80, num_heads=64, head_dim=128),
+    "GPT-3-175B":  dict(num_layers=96, num_heads=96, head_dim=128),
+}
+
+print("KV Cache Memory Requirements\n" + "=" * 50)
+for model_name, config in MODELS.items():
+    for seq_len in [4096, 32768, 131072]:
+        mem = kv_cache_memory_gb(**config, sequence_length=seq_len)
+        print(f"{model_name:20s} | seq={seq_len:7,d} | {mem:7.2f} GB (1 sequence)")
+
+# Example: how many concurrent sequences fit on a GPU?
+gpu_memory_gb = 80.0  # A100 80GB
+model_weight_gb = 16.0  # Llama-3-8B in FP16
+available_for_kv = gpu_memory_gb - model_weight_gb
+
+config = MODELS["Llama-3-8B"]
+kv_per_seq = kv_cache_memory_gb(**config, sequence_length=4096)
+max_batch = int(available_for_kv / kv_per_seq)
+print(f"\nMax concurrent sequences (Llama-3-8B, 4k ctx, A100 80GB): {max_batch}")
+
+# With GQA (8 KV heads instead of 32)
+config_gqa = dict(num_layers=32, num_heads=8, head_dim=128)  # GQA: 8 KV heads
+kv_per_seq_gqa = kv_cache_memory_gb(**config_gqa, sequence_length=4096)
+max_batch_gqa = int(available_for_kv / kv_per_seq_gqa)
+print(f"Max concurrent sequences (GQA 8 heads, 4k ctx, A100 80GB): {max_batch_gqa}")
+```
+
+## Continuous Batching
+
+### The Problem with Static Batching
+
+In a naive (static) batching system, you wait until you have a full batch of $B$ requests, run a forward pass for the entire batch in parallel, and return all responses together. This is efficient when all sequences finish at the same time, but real requests have variable length outputs. If request A generates 20 tokens and request B generates 500 tokens:
+
+- Request B must wait for request A to start (waiting for a full batch to form)
+- Request A's GPU allocation sits idle from step 21 to step 500 while waiting for B to finish
+- The GPU is constantly either waiting to fill (underutilized) or holding finished sequences (wasteful)
+
+**Analogy:** Static batching is like a bus that waits at each stop until every seat is full before moving, then drives all the way to the end of the line before letting anyone off. Efficient if everyone goes the same distance; terrible if some passengers need to get off early.
+
+### How Continuous Batching Works
+
+Continuous batching (also called iteration-level scheduling) treats each generation step as a scheduling opportunity. When any sequence in the current batch finishes (generates EOS or hits max length), a new request is immediately slotted into the freed spot for the next step. The batch composition changes dynamically on every forward pass.
+
+**The mechanism:**
+1. Maintain a queue of pending requests
+2. After each model forward pass, identify which sequences have completed
+3. Remove completed sequences and add waiting requests to fill available slots
+4. Proceed with the new batch composition immediately — no waiting for a "full batch"
+
+This means the GPU is never waiting for sequences to finish or for a batch to fill. Throughput is maximized because the GPU is processing real work at every step. In practice, continuous batching improves GPU utilization from 30-50% (static batching) to 80-95% under realistic mixed-length workloads.
+
+**vLLM, TGI (Text Generation Inference), TensorRT-LLM**, and every serious production LLM serving framework uses continuous batching. It is the default — if you are building a production serving system and not using continuous batching, you are leaving 2-3× throughput on the table.
+
+::: {.callout-warning}
+**Production Gotcha:** Continuous batching interacts with KV cache management. When a new request joins mid-batch, its prefill must run first to populate its KV cache — this is called a "chunked prefill" or "prefill-decode disaggregation." Some frameworks (vLLM with `--enable-chunked-prefill`) break long prefills into chunks to avoid pausing the decode pipeline for too long while processing a large new prompt.
+:::
 
 ## Structured Output and Constrained Decoding
 
-Production AI systems frequently need outputs in specific structured formats — JSON, SQL, XML, code in a particular language — rather than free-form text. Ensuring that an LLM produces valid structured output is a surprisingly nuanced engineering challenge with multiple solution layers of increasing reliability.
+### The Problem
 
-The naive approach is prompt engineering: instruct the model to respond only in valid JSON, provide a schema in the prompt, and include examples. This works most of the time with capable models. But "most of the time" is not acceptable for a production system that sends structured outputs to a downstream API or database — a single malformed JSON response breaks the parsing pipeline. Models occasionally forget to close a brace, include a comment in otherwise valid JSON, use a string where an integer is expected, or add a polite preamble before the JSON starts. Handling all these failure modes with retry logic and error handling is possible but fragile and adds latency.
+Production AI systems constantly need LLM outputs in specific formats — JSON for downstream APIs, SQL for database queries, typed function arguments for tool calling. The naive approach is prompt engineering ("respond only in valid JSON"). This works 95-98% of the time with capable models. In production, that is not good enough. A 2-5% failure rate means:
+- Downstream parsers crash on malformed JSON
+- Database writes fail on invalid SQL
+- Agentic pipelines break and require expensive retries
+- Error handling complexity multiplies
 
-Most major LLM API providers now offer a "JSON mode" or "structured outputs" mode. In this mode, the provider guarantees that the output is valid JSON (or matches a provided JSON Schema), even if this requires constraining the decoding process. OpenAI's Structured Outputs (released 2024) and Anthropic's tool use with forced tool choice both implement this guarantee. At a high level, the provider intercepts the decoding step and restricts the sampling distribution to only tokens that produce a valid continuation of the current partial JSON string. This is grammar-constrained decoding applied to the JSON grammar.
+### Grammar-Constrained Decoding
 
-Grammar-constrained decoding works by maintaining a parser state that tracks which characters or tokens are valid continuations of the current partial output according to the target grammar (JSON, SQL, a regular expression, a specific schema). At each decoding step, only tokens that transition the parser to a valid state are included in the sampling distribution — all other tokens receive zero probability. Libraries like Outlines (Willard and Louf, 2023), guidance (Microsoft), and llama.cpp's grammar sampling implement this approach for open-source models. The key property: grammar-constrained decoding guarantees structural validity without compromising the model's content quality, because within the constraints of the grammar, the model still chooses the highest-probability (or best-sampled) content. A model constrained to produce valid JSON will still pick the most likely field values — it just can't accidentally omit a closing brace.
+Grammar-constrained decoding makes structural validity a hard guarantee by restricting which tokens the model can emit at each step.
 
-For agentic systems where an LLM must call functions with specific argument structures, constrained decoding is particularly valuable. Tool calling in the OpenAI and Anthropic APIs works by defining function schemas and having the model produce structured tool calls that are guaranteed to parse correctly. This reliability is what makes agentic workflows practical: without guaranteed structured outputs, every tool call step would require validation, retry logic, and error handling, multiplying latency and complexity.
+**How it works:**
+1. Compile the target grammar (JSON Schema, SQL grammar, regex, specific enum values) into a finite automaton or pushdown parser
+2. At each decoding step, the parser is in some state $s_t$ representing the current partial output
+3. For each vocabulary token $w$, ask: "does appending $w$ produce a valid prefix according to the grammar?"
+4. Mask all invalid tokens to $-\infty$ logits (zero probability after softmax)
+5. Sample from the remaining valid tokens using normal temperature/top-p settings
+
+**What does not change:** The model's content choices. Within the valid token set, temperature, top-p, and the model's probabilities all work normally. A model constrained to produce valid JSON still picks the most contextually appropriate field values — it just cannot accidentally omit a closing brace.
+
+**What it guarantees:** Structural validity 100% of the time. Not semantic correctness (the model can still produce incorrect values in a structurally valid JSON), but parsing never fails.
+
+### Libraries and APIs
+
+| Tool | Approach | Best For |
+|---|---|---|
+| **Outlines** (Willard & Louf 2023) | Pre-compiled grammar automaton, logit masking | Open-source models, local serving |
+| **Guidance** (Microsoft) | Grammar + context-free template DSL | Complex structured workflows |
+| **llama.cpp grammar sampling** | Built-in grammar sampling in llama.cpp | Local inference |
+| **OpenAI Structured Outputs** | API-level JSON Schema guarantee | OpenAI GPT-4o/GPT-4o-mini |
+| **Anthropic tool use** | Schema-constrained tool arguments | Anthropic Claude models |
+
+### Python Code: Decoding Strategy Comparison
+
+```python
+"""
+Compare decoding strategies and demonstrate constrained generation.
+Requires: pip install transformers torch outlines
+"""
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+
+MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"  # small model for demo
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, torch_dtype=torch.float16)
+model.eval()
+
+PROMPT = "The capital of France is"
+inputs = tokenizer(PROMPT, return_tensors="pt")
+
+
+def decode_with_config(config_kwargs: dict, label: str) -> str:
+    """Run generation with given config and return decoded output."""
+    config = GenerationConfig(
+        max_new_tokens=50,
+        pad_token_id=tokenizer.eos_token_id,
+        **config_kwargs,
+    )
+    with torch.no_grad():
+        out = model.generate(**inputs, generation_config=config)
+    generated = out[0][inputs["input_ids"].shape[1]:]
+    text = tokenizer.decode(generated, skip_special_tokens=True)
+    print(f"[{label}]: {text[:100]}")
+    return text
+
+
+# --- Greedy (temperature=0) ---
+decode_with_config({"do_sample": False}, "Greedy (temp=0)")
+
+# --- Low temperature (conservative sampling) ---
+decode_with_config({"do_sample": True, "temperature": 0.3, "top_p": 0.9}, "Temp=0.3, top_p=0.9")
+
+# --- Standard chat settings ---
+decode_with_config({"do_sample": True, "temperature": 0.7, "top_p": 0.9}, "Temp=0.7, top_p=0.9")
+
+# --- Creative / high temperature ---
+decode_with_config({"do_sample": True, "temperature": 1.2, "top_p": 0.95}, "Temp=1.2, top_p=0.95")
+
+# --- Top-k only (no top-p) ---
+decode_with_config({"do_sample": True, "temperature": 0.8, "top_k": 50}, "Temp=0.8, top_k=50")
+
+# --- Beam search ---
+decode_with_config({"do_sample": False, "num_beams": 4, "early_stopping": True}, "Beam search (k=4)")
+
+# --- With repetition penalty ---
+decode_with_config(
+    {"do_sample": True, "temperature": 0.7, "top_p": 0.9, "repetition_penalty": 1.3},
+    "Temp=0.7, top_p=0.9, rep_penalty=1.3",
+)
+
+print("\n--- KV Cache Memory Analysis ---")
+def kv_cache_memory_gb(num_layers, num_heads, head_dim, seq_len, bytes_per=2):
+    elements = 2 * num_layers * num_heads * head_dim * seq_len
+    return (elements * bytes_per) / (1024**3)
+
+for ctx in [4096, 16384, 131072]:
+    mem = kv_cache_memory_gb(32, 32, 128, ctx)
+    print(f"Llama-3-8B | context={ctx:>7,d} tokens | KV cache = {mem:.3f} GB/sequence")
+```
+
+### Constrained JSON Decoding with Outlines
+
+```python
+"""
+Guaranteed JSON output using grammar-constrained decoding.
+Requires: pip install outlines transformers torch
+"""
+import outlines
+from pydantic import BaseModel
+from typing import Optional
+
+# Define the schema
+class ProductInfo(BaseModel):
+    name: str
+    price_usd: float
+    in_stock: bool
+    category: str
+    rating: Optional[float] = None
+
+# Load model via outlines (wraps transformers)
+model = outlines.models.transformers(
+    "meta-llama/Llama-3.2-1B-Instruct",
+    device="cuda",
+)
+
+# Create a generator constrained to our schema
+generator = outlines.generate.json(model, ProductInfo)
+
+prompt = """Extract product information from:
+"The blue wireless headphones cost $79.99, are in stock,
+rated 4.5 stars, in the Electronics category."
+
+Return as JSON:"""
+
+# This ALWAYS produces valid JSON matching ProductInfo schema
+result: ProductInfo = generator(prompt)
+print(f"Name: {result.name}")
+print(f"Price: ${result.price_usd}")
+print(f"In Stock: {result.in_stock}")
+print(f"Rating: {result.rating}")
+
+# Compare: unconstrained generation for same prompt would fail ~5% of the time
+# Constrained generation: 0% structural failure rate
+```
+
+## Continuous Batching in Practice
+
+```python
+"""
+Illustrate continuous batching concepts with pseudo-code.
+Shows why it dramatically improves throughput vs static batching.
+"""
+import time
+from dataclasses import dataclass, field
+from collections import deque
+
+@dataclass
+class Request:
+    id: str
+    tokens: list
+    max_new_tokens: int
+    generated: list = field(default_factory=list)
+
+    @property
+    def is_done(self):
+        return len(self.generated) >= self.max_new_tokens
+
+
+def static_batch_serve(requests: list, batch_size: int):
+    """
+    Static batching: fill batch, run until all sequences done.
+    GPU waits idle for short sequences to complete while long ones run.
+    """
+    total_steps = 0
+    batches = [requests[i:i+batch_size] for i in range(0, len(requests), batch_size)]
+    for batch in batches:
+        max_len = max(r.max_new_tokens for r in batch)
+        # All sequences in batch must wait for the longest one
+        steps_this_batch = max_len
+        total_steps += steps_this_batch
+        wasted_steps = sum(max_len - r.max_new_tokens for r in batch)
+        print(f"Batch of {len(batch)}: {steps_this_batch} steps, {wasted_steps} wasted")
+    return total_steps
+
+
+def continuous_batch_serve(requests: list, max_batch_size: int):
+    """
+    Continuous batching: swap in new requests as sequences complete.
+    GPU never waits — always processing real work.
+    """
+    queue = deque(requests)
+    active_batch = []
+    total_steps = 0
+
+    # Fill initial batch
+    while queue and len(active_batch) < max_batch_size:
+        active_batch.append(queue.popleft())
+
+    while active_batch:
+        # Simulate one decode step
+        for req in active_batch:
+            req.generated.append(1)  # generate one token
+        total_steps += 1
+
+        # Remove completed sequences, add new ones immediately
+        completed = [r for r in active_batch if r.is_done]
+        active_batch = [r for r in active_batch if not r.is_done]
+
+        for _ in completed:
+            if queue:
+                active_batch.append(queue.popleft())
+
+    return total_steps
+
+
+# Simulate 8 requests with variable lengths
+import random
+random.seed(42)
+requests_static = [Request(f"req_{i}", [], random.choice([20, 50, 200, 500])) for i in range(8)]
+requests_dynamic = [Request(f"req_{i}", [], r.max_new_tokens) for i, r in enumerate(requests_static)]
+
+print("=== Static Batching (batch_size=4) ===")
+static_steps = static_batch_serve(requests_static, batch_size=4)
+print(f"Total decode steps: {static_steps}")
+
+print("\n=== Continuous Batching (max_batch=4) ===")
+dynamic_steps = continuous_batch_serve(requests_dynamic, max_batch_size=4)
+print(f"Total decode steps: {dynamic_steps}")
+print(f"\nContinuous batching is {static_steps / dynamic_steps:.1f}x more efficient in steps")
+```
+
+---
+
+## Cheat Sheet
+
+- **Autoregressive generation** is sequential by nature: token $t$ conditions on all of tokens $1 \ldots t-1$. Parallelism only exists during prefill.
+- **Prefill is compute-bound** (many tokens processed in parallel). **Decode is memory-bandwidth bound** (one token per weight-load cycle). These require different optimization strategies.
+- **Greedy decoding** ($T=0$): argmax at each step. Deterministic, fast, repetition-prone. Use for factual tasks and when reproducibility matters.
+- **Beam search** maintains $k$ candidate sequences; finds higher-probability completions than greedy. Appropriate for constrained tasks (translation) but produces generic, anti-diverse outputs for open-ended generation. Rarely used in production chat systems.
+- **Temperature** scales logits before softmax: $\text{softmax}(\mathbf{l}/T)$. $T < 1$ sharpens the distribution; $T > 1$ flattens it; $T = 0$ = greedy.
+- **Top-k sampling** restricts sampling to the $k$ most probable tokens. Hard cap on diversity. Doesn't adapt to distribution shape.
+- **Top-p (nucleus) sampling** restricts sampling to the smallest set of tokens summing to probability $\geq p$. Adaptive — tighter when the model is confident, looser when uncertain. Preferred over top-k for most applications.
+- **Production default:** `temperature=0.7, top_p=0.9` for chat. `temperature=0` for structured/factual tasks.
+- **Repetition penalty** discounts logits for previously generated tokens. Useful for long-form text; harmful for documents where repetition is correct (legal, code, technical).
+- **KV cache** stores key and value matrices for all processed positions. Eliminates $O(n^2)$ recomputation, reduces per-step cost to $O(n)$ for attention dot product. Memory cost: $2 \times L \times H \times d_h \times n \times \text{bytes}$ per sequence.
+- **KV cache memory grows linearly with context length.** Doubling context → doubling KV cache per sequence → halving max batch size → halving throughput on fixed hardware.
+- **GQA and MQA** reduce KV cache by sharing heads. INT8 KV quantization halves memory. Paged attention (vLLM) eliminates fragmentation.
+- **Continuous batching** swaps completed sequences out immediately and adds new ones — no waiting for a full batch to form. Improves GPU utilization from 30-50% to 80-95%.
+- **Grammar-constrained decoding** masks invalid tokens at each step, guaranteeing structural validity (valid JSON, SQL, etc.) without sacrificing content quality.
+- **JSON mode / Structured Outputs** at the API level (OpenAI, Anthropic) implement constrained decoding server-side — 0% structural failure rate.
+- **Outlines, guidance, llama.cpp grammar** are the open-source tools for constrained decoding on self-hosted models.
+- **Beam width $k$** in beam search is $k$× more expensive. For open-ended tasks, the quality gain is zero or negative; only use beam search when the task has a well-defined "best" target sequence.
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+### Entry Level
 
-**Q1. What is temperature in text generation and what happens at temperature=0 vs temperature=1 vs temperature=2?**
+::: {.callout-tip title="Entry Level (5 Questions)"}
 
-::: {.callout-note collapse="true" title="Model Answer"}
-Temperature is a parameter that controls the randomness of the model's sampling by scaling the logits before computing the softmax probability distribution. Logits are divided by the temperature value $T$, so the softmax becomes $\text{softmax}(\mathbf{l}/T)$.
-
-At temperature=0 (or approaching 0), dividing by a very small number amplifies the differences between logits enormously. The token with the highest logit dominates the distribution entirely and gets selected with probability essentially 1. This is equivalent to greedy decoding: deterministic, always picks the most likely token.
-
-At temperature=1, the logits are unchanged and softmax is applied directly. The model samples from its unmodified probability distribution, the one learned during training. Outputs reflect the genuine diversity of the model's uncertainty.
-
-At temperature=2, dividing by 2 compresses the differences between logits (a logit of 10 becomes 5, a logit of 4 becomes 2 — the relative gap shrinks). The softmax distribution flattens: previously high-probability tokens lose some of their dominance, and previously low-probability tokens get a higher chance of being selected. Outputs become more varied and creative but also more unpredictable and prone to errors or incoherence.
-
-In practice: temperature=0 for deterministic factual answers, temperature=0.5-0.8 for chat and assistant tasks, temperature=1.0-1.2 for creative writing, and temperature above 1.5 is rarely useful because the incoherence becomes too high.
-:::
-
-**Q2. What is the difference between top-k and top-p (nucleus) sampling?**
+**Q1. What is temperature in text generation and what happens at temperature=0, temperature=1, and temperature=2?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Both top-k and top-p restrict the set of tokens that can be sampled at each decoding step, filtering out very low-probability tokens to prevent sampling from the incoherent tail of the distribution. They differ in how they define the restricted set.
+Temperature controls the randomness of token sampling by scaling the raw logit vector before computing the softmax probability distribution. The formula is $\text{softmax}(\mathbf{l}/T)$ where $\mathbf{l}$ is the logit vector and $T$ is the temperature.
 
-Top-k sampling keeps the $k$ highest-probability tokens and sets all others to zero probability (before renormalizing). For example, with $k=50$, only the 50 most likely tokens are candidates. The size of the candidate set is fixed at $k$ regardless of the shape of the probability distribution.
+**Temperature = 0 (approaching zero):** Dividing by a tiny number amplifies the differences between logits enormously. The highest-logit token gets probability essentially 1.0; all others get ~0. This is equivalent to greedy decoding — deterministic, always picks the most likely token.
 
-Top-p (nucleus) sampling keeps the smallest set of tokens whose cumulative probability exceeds $p$. Sort tokens from highest to lowest probability; include tokens until their running sum reaches $p$ (e.g., 0.9). The size of this nucleus adapts to the distribution: when the model is very confident (one token has 80% probability), the nucleus might contain only 3-5 tokens. When the model is uncertain across many plausible continuations, the nucleus might include 50-200 tokens.
+**Temperature = 1:** No scaling — the softmax is applied directly to the original logits. The model samples from its unmodified learned probability distribution. Output reflects the genuine uncertainty in the model's training.
 
-The adaptive behavior of top-p is why it is generally preferred. A fixed $k$ can be too restrictive when the distribution is genuinely flat and many continuations are plausible, and too permissive when the distribution is peaked and only a few continuations make sense. Top-p naturally handles both cases. In practice, top-p with $p=0.9$ to $p=0.95$ combined with temperature slightly below 1.0 (e.g., 0.7) is the standard recommendation for balanced creative generation.
+**Temperature = 2:** Dividing by 2 compresses logit differences (a logit of 10 becomes 5, a logit of 4 becomes 2 — the gap narrows). The softmax distribution flattens: high-probability tokens lose some of their dominance, and low-probability tokens get a higher chance of selection. Outputs become more varied and surprising, but also less reliable and more prone to incoherence.
+
+**In production:** temperature=0 for deterministic factual answers; temperature=0.5-0.8 for chat; temperature=1.0-1.2 for creative writing; temperatures above 1.5 are rarely useful.
 :::
 
-**Q3. What is greedy decoding and what is its main failure mode?**
+**Q2. What is top-p (nucleus) sampling and why is it preferred over top-k?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Greedy decoding is the simplest decoding strategy: at each generation step, select the single token with the highest probability from the model's output distribution (take the $\text{argmax}$ over the vocabulary). It requires no additional hyperparameters, is deterministic, and is computationally the cheapest decoding strategy.
+Top-p (nucleus) sampling restricts the token sampling pool to the smallest set of tokens whose cumulative probability reaches $p$. Sort tokens by probability descending, include tokens until the running sum hits $p$ (e.g., 0.9), then sample from this nucleus.
 
-The main failure mode is repetition. Once a model generates a repeated phrase, the most probable continuation of that phrase in the model's distribution is often to repeat it again — because in training data, predictable phrases are completed predictably. Greedy decoding has no mechanism to detect or break out of this loop. The classic example: prompt a model with "The meeting is at" and the greedy output might lock onto "The meeting is at 3pm. The meeting is at 3pm. The meeting is at 3pm." once any repetition starts.
+Top-k sampling instead keeps the $k$ highest-probability tokens regardless of how concentrated or flat the distribution is.
 
-The second failure mode is myopia: greedy decoding commits to the locally optimal token at each step without considering where that choice leads. A slightly lower-probability word might lead to a much higher-quality full sentence, but greedy decoding never considers this. Third, greedy decoding produces boring outputs — always picking the statistically "average" continuation means the output is generic, clichéd, and lacks the diversity that makes language interesting. For factual QA where there is one correct answer, greedy decoding is often fine. For anything creative or conversational, sampling with temperature and top-p produces substantially better results.
+Top-p is preferred because it adapts to the model's confidence:
+- When the model is very confident (one token at 80% probability), the nucleus is 3-5 tokens — tight, preventing bad samples.
+- When the model is genuinely uncertain across many options, the nucleus expands to 50-200 tokens — permissive, allowing diversity.
+
+Top-k with $k=50$ is always 50 tokens regardless of the distribution shape. When the model is confident, k=50 is too permissive (includes 45 bad options). When the model is uncertain, k=50 is too restrictive (cuts off legitimate options). Top-p naturally handles both cases without requiring per-task tuning of $k$.
+
+In practice, combining them (k=200 as a hard cap, p=0.9 as adaptive cutoff, T=0.7) is the standard production recommendation.
 :::
 
-:::
-
-::: {.callout-warning title="Mid Level"}
-
-**Q4. When would you use beam search over sampling, and why is beam search rarely used in chat/assistant models?**
+**Q3. What is greedy decoding and what are its failure modes?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Beam search is appropriate when the task has a "best single answer" structure and quality is measured by how closely the output matches a target distribution. The canonical example is machine translation: given a source sentence, there is a ground truth translation, and beam search consistently outperforms greedy decoding by finding higher-probability sequences that avoid locally optimal but globally suboptimal token choices. Other good candidates: constrained text generation tasks with strong structural requirements, formal paraphrase generation, and certain summarization tasks where faithfulness to a reference summary is the evaluation criterion.
+Greedy decoding selects the token with the highest probability at every step — the argmax over the vocabulary distribution. It is deterministic, requires no hyperparameters, and is computationally the fastest decoding strategy.
 
-Beam search is rarely used in chat and assistant models for several interconnected reasons. First, it maximizes the probability of the output sequence, and in open-ended generation, the highest-probability sequence is the most generic, predictable, and clichéd possible output. Probability mass in language models concentrates on common, safe phrasing — beam search finds the safest phrasing, which is rarely the most useful or interesting. Empirically, beam search outputs score worse on human preference ratings for conversational and creative tasks despite scoring higher by automated metrics like BLEU.
+**Failure Mode 1 — Repetition loops:** Once the model generates a repeated phrase, the most probable continuation of that phrase in the training data is often to repeat it again. Greedy decoding has no mechanism to detect or break this loop. A model might output "The meeting is scheduled for 3pm. The meeting is scheduled for 3pm." indefinitely.
 
-Second, beam search produces anti-diverse outputs: the $k$ beams tend to converge to near-identical sequences, because they are all competing for probability mass concentrated in the same regions. Running $k=5$ beams gives you 5 nearly identical candidates, not 5 diverse alternatives. Third, beam search is $k$-times more expensive in compute and memory. For a $k=5$ beam, you do 5× the work of greedy decoding with no benefit for open-ended tasks. Fourth, the repetition and myopia problems of greedy decoding affect beam search too, just to a lesser degree. Sampling with temperature and top-p avoids all of these issues and produces outputs with the diversity and naturalness that users prefer in conversational systems.
+**Failure Mode 2 — Myopia:** Greedy commits to the locally optimal token at each step without considering where that choice leads. A high-probability first word might start a sentence that cannot be completed coherently. There is no lookahead.
+
+**Failure Mode 3 — Boringness:** Greedy always picks the statistically "average" continuation — the most common, safest, most generic phrase. For creative or conversational tasks, this produces flat, clichéd output.
+
+For factual QA where there is one correct answer, greedy is fine. For anything creative or conversational, temperature sampling with top-p produces dramatically better results.
 :::
 
-**Q5. Explain the KV cache: what it stores, why it exists, what memory tradeoff it makes, and how it affects serving throughput.**
+**Q4. What is the KV cache and why does it matter?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The KV cache stores the key and value matrices computed at each attention layer for all tokens that have already been processed. In a transformer attention layer, each token computes a query $\mathbf{q}$, key $\mathbf{k}$, and value $\mathbf{v}$ vector. When generating token $t+1$, its query must attend over the keys and values of all previous tokens $1$ through $t$. Without caching, those keys and values would be recomputed from scratch at every step — pure redundant computation, since the tokens they were computed from have not changed.
+The KV cache stores the key and value vectors computed during attention for all previously processed tokens. Without it, every new decode step would have to recompute these vectors from scratch for all prior positions — pure redundant work since those positions have not changed.
 
-The KV cache eliminates this redundancy by storing $\mathbf{k}_i$ and $\mathbf{v}_i$ for all positions $i \leq t$ across all attention layers. On each new generation step, only the new token's $\mathbf{k}$ and $\mathbf{v}$ are computed and appended to the cache; the full set of cached $\mathbf{k}$ and $\mathbf{v}$ vectors are used for the attention dot product without recomputation. This reduces per-step computation from roughly $O(n)$ matrix operations down to $O(1)$ new computations plus $O(n)$ for the attention dot product.
+With the KV cache, generating token $n+1$ only requires computing the new token's key/value vectors and then performing the attention dot product using the cached keys and values for positions 1 through $n$. Per-step computation drops dramatically: instead of $O(n)$ matrix multiplications per step summed across all steps (which is $O(T^2)$ total), you do $O(1)$ new computation plus $O(n)$ for the attention lookup per step ($O(T^2/2)$ total for attention lookups, but crucially eliminating the redundant re-projection).
 
-The memory cost is real. For a Llama 2 7B model (32 layers, 32 heads, 128-dimensional heads) with a 4,096-token sequence in float16, the KV cache requires approximately $2 \times 32 \times 32 \times 128 \times 4096 \times 2 \approx 2$ GB per sequence. On a GPU with 40GB of HBM, this limits you to roughly 20 concurrent sequences at full context length. Since serving throughput is directly proportional to batch size (more concurrent requests per GPU = more tokens per second per dollar), the KV cache creates a direct memory-throughput tradeoff: longer context windows reduce batch size and thus reduce throughput. This is why techniques like paged attention (vLLM), quantized KV caches, and multi-query attention (reducing the number of KV heads) are important inference engineering optimizations.
+The KV cache is why LLMs can maintain long conversations at reasonable speed. Without it, a 1000-token conversation would require 1000× more computation on the last token than the first.
+
+Memory trade-off: the KV cache grows linearly with sequence length, consuming approximately 0.5 MB per token for a 7B model in FP16. At 4k tokens, that is ~2 GB per concurrent user. This is why context length directly impacts how many users you can serve simultaneously.
 :::
 
-**Q6. A model is producing highly repetitive output. What decoding parameters would you adjust and why?**
+**Q5. What is the difference between the prefill phase and the decode phase in LLM inference?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Repetitive output is the classic failure mode of low-temperature or greedy decoding. I would diagnose and adjust in this order.
+**Prefill phase:** Process the entire input prompt in one parallel forward pass. All tokens in the prompt are processed simultaneously because they are already known — attention over all positions can be computed as a batch. The KV cache is populated for all prompt positions during prefill. Prefill is compute-bound (large matrix-matrix multiplications); time scales with prompt length. The metric that captures prefill quality is *time to first token (TTFT)*.
 
-First, check if temperature is at or near zero. If `temperature=0` is set (greedy decoding), the model deterministically picks the most probable token at each step. Once it generates a repeated phrase, the most probable continuation is to repeat it again. Raising temperature to 0.7-0.9 introduces sampling that breaks repetitive loops by probabilistically selecting from multiple plausible continuations.
+**Decode phase:** Generate one token at a time. Each step: compute the new token's query/key/value vectors, attend over the KV cache for all prior positions, project through the vocab head, sample a token, append it to the sequence, repeat. Decode is memory-bandwidth bound — the model must load its full weights from GPU memory every step. GPU utilization is 5-15% of peak FLOPs. The metric is *inter-token latency (ITL)* or *tokens per second (TPS)*.
 
-Second, add or increase repetition penalty. Many APIs and sampling implementations offer a `repetition_penalty` parameter (also called `frequency_penalty` or `presence_penalty`) that applies an exponential discount to the logits of tokens that have already appeared in the output. OpenAI's `frequency_penalty` reduces the logit of each token proportionally to how many times it has appeared; `presence_penalty` applies a fixed reduction regardless of count. Setting these to 0.1-0.3 significantly reduces repetition.
-
-Third, ensure top-p sampling is enabled with a value like 0.9. Without top-p, even moderate temperature can still over-sample from a peaked distribution that includes the repeated token at the top. Top-p ensures the model's sampling is drawn from a diverse enough nucleus.
-
-Fourth, check for prompt-level causes: if the prompt itself contains highly repetitive text (e.g., a long list of similar examples), the model may learn to continue that pattern. Reducing repetition in the prompt or reformatting it can help. Finally, for severe cases in longer outputs, reducing max_tokens to force shorter responses and including explicit instructions like "do not repeat information" can provide a prompt-level backstop while the decoding parameters are tuned.
+**Why this distinction matters in production:** Optimizing for TTFT (latency to first visible character) requires fast prefill — larger batches, longer prompts processed quickly. Optimizing for TPS (total throughput) requires efficient decode — KV cache management, batching, speculative decoding. A system optimized for one is not necessarily optimized for the other. Production serving systems like vLLM separate prefill and decode scheduling to optimize each independently.
 :::
 
-**Q7. How does constrained decoding (e.g., forcing JSON output) work under the hood?**
+:::
+
+### Mid Level
+
+::: {.callout-warning title="Mid Level (5 Questions)"}
+
+**Q1. Explain how the KV cache works and why its memory grows with sequence length. How do you manage it in production?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Constrained decoding works by maintaining a parser state that tracks which tokens are valid continuations of the current partial output according to a target grammar or schema, and masking all other tokens to zero probability at each decoding step.
+**Mechanics:** For each attention layer, each token computes a key vector $\mathbf{k} \in \mathbb{R}^{d_h}$ and a value vector $\mathbf{v} \in \mathbb{R}^{d_h}$. These depend only on the token's embedding and the fixed weight matrices $W_K$ and $W_V$ — they never change once computed. The KV cache stores them all persistently during a generation sequence so they are never recomputed.
 
-The concrete implementation: before each sampling step, the decoding algorithm consults a finite automaton or pushdown parser built from the target grammar (e.g., the JSON grammar, or a specific JSON Schema). The parser is in some state $s_t$ representing how much of a valid structure has been produced so far. For each token $w$ in the vocabulary, the algorithm asks: "does appending $w$ to the current partial output produce a valid prefix according to the grammar?" Tokens that produce valid prefixes are kept in the sampling distribution; tokens that produce invalid sequences (e.g., a second decimal point in a JSON number, or a key name without a colon) are masked to $-\infty$ logits (effectively zero probability after softmax).
+**Why memory grows linearly:** Every new token adds $2 \times L \times H \times d_h$ new scalars to the cache ($L$ layers, $H$ heads, both K and V). The total after $n$ tokens is $2 \times L \times H \times d_h \times n$ scalars. In float16, this is $4 \times L \times H \times d_h \times n$ bytes. For Llama-3-8B at 4k tokens: $4 \times 32 \times 32 \times 128 \times 4096 \approx 2$ GB. Doubling the context exactly doubles the KV memory.
 
-The key insight is that this does not change what content the model generates — it only prevents structural violations. Within the set of valid tokens at each position, the model still applies temperature, top-p, and its learned language model probabilities to choose the best continuation. A model constrained to produce valid JSON with a `name` (string) and `age` (integer) field will still produce the most contextually appropriate name and age — it just cannot accidentally omit the comma between fields or use a string where an integer is required.
+**The throughput impact:** KV cache memory is per-sequence. On a 40GB GPU with 16GB of model weights, 24GB is available for KV cache. At 2 GB per sequence (4k context), maximum concurrent batch = 12 sequences. If your context grows to 8k tokens, KV per sequence is ~4 GB, max batch = 6 — throughput halves.
 
-Libraries like Outlines (Willard and Louf, 2023) implement this by pre-compiling the grammar into an index that maps each partial output state to the set of valid next tokens, making the per-step lookup efficient. The `guidance` library from Microsoft and grammar sampling in llama.cpp use similar approaches. The API-level "JSON mode" from OpenAI and "tool use with required fields" from Anthropic implement equivalent guarantees, likely through constrained decoding or post-generation validation with retry.
+**Production management techniques:**
+1. **Paged attention (vLLM):** Store KV in non-contiguous memory pages, like virtual memory. Eliminates pre-allocation waste — you only allocate what you actually use. Also enables prefix sharing (many requests with the same system prompt share one cached copy).
+2. **GQA/MQA:** Reduce the number of KV heads. Llama 3 uses 8 GQA heads instead of 32 full heads — 4× KV memory reduction.
+3. **INT8 KV quantization:** Store KV in 8-bit integers instead of 16-bit floats — 2× memory reduction with minor quality degradation.
+4. **Prefix caching:** Cache KV for shared prefixes (system prompts, few-shot examples) and reuse across requests.
+5. **Context length limits:** Enforce max context lengths per tier to bound per-user KV usage.
 :::
 
-:::
-
-::: {.callout-important title="Forward Deployed Engineer"}
-
-**Q8. A customer reports their chatbot gives different answers to the same question on repeated runs. They want it to be "consistent." How do you explain the tradeoff and what do you recommend?**
+**Q2. When would you use beam search over sampling, and why is beam search rarely used in production chat?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-I start by validating the concern, then explaining the root cause, and finally proposing a solution that depends on what "consistent" actually means for their use case.
+**When beam search is appropriate:** Tasks with a well-defined "best" answer that you are trying to maximize probability over. Machine translation is the canonical case — there is a ground truth target sentence, and beam search consistently finds higher-probability translations than greedy decoding by avoiding locally optimal but globally suboptimal token choices. Other candidates: formal summarization where faithfulness to reference is measured, constrained rewriting, ASR decoding.
 
-The explanation for the non-technical version: "The model doesn't look up answers from a database — it generates them by sampling from a probability distribution over possible words. By design, this introduces randomness so that responses are varied and natural rather than robotic. That's the same mechanism that makes it good at creative and nuanced responses, but it means identical prompts don't always produce identical outputs."
+**Why beam search fails for chat and open-ended generation:**
 
-Then I probe what kind of consistency they actually need. There are two very different cases. Case 1: they want exact determinism — every user asking the same question gets the exact same words. Solution: set `temperature=0` (greedy decoding). The model will always pick the highest-probability token at each step, producing the same output for the same input given the same model version. I warn them that this makes outputs less natural and more prone to repetition, and that model updates by the API provider may still change outputs between versions.
+*Probability ≠ quality.* In open-ended generation, the highest-probability sequence is the most generic, safest, most clichéd possible output. Language model probability mass concentrates on common, predictable phrasing from the training corpus — beam search finds the safest phrasing, not the most useful. Empirically, beam search outputs score lower on human preference ratings for chat despite scoring higher on automated metrics like BLEU.
 
-Case 2: they want factual consistency — the model should always say the same thing about key facts (product pricing, return policy, company name), even if the phrasing varies. This is architecturally different from just lowering temperature. The solution is RAG or system prompt grounding: provide the authoritative facts in the system prompt or retrieve them from a database at query time. The model then generates varied prose but is anchored to consistent facts. This is usually the right architecture for enterprise chatbots, and it handles the underlying problem (factual variability) rather than just suppressing surface-level randomness. I would recommend this approach combined with temperature=0.3-0.5 for a balance of consistency and naturalness.
+*Anti-diversity.* The $k$ beams all converge toward near-identical sequences — they are all competing for the same high-probability mass regions. Running beam width 5 gives you 5 minor variants of the same generic output, not 5 diverse alternatives.
+
+*Cost.* Beam search is $k$× more expensive in compute and memory for no benefit on open-ended tasks.
+
+*Repetition.* Beam search still suffers from greedy decoding's repetition problem, just less severely — it finds the highest-probability repetitive loop rather than the locally optimal one.
+
+**Production reality:** GPT-4, Claude, Llama, Gemini — all use sampling (temperature + top-p) for chat. Beam search is used in specific NLP pipelines (translation APIs, ASR) where the task structure supports it.
 :::
 
-**Q9. A customer's summarization pipeline needs to be fast and deterministic for a production legal workflow. What decoding settings do you recommend and why?**
+**Q3. A model is producing highly repetitive output. What do you investigate and how do you fix it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-For a production legal workflow with speed and determinism requirements, my recommendation is: `temperature=0`, `top_p=1.0` (which with temperature=0 is equivalent to greedy), and no repetition penalty. Here is the reasoning for each choice.
+Repetitive output is a classic symptom of low-diversity decoding. Diagnose in order:
 
-Temperature=0 (greedy decoding) gives full determinism: the same document will always produce the same summary. This is critical for legal workflows where two different users summarizing the same filing must get the same output, and where audit trails require reproducible results. It is also marginally faster than sampling because there is no sampling step — just an argmax.
+**Step 1 — Check temperature.** Is `temperature=0` or near zero? If yes, the model is doing near-greedy decoding. Once it generates a repeated phrase, the greedy path keeps repeating it — there is no escape. Raise temperature to 0.7-0.9 first.
 
-Top_p=1.0 is correct here because top-p filtering is irrelevant at temperature=0: when you are taking the argmax, the sampling distribution shape doesn't matter. Setting top_p=1.0 ensures no tokens are filtered before the argmax. I would not apply repetition penalty for legal summarization because the factual terminology in legal documents intentionally repeats — "the plaintiff," "the defendant," "breach of contract" will and should appear multiple times, and a repetition penalty might cause the model to avoid using precise legal terms after they have appeared once, which would degrade summary quality.
+**Step 2 — Check if top-p is enabled.** Without top-p, even moderate temperature can repeatedly sample from a concentrated distribution. Enable `top_p=0.9`.
 
-For speed, I would also recommend using the model's streaming API to begin displaying the summary as tokens are generated rather than waiting for the full output, which significantly improves perceived latency. I would also recommend caching responses: if the same filing is summarized multiple times (which happens in legal workflows when multiple reviewers access the same document), caching the deterministic output at the application layer eliminates redundant model calls entirely. Finally, I would ensure they are using prompt caching if the provider supports it — if the system prompt contains a lengthy instruction or reference document that is constant across requests, caching it can reduce costs and latency by 80-90% for the cached portion.
+**Step 3 — Add repetition penalty.** Set `repetition_penalty=1.1` to `1.3` (or `frequency_penalty=0.3` in OpenAI API). This discounts logits for tokens already in the output, directly breaking loops.
+
+**Step 4 — Check the prompt.** Is the prompt itself repetitive (long lists of similar examples)? The model learns to continue the prompt's pattern. Reduce repetition in the prompt or reformatting it.
+
+**Step 5 — Check max length.** Very long outputs are more prone to repetition as the model runs out of novel things to say. Constrain `max_new_tokens` to what the task actually requires.
+
+**Caution:** Do not apply repetition penalty to JSON, SQL, code, or formal documents where keyword repetition is correct. `return` must appear multiple times in Python code; `{"key": value}` syntax requires repeated structural characters.
+
+**Production gotcha:** If you are using `frequency_penalty` (scales with count) and a document has a domain term like "diabetes" that legitimately appears 50 times, a penalty of 0.3 will reduce its logit by 15 by the end — enough to make the model avoid the term entirely and use awkward synonyms. Use `presence_penalty` (binary, only penalizes at least once) instead for such cases.
+:::
+
+**Q4. Explain continuous batching — what problem does it solve and how does it work?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Problem it solves:** In static batching, you assemble a batch of $B$ requests and run the decode loop until every sequence in the batch finishes. When some sequences finish early (e.g., after 20 tokens), their GPU allocation is idle while the batch waits for the longest sequence (e.g., 500 tokens) to complete. This wasted allocation reduces effective GPU utilization to 30-50% under realistic mixed-length workloads.
+
+**How continuous batching works:** Instead of waiting for the full batch to complete, every forward pass (every decode step) is a scheduling opportunity. After each step:
+1. Check which sequences have generated EOS or reached max length
+2. Remove completed sequences from the batch immediately
+3. Pull new waiting requests from the queue and add them to the batch
+4. The next forward pass uses the updated batch composition
+
+The batch changes on every step. GPU slots are never idle — as soon as a sequence completes, a new request takes its place.
+
+**Result:** GPU utilization improves from 30-50% (static) to 80-95% (continuous). Throughput (tokens per second per GPU) improves by 2-3×. Latency for queued requests improves because they no longer wait for a full batch to form.
+
+**Implementation detail:** vLLM, TGI, and TensorRT-LLM all implement continuous batching. vLLM uses PagedAttention (non-contiguous KV cache pages) to make memory allocation efficient for variable-length batches — a key enabler of continuous batching in practice.
+
+**The interaction with prefill:** When a new request joins mid-batch, its KV cache must be initialized via a prefill pass before it joins the decode loop. vLLM with chunked prefill splits long prefills across multiple steps to avoid pausing the decode pipeline.
+:::
+
+**Q5. How does grammar-constrained decoding work under the hood? Walk through the implementation.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Grammar-constrained decoding maintains a parser state that tracks the current partial output's validity and restricts the sampling distribution to only valid continuations.
+
+**Step-by-step mechanism:**
+
+1. **Compile the grammar.** From the target constraint (JSON Schema, SQL grammar, regex, enum values), build a finite automaton or pushdown parser. This represents all possible valid strings as a state machine.
+
+2. **Track parser state.** At each decoding step, the parser is in state $s_t$ representing the class of partial outputs produced so far. For JSON: we might be in state "after opening brace, inside a key string, inside a value string, expecting comma or closing brace," etc.
+
+3. **Compute the valid token mask.** For each token $w$ in the vocabulary (typically 32k-100k tokens), ask: "does appending $w$ to the current partial output produce a valid prefix according to the grammar?" This produces a binary mask — 1 for valid tokens, 0 for invalid.
+
+4. **Apply the mask.** Set logits of masked tokens to $-\infty$. After softmax, masked tokens have zero probability and cannot be sampled.
+
+5. **Sample normally.** Apply temperature, top-p, top-k to the unmasked logit distribution and sample as usual. Content quality is unaffected — the model still uses its full learned probabilities within the constraint.
+
+6. **Advance the parser.** After sampling, advance the parser state by the chosen token. Repeat.
+
+**Performance consideration:** The per-step mask computation is the overhead. Outlines pre-compiles the grammar into an index mapping (partial output hash → valid next token bitmap), making each step lookup O(1) instead of re-parsing. This brings the overhead below 5% of generation time for most grammars.
+
+**What it guarantees vs. what it doesn't:** It guarantees structural validity (no parsing errors, correct syntax) but not semantic correctness (wrong field values, wrong SQL logic). A JSON-constrained model still generates the content within the JSON structure — it just cannot accidentally break the JSON syntax.
 :::
 
 :::
+
+### Forward Deployed Engineer
+
+::: {.callout-important title="Forward Deployed Engineer (5 Questions)"}
+
+**Q1. A customer reports their chatbot gives inconsistent answers to the same question. They want "consistency." How do you diagnose and recommend a solution?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Distinguish between two very different types of "inconsistency" — sampling variance (temperature-driven randomness) vs. factual variance (the model generating different facts). Recommend the right fix for each, and be honest about what temperature=0 actually solves vs. doesn't.
+
+First, clarify what "inconsistency" means to them. There are two distinct problems with different solutions:
+
+**Case 1: Surface-level variation.** The model says "The meeting is at 3pm" vs "The meeting is scheduled for 3:00 PM" — same content, different phrasing. The customer wants word-for-word determinism. **Fix:** Set `temperature=0` (greedy decoding). The model will always select the highest-probability token at each step, producing identical output for identical input and model version. Warn them: (a) this makes output slightly more repetitive and robotic; (b) API provider model updates may still change outputs between versions even at temperature=0 — determinism is only guaranteed within a model version.
+
+**Case 2: Factual variation.** The model says "Our return policy is 30 days" on Monday and "60 days" on Tuesday. This is not a temperature problem — it's a grounding problem. Lowering temperature will not fix it; the model may generate wrong facts deterministically at temperature=0. **Fix:** RAG or system prompt grounding. Provide the authoritative facts in the system prompt ("Our return policy is exactly 30 days — never state anything different") or retrieve them from a database at query time. The model then generates varied prose but is anchored to consistent facts.
+
+For enterprise chatbots, Case 2 is almost always the real problem. I recommend temperature=0.3-0.5 (near-deterministic but natural) plus strong system prompt grounding for the facts that must be consistent. This handles both concerns: low variance in phrasing, guaranteed correct facts.
+
+> ⚠️ **Common Mistake:** Telling the customer to "just set temperature=0" without asking which type of inconsistency they are experiencing. Temperature=0 will not fix a model that has wrong information in its weights.
+:::
+
+**Q2. A customer's production summarization pipeline gets malformed JSON 5% of the time. What is the production fix?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Immediately identify that 5% failure means retry logic is not acceptable (doubles latency on failure, adds cost), and recommend architectural fixes not band-aids. Know the three tiers: API structured output, open-source constrained decoding, fallback parsing.
+
+A 5% malformed JSON rate is unacceptable in production. Retry logic is not the answer — it doubles latency on failures and compounds cost. The fix must be architectural.
+
+**Tier 1 (recommended): Use API-level structured outputs.**
+- OpenAI: `response_format={"type": "json_schema", "json_schema": {...}}` — guaranteed valid JSON matching your schema. Structural failure rate drops to 0%.
+- Anthropic: Tool use with `tool_choice="any"` forces the model to emit a valid tool call structure — equivalent guarantee.
+- Use this if you have API access to these providers.
+
+**Tier 2: Open-source constrained decoding.**
+If self-hosting a model, use Outlines (`outlines.generate.json(model, YourPydanticSchema)`) or llama.cpp's `--grammar` flag. Same guarantee as Tier 1, requires more infrastructure.
+
+**Tier 3 (fallback, not primary): Robust parsing with repair.**
+`json.loads()` in a try/except; on failure, use a lightweight extraction step (regex, or prompt the model with "The previous output was malformed: {error}. Output only valid JSON.") and retry once. This handles the failure but adds 200-500ms latency on the 5% failure case and increases API cost. Use as a backstop to Tier 1/2, not as the primary mechanism.
+
+**Additional prompt hygiene:** "Output only valid JSON with no explanation text, preamble, or markdown code fences." Reduces failure rate from 5% to ~1% before constrained decoding is even applied. Combined with Tier 1, you reach 0%.
+
+> ⚠️ **Common Mistake:** Recommending retry logic as the solution. This treats symptoms, not the cause. Five-percent failure with one retry is still 0.25% failure. With constrained decoding, it is 0%.
+:::
+
+**Q3. A customer needs to generate 1,000 product descriptions overnight. Beam search or sampling — what do you recommend and with what parameters?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Give a concrete parameter recommendation with reasoning, address the cost angle, and add a validation step recommendation. Show you think about throughput and quality together.
+
+**Recommendation: Sampling, not beam search.**
+
+For 1,000 product descriptions, beam search fails on two counts:
+1. **Anti-diversity.** Descriptions for similar products will be near-identical — beam search finds the highest-probability completion, which converges on generic language. This hurts SEO and user experience.
+2. **Cost.** Beam width $k=5$ costs 5× more compute with no quality benefit for creative generation tasks.
+
+**Parameters:**
+- `temperature=0.7` — controlled creativity, enough variation between descriptions to avoid duplication, not so high that descriptions become incoherent
+- `top_p=0.9` — prevents rare token samples from the long tail
+- `frequency_penalty=0.2-0.3` — discourages repetitive phrasing within a single description ("high-quality, premium, high-quality")
+- `max_tokens=150-200` — target 100-150 word descriptions
+
+**Throughput:** Run at maximum API concurrency (e.g., 10-20 parallel requests). At 150 output tokens per description and 1,000 descriptions, you need ~150K output tokens. With GPT-4o-mini at ~$0.60/1M output tokens: under $0.10 total. With GPT-4o: ~$1.50. Overnight batch with 20x parallelism completes in minutes, not hours.
+
+**Validation step:** After generation, check each description: (1) minimum 80 words, (2) contains the product name, (3) no placeholder text like `[PRODUCT]`. Flag failures for re-generation. Expect ~2-3% failures — much cheaper to fix post-hoc than to pre-filter with strict parameters that reduce quality.
+
+> ⚠️ **Common Mistake:** Recommending very high temperature (>1.2) for "creativity." This increases incoherence and produces descriptions with invented claims about the product. Temperature 0.7-0.9 is the practical sweet spot for marketing copy.
+:::
+
+**Q4. A customer wants their chatbot to be faster. You suggest speculative decoding, but they ask if it requires a completely different model. How do you explain it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Clear explanation of the draft-verify paradigm at a non-expert level, concrete recommendation for their stack, honest about when it doesn't help.
+
+**Explanation:**
+Speculative decoding is a speed optimization — it does not change what model is used for final outputs or alter the quality of responses. The large model (the one producing quality answers) is still the source of truth for every token. What changes is how we get tokens out of it faster.
+
+The key insight: LLM decode is slow because generating each token requires loading the entire model's weights from GPU memory. If the model must load 14 GB of weights to produce one token, you are getting maybe 20-40 tokens per second.
+
+Speculative decoding adds a small "draft model" (e.g., 7B parameters, 10× cheaper) that quickly proposes several candidate tokens. Then the large target model verifies all proposed tokens in ONE forward pass — instead of loading its weights 5 times for 5 tokens, it loads them once and produces 5 token verdicts simultaneously. If the proposals are good (which they are ~70-80% of the time for chat), you get 2-3 tokens out per weight-load cycle instead of 1.
+
+**For their stack (e.g., Llama-3-70B):** Use Llama-3-8B as the draft model. Same tokenizer, same training family, ~70-80% acceptance rate on chat. With vLLM, enable it with `--speculative-model="meta-llama/Llama-3-8B"`. No code changes to the application; speculative decoding is transparent to the caller.
+
+**When it doesn't help:** High-concurrency serving where many users are active simultaneously. With 50+ concurrent users, the batch scheduling overhead eliminates the speculative gains. If their use case is high concurrency / throughput, speculative decoding is not the right optimization — continuous batching tuning and better hardware utilization are.
+
+> ⚠️ **Common Mistake:** Recommending speculative decoding for throughput optimization. It is a latency optimization (faster per-user response time). For throughput (requests per second per dollar), continuous batching and hardware scaling are the right levers.
+:::
+
+**Q5. A customer's legal summarization pipeline needs to be fast, deterministic, and not introduce hallucinations. What is your full configuration recommendation?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Address all three requirements explicitly (speed, determinism, accuracy), give specific parameter values with reasoning, and include system-level recommendations (prompt caching, caching at app layer) that go beyond just decoding settings.
+
+**Decoding settings:**
+- `temperature=0` — full determinism. Same document always produces the same summary. Essential for legal audit trails.
+- `top_p=1.0` — irrelevant at temperature=0, but explicitly set to avoid any framework confusion about applying nucleus filtering before argmax.
+- No repetition penalty — legal documents correctly repeat terms like "plaintiff," "defendant," "breach of contract." A repetition penalty would cause the model to avoid precise legal terminology after its first use, degrading summary quality.
+
+**Prompt engineering:**
+- System prompt must include: "Summarize only information explicitly stated in the document. Do not infer, extrapolate, or add information not present in the source text."
+- Include a required sections structure in the prompt to force the model to cover diagnosis/ruling, parties, key findings, and next steps — structured outputs via constrained decoding or at least a strong prompt template.
+
+**Speed optimizations:**
+- Enable prompt caching for the system prompt (Anthropic) or use the OpenAI `cache_seed` parameter. If the system prompt is long and constant, caching saves 70-90% of its processing cost.
+- If the same filing is summarized by multiple reviewers (common in legal workflows), cache responses at the application layer. At temperature=0, the same document always produces the same output — cache hit rate for repeated summaries is 100%.
+
+**Validation:**
+- Parse the output for required section headers. If any required section is missing, flag for human review rather than re-generating (determinism means re-running will produce the same incomplete output — you need to investigate why the document lacks that section).
+- Consider a lightweight "hallucination check" step: have a second model (or regex) verify that key named entities (parties, dates, case numbers) in the summary appear verbatim in the source document.
+:::
+
+:::
+
+---
 
 ## Further Reading
 
-- [The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)](https://arxiv.org/abs/1904.09751)
-- [Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)](https://arxiv.org/abs/2309.06180)
-- [Outlines: Structured Text Generation (Willard and Louf, 2023)](https://arxiv.org/abs/2307.09702)
-- [Scaling Laws for Neural Language Models (Kaplan et al., 2020)](https://arxiv.org/abs/2001.08361)
-- [vLLM: Easy, Fast, and Cheap LLM Serving (vLLM project)](https://github.com/vllm-project/vllm)
+- [The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)](https://arxiv.org/abs/1904.09751) — foundational paper introducing nucleus sampling
+- [Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)](https://arxiv.org/abs/2309.06180) — vLLM's paged attention
+- [Outlines: Structured Text Generation (Willard and Louf, 2023)](https://arxiv.org/abs/2307.09702) — grammar-constrained decoding
+- [Orca: Progressive Learning from Complex Explanation Traces (Mukherjee et al., 2023)](https://arxiv.org/abs/2306.02707) — on continuous batching and serving
+- [FlashAttention (Dao et al., 2022)](https://arxiv.org/abs/2205.14135) — memory-efficient attention that enables KV cache on long contexts
+- [vLLM: Easy, Fast, and Cheap LLM Serving](https://github.com/vllm-project/vllm) — reference implementation
+- [OpenAI Structured Outputs documentation](https://platform.openai.com/docs/guides/structured-outputs)

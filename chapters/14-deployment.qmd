@@ -1,205 +1,932 @@
-# Deployment & Optimization
+---
+title: "LLM Deployment & Optimization"
+---
 
 ::: {.callout-note}
-**Who this chapter is for:** Mid Level → FDE
+**Who this chapter is for:** Entry Level through Senior / FDE
+**This is the most-tested chapter in GenAI interviews.** Every level gets deployment questions. At senior level, you will be walked through a 70B model SLA debug on the spot.
+
 **What you'll be able to answer after reading this:**
 
-- Quantization techniques: INT8, INT4, GPTQ, AWQ — tradeoffs and use cases
-- How vLLM's PagedAttention enables high-throughput serving
-- Distillation as a model compression strategy
-- How to estimate latency, throughput, and cost for a production deployment
+- How PagedAttention works and why it unlocks 2-4x higher throughput
+- Continuous batching vs static batching and why the difference matters
+- Quantization methods (INT8, GPTQ, INT4, AWQ, GGUF) with memory formulas
+- Prefill vs decode: why they're different problems on the same GPU
+- Tensor parallelism vs pipeline parallelism: when to use each
+- TTFT vs TPOT vs end-to-end latency — and which SLA metric matters for what
+- GPU selection: A100 vs H100 vs L40S vs A10G
+- Production deployment: autoscaling, spot instances, cost optimization
 :::
+
+---
 
 ## Serving Modes
 
-**Online inference** (real-time, low latency) vs. **batch inference** (high throughput, no latency requirement). Most GenAI features need online inference — users wait for a response. Data pipelines and offline enrichment jobs use batch.
+**Online inference** (real-time, low latency) vs. **batch inference** (high throughput, no latency requirement). Most GenAI product features need online inference — users wait for a response. Data pipelines, offline enrichment, and nightly classification jobs use batch.
 
-**Streaming** returns tokens as they're generated rather than waiting for the full response. Critical for chat interfaces (users see progress) and long outputs. Implemented via Server-Sent Events (SSE) or WebSockets; the LLM API sends partial tokens, your frontend renders them.
+**Streaming** returns tokens as they are generated rather than waiting for the full response. Critical for chat interfaces: users see progress immediately and perceived responsiveness is dominated by Time To First Token (TTFT), not total response time. Implemented via Server-Sent Events (SSE) or WebSockets. Always enable streaming in user-facing applications — even if the full response takes 5 seconds, a 300ms TTFT feels fast.
+
+> 💡 **Senior Tip:** For user-facing products, TTFT is the latency metric that matters. End-to-end latency is what you measure in benchmarks; TTFT is what determines whether the user stays on the page.
+
+---
+
+## The Two Phases of LLM Inference
+
+Every LLM inference request has two fundamentally different computational phases. Understanding this distinction is the single most important concept in deployment optimization.
+
+### Prefill Phase (Compute-Bound)
+
+During prefill, the model processes the entire input prompt in parallel. All input tokens are processed simultaneously through every layer — this is a dense matrix multiplication that saturates GPU compute. A 2,000-token prompt is processed as a single forward pass.
+
+**Prefill is compute-bound.** GPU tensor cores are the bottleneck, not memory bandwidth. This is why adding more compute (faster GPU, more GPUs) directly improves prefill speed.
+
+Time to first token (TTFT) is determined by prefill. For a 500-token prompt on an A100 with a 7B model, prefill takes roughly 20–50ms. For a 4,000-token RAG prompt on a 70B model, expect 200–500ms.
+
+### Decode Phase (Memory-Bandwidth-Bound)
+
+After prefill, the model generates tokens one at a time in autoregressive fashion. Each forward pass processes exactly one token — a tiny computation — but requires loading all model weights from GPU HBM to compute it.
+
+**Decode is memory-bandwidth-bound.** For each token, the GPU loads ~140 GB of weights (for a 70B FP16 model) to do a relatively small computation. The bottleneck is how fast weights can be moved from HBM to SRAM, not raw compute.
+
+This is why decode throughput (tokens per second) scales with memory bandwidth, not FLOPS. An H100 (3.35 TB/s HBM bandwidth) generates tokens roughly 2x faster than an A100 (2.0 TB/s) for the same 70B model — even though its FLOPS advantage is larger.
+
+> ⚠️ **Common Mistake:** Candidates say "I'd add more GPUs to speed up decode." Adding GPUs (tensor parallelism) helps during prefill but provides diminishing returns during decode because each decode step requires synchronization overhead that offsets the parallelism gain. Quantization (which reduces memory moved per step) often helps decode latency more than adding GPUs does.
+
+**Analogy:** Prefill is like a factory running at full capacity on a large batch order — all machines working in parallel. Decode is like a cashier at checkout who has to walk to a warehouse to retrieve each individual item before scanning it. The bottleneck is the warehouse run, not the scanning.
+
+| Phase | Bottleneck | Optimized by | Metric |
+|---|---|---|---|
+| Prefill | Compute (FLOPS) | Faster GPU, tensor parallelism, continuous batching | TTFT |
+| Decode | Memory bandwidth (HBM → SRAM) | Quantization, speculative decoding, larger batch | TPOT |
+
+---
+
+## vLLM and PagedAttention
+
+### The KV Cache Memory Problem
+
+During autoregressive generation, every token attends to all previous tokens via attention. Those attention key-value pairs must be stored in GPU memory — this is the KV cache. For each request:
+
+```
+KV cache size per token = 2 (K and V) × num_layers × num_heads × head_dim × bytes_per_param
+```
+
+For a 70B Llama-2 model (80 layers, 64 heads, 128 head_dim, FP16):
+
+```
+KV per token = 2 × 80 × 64 × 128 × 2 bytes = ~2.6 MB per token
+4,096-token context = ~10.7 GB per request
+```
+
+Traditional serving frameworks pre-allocate the maximum possible KV cache per request at request start. A system configured for 4k max context allocates 10+ GB per request slot — even if the actual generation ends at 200 tokens. This reservation cannot be used by other requests. GPU memory utilization in practice: 20–40%.
+
+### How PagedAttention Works
+
+PagedAttention (introduced in the vLLM paper, Kwon et al., 2023) borrows the virtual memory paging concept from operating systems.
+
+Instead of contiguous pre-allocation, the KV cache is divided into fixed-size **pages** (blocks, typically 16 tokens per page). Pages are allocated on demand as tokens are generated. Non-contiguous physical pages are mapped to a logical address space per sequence — exactly like OS virtual memory.
+
+When a request starts, zero pages are allocated. As each token generates, a page is allocated if needed. When a request completes, all its pages are immediately freed. When multiple requests share a common prefix (e.g., the same system prompt), their pages for that prefix are **physically shared** — one copy, many readers.
+
+```python
+# vLLM serving — minimal production setup
+from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model="meta-llama/Llama-3-70b-instruct",
+    tensor_parallel_size=4,          # 4x A100 80GB for 70B FP16
+    gpu_memory_utilization=0.90,     # leave 10% for overhead
+    enable_prefix_caching=True,      # share KV pages for repeated prefixes
+    max_model_len=8192,              # max context window
+)
+
+sampling_params = SamplingParams(
+    temperature=0.7,
+    top_p=0.95,
+    max_tokens=512,
+)
+
+outputs = llm.generate(["Explain transformer attention in 3 sentences."], sampling_params)
+print(outputs[0].outputs[0].text)
+```
+
+```python
+# vLLM as an OpenAI-compatible API server (most common production pattern)
+# Launch: python -m vllm.entrypoints.openai.api_server \
+#   --model meta-llama/Llama-3-70b-instruct \
+#   --tensor-parallel-size 4 \
+#   --enable-prefix-caching \
+#   --max-model-len 8192 \
+#   --port 8000
+
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="token")
+
+response = client.chat.completions.create(
+    model="meta-llama/Llama-3-70b-instruct",
+    messages=[{"role": "user", "content": "What is attention?"}],
+    stream=True,
+    max_tokens=512,
+)
+
+for chunk in response:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+**Result of PagedAttention:** 2–4x higher throughput at the same GPU footprint compared to traditional serving. vLLM achieves 3.5x higher throughput than HuggingFace Transformers on the same hardware. This is why vLLM is the de facto standard for self-hosted production LLM serving.
+
+::: {.callout-tip title="Senior Tip"}
+PagedAttention's biggest win is on **workloads with variable sequence lengths**. If all your requests are nearly the same length, the fragmentation savings are smaller. PagedAttention shines on mixed workloads where some requests are 500 tokens and others are 8,000 tokens — traditional serving wastes enormous memory on the short ones if the allocation is sized for the long ones.
+:::
+
+### Continuous Batching
+
+**Static batching:** the server waits until a full batch of N requests is assembled, processes them all together, and returns results. If batch size is 8 and only 4 requests arrive, the server either waits (adding latency) or runs a half-full batch (wasting GPU compute). Requests of different lengths stall each other — the batch is only done when the longest sequence finishes.
+
+**Continuous batching (also called iteration-level scheduling):** new requests are inserted into the running batch at every iteration (token generation step). When one request finishes generating, the freed slot is immediately taken by the next waiting request. No waiting for batch fill. No stalling on long sequences.
+
+The GPU is always saturated. Throughput improvement over static batching: 5–10x for mixed-length workloads. This is built into vLLM, TGI, and TensorRT-LLM. It is the reason modern serving frameworks achieve dramatically better GPU utilization than naive HuggingFace inference loops.
+
+> 💡 **Senior Tip:** Static batching is what you get if you write a naive inference loop. Continuous batching requires an iteration-level scheduler — this is the key architectural contribution of modern serving frameworks. If an interviewer asks why vLLM is better than "just running HuggingFace," continuous batching + PagedAttention is the complete answer.
+
+---
 
 ## Quantization
 
-Quantization reduces numerical precision of model weights to decrease memory footprint and increase inference speed:
+Quantization reduces the numerical precision of model weights (and sometimes activations) to decrease memory footprint, reduce memory bandwidth consumption during decode, and increase inference speed.
 
-| Precision | Memory (7B model) | Quality loss | When to use |
+**The memory formula (memorize this):**
+
+```
+FP32:  4 bytes/param   (training)
+FP16:  2 bytes/param   (standard inference)
+INT8:  1 byte/param    (quantized)
+INT4:  0.5 bytes/param (aggressive quantization)
+```
+
+For a model with P billion parameters:
+
+```
+FP16 memory (GB) = P × 2
+INT8 memory (GB) = P × 1
+INT4 memory (GB) = P × 0.5
+```
+
+### GPU Memory Requirements by Model Size
+
+| Model Size | FP16 | INT8 | INT4 | Minimum GPU (FP16) |
+|---|---|---|---|---|
+| 7B | 14 GB | 7 GB | 3.5 GB | 1× A100 40GB |
+| 13B | 26 GB | 13 GB | 6.5 GB | 1× A100 40GB |
+| 34B | 68 GB | 34 GB | 17 GB | 1× A100 80GB |
+| 70B | 140 GB | 70 GB | 35 GB | 2× A100 80GB |
+| 405B | 810 GB | 405 GB | 202 GB | 10× H100 80GB |
+
+> ⚠️ **Common Mistake:** These numbers are for weights only. Add 20–40% for KV cache at typical serving loads. A 70B model needs 2× A100 80GB for weights alone — but serving concurrent requests requires 3–4× for the KV cache.
+
+### INT8 with bitsandbytes (LLM.int8())
+
+LLM.int8() (Dettmers et al., 2022) quantizes weights to INT8 but handles outlier activations separately. It identifies activation channels with unusually large values (which would cause large quantization error) and keeps those in FP16, quantizing only the non-outlier channels to INT8. This mixed-precision approach avoids the quality degradation that naive INT8 quantization causes.
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import torch
+
+# INT8 quantization
+bnb_config_int8 = BitsAndBytesConfig(load_in_8bit=True)
+
+model_int8 = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Llama-3-8b-instruct",
+    quantization_config=bnb_config_int8,
+    device_map="auto",
+)
+
+# INT4 quantization (NF4 with double quantization)
+bnb_config_int4 = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_use_double_quant=True,   # quantize the quantization constants too
+    bnb_4bit_quant_type="nf4",        # NormalFloat4: better for normally-distributed weights
+)
+
+model_int4 = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Llama-3-8b-instruct",
+    quantization_config=bnb_config_int4,
+    device_map="auto",
+)
+
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3-8b-instruct")
+
+inputs = tokenizer("What is the capital of France?", return_tensors="pt").to("cuda")
+outputs = model_int4.generate(**inputs, max_new_tokens=50)
+print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+```
+
+### GPTQ (Post-Training Quantization)
+
+GPTQ (Frantar et al., 2022) quantizes weights layer by layer by minimizing each layer's reconstruction error using a second-order optimization (Hessian-based). It requires a calibration dataset (typically 128 samples from C4 or Wikitext) and takes several hours for a 70B model.
+
+```python
+# Load a GPTQ-quantized model (pre-quantized, downloaded from HuggingFace)
+from auto_gptq import AutoGPTQForCausalLM
+
+model = AutoGPTQForCausalLM.from_quantized(
+    "TheBloke/Llama-2-70B-GPTQ",
+    device="cuda:0",
+    use_triton=True,   # faster inference with Triton kernels
+)
+```
+
+### AWQ (Activation-Aware Weight Quantization)
+
+AWQ (Lin et al., 2023) observes that not all weights are equally sensitive to quantization. Weights that multiply large activations contribute more to the output — quantization error on those weights causes larger degradation. AWQ identifies important weight channels by measuring activation magnitudes over calibration data, scales those channels to preserve them effectively at higher precision, then quantizes.
+
+Result: AWQ generally outperforms GPTQ by 1–3 perplexity points at INT4, is faster to quantize (minutes vs hours), and produces smaller files.
+
+```python
+from awq import AutoAWQForCausalLM
+from transformers import AutoTokenizer
+
+# Load pre-quantized AWQ model
+model = AutoAWQForCausalLM.from_quantized(
+    "casperhansen/llama-3-70b-instruct-awq",
+    fuse_layers=True,   # fuse attention layers for faster inference
+)
+tokenizer = AutoTokenizer.from_pretrained("casperhansen/llama-3-70b-instruct-awq")
+
+# AWQ models also load natively in vLLM
+# python -m vllm.entrypoints.openai.api_server \
+#   --model casperhansen/llama-3-70b-instruct-awq \
+#   --quantization awq \
+#   --tensor-parallel-size 2
+```
+
+### GGUF / llama.cpp (CPU Inference)
+
+GGUF is the file format used by llama.cpp for quantized models running on CPU (and Apple Silicon via Metal). It supports Q2, Q3, Q4, Q5, Q6, Q8 quantization levels. CPU inference is orders of magnitude slower than GPU inference but has zero GPU cost, making it useful for local development, edge deployment, and workloads where latency requirements are loose.
+
+A GGUF Q4_K_M 7B model runs at ~10–30 tokens/second on a modern MacBook Pro M2 — usable for development but not for production serving at scale.
+
+### Quantization Comparison Table
+
+| Method | Memory Reduction | Quality Impact | Speed Gain | Best For |
+|---|---|---|---|---|
+| FP16 | Baseline (2 bytes/param) | None | Baseline | Production GPU serving |
+| INT8 (LLM.int8()) | 2x | Minimal (<1% on most tasks) | 1.3–1.5x | Safe production quantization |
+| GPTQ INT4 | 4x | Moderate (1–3 pts perplexity) | 1.5–2x | Memory-constrained GPU serving |
+| AWQ INT4 | 4x | Low (better than GPTQ) | 1.5–2x | Best quality at INT4 for GPU |
+| GGUF Q4_K_M | ~4x | Low-moderate | CPU-only | Local/edge, no GPU |
+| GGUF Q8 | 2x | Negligible | CPU-only | High-quality CPU inference |
+
+### When Quantization Hurts Quality
+
+INT4 quantization is not universally safe. Quality degradation is most pronounced in these cases:
+
+**Small models (7B and below):** A 7B model has less representational redundancy than a 70B model. Quantization noise on a 7B INT4 model causes significantly more quality loss than the same compression on 70B. The 70B INT4 model often outperforms 7B FP16 on benchmarks — but a 7B INT4 may be noticeably worse than 7B FP16 for your task.
+
+**Code generation and math:** These tasks require precise token sequences. A small probability shift from quantization error can cause a wrong variable name, incorrect operator, or off-by-one error that breaks code entirely. Observe higher degradation on HumanEval and GSM8K benchmarks at INT4 compared to general language tasks.
+
+**Long-context tasks:** Quantization error accumulates over long attention spans. At 32k+ context, INT4 models show measurably higher hallucination rates compared to FP16 baselines.
+
+**Structured output (JSON extraction):** Quantized models more frequently produce malformed JSON, especially for complex nested schemas.
+
+::: {.callout-warning}
+**Rule:** Always benchmark your quantized model on YOUR task before deploying. Aggregate benchmarks (MMLU, HellaSwag) may show <1% degradation while your specific use case (code generation, structured extraction, mathematical reasoning) degrades 5–15%. The only safe validation is task-specific evaluation.
+:::
+
+---
+
+## Model Parallelism
+
+When a model does not fit on a single GPU, it must be distributed across multiple GPUs. Three strategies exist: tensor parallelism, pipeline parallelism, and data parallelism. They solve different problems and are often combined.
+
+### Tensor Parallelism (TP)
+
+Tensor parallelism splits individual weight matrices across GPUs. For a feed-forward layer with weight matrix W of shape [d_model, d_ff]:
+
+- **Column parallelism:** split W into [d_model, d_ff/N] shards across N GPUs. Each GPU processes a portion of the output dimensions.
+- **Row parallelism:** split W into [d_model/N, d_ff] shards. Each GPU processes a portion of the input dimensions.
+
+After each TP operation, an AllReduce communication aggregates partial results across all GPUs. This requires fast GPU-to-GPU interconnects (NVLink strongly preferred over PCIe — NVLink is 600+ GB/s vs PCIe at 64 GB/s).
+
+**When to use TP:** primarily as a memory distribution strategy for inference. A 70B FP16 model (140 GB) requires TP=2 on 2× A100 80GB. Use the minimum TP degree that fits the model in memory — each additional AllReduce adds latency.
+
+**TP for inference vs training:** In training, TP is one of three parallelism axes (TP + pipeline + data) managed by frameworks like Megatron-LM. In inference, TP is simpler — you only need the forward pass, no gradient synchronization. Modern serving frameworks (vLLM, TensorRT-LLM) configure TP automatically.
+
+```python
+# vLLM with tensor parallelism
+llm = LLM(
+    model="meta-llama/Llama-3-70b-instruct",
+    tensor_parallel_size=4,    # splits model across 4 GPUs
+    # requires 4x GPUs with NVLink for best performance
+)
+```
+
+### Pipeline Parallelism (PP)
+
+Pipeline parallelism splits the model's layers across GPUs. GPU 0 runs layers 0–19, GPU 1 runs layers 20–39, etc. Each GPU processes its layers, passes activations to the next GPU, and waits for the next batch.
+
+**Pipeline bubbles:** the fundamental problem with PP. While GPU 1 is processing batch B1, GPU 0 is idle waiting for the next batch to start. The fraction of time GPUs spend idle is called the pipeline bubble. Microbatching reduces bubbles (many small batches keep the pipeline full) but adds latency. Bubble fraction = (stages - 1) / (microbatches + stages - 1).
+
+**PP vs TP for inference:** TP is generally preferred for inference because it distributes each layer across all GPUs, resulting in faster per-layer computation and no pipeline bubbles. PP is useful when the number of layers is large relative to the number of GPUs, or when the activation tensors between GPUs are small (reducing communication). In practice, most production inference uses TP, not PP.
+
+### Data Parallelism (DP)
+
+Data parallelism runs identical model replicas on separate GPUs, each processing different batches. Each GPU holds a full model copy. This is the primary training parallelism strategy but is also used in inference for scaling throughput: N replicas each handling 1/N of the request load.
+
+**DP for inference:** simply run multiple vLLM instances (each with TP for the model), put a load balancer in front, and route requests. Kubernetes horizontal pod autoscaling (HPA) or KEDA automates scaling the number of replicas. This is how production serving scales to thousands of QPS.
+
+> ⚠️ **Common Mistake:** Candidates confuse DP and TP. Data parallelism requires N full model copies — you need N × model_memory GPU memory. Tensor parallelism shares one model across N GPUs — you need model_memory total. For a 140 GB model on 2-GPU nodes: DP=2 requires 4 GPUs (2 full copies), TP=2 requires 2 GPUs (one shared copy).
+
+---
+
+## Latency Metrics: TTFT, TPOT, E2E
+
+Three distinct latency metrics matter in LLM serving. Conflating them in an interview answer is a fast path to a weak signal.
+
+**TTFT (Time To First Token):** elapsed time from request submission to the first generated token appearing. Determined primarily by the prefill phase. This is the dominant metric for user-perceived responsiveness in streaming applications. Target: < 500ms for good UX, < 200ms for excellent UX.
+
+**TPOT (Time Per Output Token):** average time to generate each subsequent token after the first. Determined by decode speed (memory bandwidth). At FP16 on A100: approximately 15–30ms/token for a 70B model. Users perceive this as the "speed" of the response streaming by.
+
+**E2E Latency (End-to-End):** total time from request submission to final token. E2E = TTFT + (output_tokens × TPOT). For a 500-token response with 300ms TTFT and 20ms TPOT: E2E = 300 + 500×20 = 10.3 seconds. Non-streaming, this entire time elapses before the user sees anything. With streaming, users see content at TTFT.
+
+**Latency vs Throughput Tradeoff:** Increasing batch size improves GPU utilization (more throughput) but increases per-request latency because each request must wait for co-batched requests to progress. The tradeoff: optimize for throughput (batch as many requests as possible) when SLA headroom allows; optimize for latency (smaller batches, process immediately) when SLA is tight.
+
+| Metric | Definition | Driven By | Target (User-Facing) |
 |---|---|---|---|
-| FP32 | ~28 GB | None (baseline) | Training only |
-| FP16 / BF16 | ~14 GB | Negligible | Standard inference |
-| INT8 | ~7 GB | Minimal | Good tradeoff |
-| INT4 (GPTQ/AWQ) | ~3.5 GB | Noticeable on some tasks | Resource-constrained |
-| 2-bit | ~1.75 GB | Significant | Rarely acceptable |
+| TTFT | First token latency | Prefill speed | < 500ms |
+| TPOT | Per-token latency | Decode (memory BW) | < 30ms |
+| E2E | Total response time | TTFT + tokens × TPOT | Depends on length |
+| Throughput | Tokens/sec (system-level) | Batching, PagedAttention | Maximize within SLA |
 
-**GPTQ** (post-training quantization): quantizes weights by minimizing reconstruction error layer by layer. Requires calibration data. Slower to quantize but well-supported.
+---
 
-**AWQ** (Activation-Aware Weight Quantization): identifies important weight channels by observing activation magnitudes, preserves those at higher precision. Generally better quality than GPTQ at same compression.
+## GPU Selection
 
-Rule of thumb: INT8 is safe for most production use cases. INT4 is acceptable for tasks where the quality gap on your specific use case is small (verify empirically).
+### Comparing GPU Options
+
+| GPU | HBM Capacity | HBM Bandwidth | FP16 TFLOPS | Cost/hr (est.) | Best For |
+|---|---|---|---|---|---|
+| A10G | 24 GB | 600 GB/s | 125 | ~$1.50 | Small models (7B–13B), cost-optimized |
+| A100 40GB | 40 GB | 1.6 TB/s | 312 | ~$3.00 | 13B–34B models |
+| A100 80GB | 80 GB | 2.0 TB/s | 312 | ~$4.50 | 70B models (TP=2), workhorse |
+| H100 80GB SXM | 80 GB | 3.35 TB/s | 989 (w/ sparsity) | ~$8–10 | Fastest decode, 70B+ |
+| L40S | 48 GB | 864 GB/s | 362 | ~$4.00 | Cost-efficient for mid-size models |
+| H100 NVL 94GB | 94 GB | 3.9 TB/s | 835 | ~$10+ | Large single-GPU models |
+
+**A100 vs H100 for LLM serving:**
+- **Decode-bound workloads (most inference):** H100 is ~1.7x faster due to HBM bandwidth advantage (3.35 vs 2.0 TB/s). Cost per token is often similar to A100 because H100 processes tokens faster.
+- **Prefill-bound workloads (long prompts):** H100's FLOPS advantage helps more — 3x+ faster on long prompt processing.
+- **Cost sensitivity:** A100 80GB is the practical choice for most teams at current market prices. H100 makes sense when latency SLAs are aggressive or when long-context workloads dominate.
+
+**NVLink vs PCIe for multi-GPU:**
+- NVLink: 600+ GB/s bidirectional per GPU pair. Essential for TP inference on 70B+ models — AllReduce operations are fast enough to not dominate latency.
+- PCIe: 64 GB/s. Adequate for DP (no AllReduce needed between replicas) but too slow for TP across 70B model layers. TP on PCIe-connected GPUs can reduce throughput by 30–50% vs NVLink.
+
+::: {.callout-tip title="Senior Tip"}
+For a 70B model on TP=4: use 4× A100 80GB on an NVLink-connected node (e.g., AWS p4d.24xlarge has 8× A100 with NVLink). Do NOT use TP=4 across PCIe GPUs — the AllReduce overhead will dominate latency. If NVLink is unavailable, prefer TP=2 on fewer GPUs or a different quantization level.
+:::
+
+---
+
+## Serving Framework Comparison
+
+| Framework | Throughput | Latency | Key Features | Best For |
+|---|---|---|---|---|
+| vLLM | Excellent | Good | PagedAttention, continuous batching, TP, AWQ/GPTQ, prefix caching | Self-hosted production, highest throughput |
+| TGI (HuggingFace) | Good | Good | Broad model support, simple deployment, flash attention | Teams on HuggingFace ecosystem |
+| TensorRT-LLM | Excellent | Excellent | NVIDIA-optimized, engine compilation, FP8, speculative decoding | Maximum performance on NVIDIA |
+| Ollama | Low | Good | Dead-simple local serving, GGUF models | Local dev, small team prototyping |
+| Triton Inference Server | Excellent | Excellent | Multi-model, multi-framework, enterprise | NVIDIA enterprise, heterogeneous model serving |
+| Modal / Replicate | Good | Good | Serverless GPU, scale-to-zero, no infra | Low-traffic endpoints, prototypes |
+| AWS SageMaker | Good | Good | Managed, integrates with AWS stack, autoscaling | Teams with AWS commitment |
+
+> 💡 **Senior Tip:** vLLM vs TGI is the most common comparison in interviews. The answer: vLLM has higher throughput for batch workloads due to PagedAttention and its scheduler implementation. TGI is simpler to get running and has slightly broader model format support. For production at scale, vLLM is the default choice in 2024–2025.
+
+---
+
+## Production Deployment
+
+### Autoscaling on Kubernetes
+
+GPU inference pods do not scale the same way as CPU services. Key considerations:
+
+**Horizontal Pod Autoscaling (HPA):** scales the number of inference replicas based on a metric (queue depth, GPU utilization, request rate). Each replica is a full vLLM instance with the model loaded. Scaling up is slow — loading a 70B model can take 3–5 minutes. Pre-warming (maintaining spare replicas) is essential for latency-sensitive services.
+
+**KEDA (Kubernetes Event-Driven Autoscaling):** extends HPA with custom triggers — scale based on SQS queue depth, Kafka lag, Prometheus metrics. For batch inference workloads, KEDA scaling from queue depth is the standard pattern.
+
+**Scale-to-zero:** for low-traffic endpoints, scale to zero replicas when idle and scale up on demand. Cold start latency (3–5 min for large models) makes this unacceptable for real-time user-facing services. Acceptable for batch processing or developer tooling where a 3-minute cold start is tolerable.
+
+```yaml
+# Example KEDA ScaledObject for LLM inference autoscaling
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: llm-inference-scaler
+spec:
+  scaleTargetRef:
+    name: vllm-deployment
+  minReplicaCount: 2        # keep 2 warm replicas
+  maxReplicaCount: 20
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus:9090
+      metricName: vllm_queue_depth
+      threshold: "10"       # scale up when queue > 10 requests per replica
+      query: sum(vllm_num_requests_waiting) / count(kube_pod_info{pod=~"vllm-.*"})
+```
+
+### Spot Instance Strategy
+
+GPU spot instances (AWS, GCP, Azure) cost 60–80% less than on-demand. For LLM serving, spot requires fault-tolerant design:
+
+- Stateless serving: LLM inference is already stateless — each request is self-contained. Spot interruption just terminates in-flight requests; the client retries.
+- Drain before termination: cloud providers give a 2-minute termination notice. Serving frameworks should stop accepting new requests and complete in-flight ones within this window.
+- Mixed fleet: run a baseline of on-demand instances for guaranteed capacity, supplement with spot for burst traffic. 20% on-demand / 80% spot is a common production mix.
+- Cost savings: at $4.50/hr for A100 on-demand vs $1.80/hr spot, a 4-GPU serving node saves ~$190/day at 80% spot mix.
+
+### Load Balancing for LLM Inference
+
+Standard round-robin load balancing is suboptimal for LLM serving because requests have highly variable processing time. A 100-token request and a 4,000-token request should not be treated equally by the load balancer.
+
+**Least-outstanding-requests routing:** send new requests to the replica with the fewest queued requests. Better than round-robin for variable-length workloads.
+
+**Prefix-aware routing:** if using prefix caching, route requests with matching prefixes to the same replica — the KV cache for that prefix is already warmed on that instance. Improves cache hit rate significantly.
+
+::: {.callout-warning}
+**Production Gotcha:** vLLM's GPU memory utilization is set at startup (`--gpu-memory-utilization 0.90`). If this is too high and OOM errors occur at peak load, the process dies. Too low and you're wasting capacity. Monitor `vllm_gpu_cache_usage_perc` in production and tune this value based on observed KV cache utilization at peak load.
+:::
+
+::: {.callout-warning}
+**Production Gotcha:** Prefill latency spikes. Long prompts (8k+ tokens) cause multi-second TTFT that can violate latency SLAs for concurrent users, even if the model itself is fast. Solutions: set a hard max prompt length, implement prefill chunking (split long prompts into smaller prefill batches), or use disaggregated prefill/decode (Distserve pattern).
+:::
+
+::: {.callout-warning}
+**Production Gotcha:** Cold start on autoscale. Scaling from 2 to 4 replicas requires downloading and loading a 70B model (10–15 min on cold nodes, 3–5 min on pre-cached nodes). Pre-pull model artifacts to node cache, keep minimum replicas alive, and consider predictive scaling (scale up before load arrives based on traffic patterns).
+:::
+
+---
 
 ## Knowledge Distillation
 
-Teacher-student training: train a smaller "student" model to mimic the output distribution of a larger "teacher" model. The student learns from soft probability distributions (not just hard labels), transferring the teacher's generalization to a cheaper model.
+Teacher-student training: a smaller "student" model is trained to mimic the output distribution of a larger "teacher" model. The student learns from soft probability distributions, not just hard labels.
 
-Why it works: the teacher's output probabilities encode rich information — a 0.7 / 0.2 / 0.1 split across three classes tells the student more than a hard label of "class 1."
+Why soft labels matter: the teacher's output probabilities encode relational information. A 0.7/0.2/0.1 probability distribution across three sentiment classes tells the student this example is "mostly positive but somewhat ambiguous" — information that a hard label of "positive" discards entirely.
 
-When to use distillation: you have a task-specific use case, abundant unlabeled data, and latency or cost constraints that the teacher model can't meet. Distilled models routinely match teacher performance on narrow tasks while being 3–10x cheaper to serve.
+Training objective: cross-entropy loss against true labels + KL-divergence loss against teacher's soft targets, weighted by temperature T (higher T = softer teacher distribution):
 
-## vLLM and Continuous Batching
+```
+L = (1-α) × CE(y, y_student) + α × T² × KL(y_teacher/T, y_student/T)
+```
 
-**The KV cache problem.** During generation, each new token attends to all previous tokens — those attention key-value pairs must be stored. For a 32k context window at FP16, one request can consume gigabytes of GPU memory. Standard serving allocates the maximum possible KV cache per request upfront, leaving most GPU memory unused while requests are waiting.
+When to use distillation: you have a task-specific use case, abundant unlabeled data, and the teacher model's cost or latency is unacceptable. Distilled models routinely match teacher performance on narrow tasks while being 3–10x cheaper to serve. DistilBERT: 40% smaller, 60% faster, 97% of BERT performance.
 
-**PagedAttention** (vLLM) borrows virtual memory concepts from OS design: KV cache is stored in non-contiguous "pages" that are allocated and freed dynamically. Multiple requests share GPU memory efficiently. Result: 2–4x higher throughput at the same GPU footprint.
+---
 
-**Continuous batching** vs. static batching: static batching waits until a fixed batch size is filled before processing — wastes GPU time when requests arrive unevenly. Continuous batching processes new requests as they arrive, interleaved with ongoing generations. Standard in production serving.
+## Cost and Capacity Estimation
 
-## Serving Infrastructure
+**GPU memory formula for serving:**
 
-| Tool | Best for |
-|---|---|
-| vLLM | High-throughput self-hosted serving, PagedAttention |
-| TGI (Hugging Face) | Easy deployment with broad model support |
-| Ollama | Local development, small team use |
-| Triton Inference Server | Enterprise, multi-model, NVIDIA ecosystem |
-| Modal / Replicate | Serverless GPU — no infra management |
-| AWS SageMaker | Existing AWS infrastructure |
+```
+Total GPU memory needed = model_weights + KV_cache + activations + overhead
 
-## Cost and Latency Estimation
+model_weights (FP16) = P × 2 GB  (P = params in billions)
+KV_cache = concurrency × context_len × 2.6 MB/token (for 70B)
+overhead = ~5% of total
+```
 
-GPU memory required for a model: **~2 bytes per parameter in FP16**. A 70B parameter model needs ~140 GB — two A100 80GB GPUs minimum, with additional memory for KV cache and activations.
+**Context tax:** standard RAG injects 2,000–8,000 tokens of context per query. If your query is 100 tokens but your context is 3,000 tokens, you are paying 30x more per token than the base query cost. At 100,000 requests/day, reducing average context from 3,000 to 1,000 tokens saves 200 million tokens/day in prefill compute.
 
-**Cost per million tokens** varies widely: GPT-4o is ~$5/MTok input, Claude Sonnet ~$3/MTok, open-source models on Modal ~$0.20–0.80/MTok depending on GPU size.
+**Cost per million tokens (approximate, 2024–2025):**
 
-**The context tax.** Standard RAG pipelines inject 2,000–8,000 tokens of retrieved context per query. If your query is 100 tokens but your context is 3,000 tokens, you're paying 30x more per query than you might expect. This compounds fast at scale.
+| Option | Input $/MTok | Output $/MTok | Notes |
+|---|---|---|---|
+| GPT-4o | $5 | $15 | Highest quality managed |
+| Claude Sonnet | $3 | $15 | Strong reasoning, managed |
+| GPT-4o-mini | $0.15 | $0.60 | Budget managed |
+| Self-hosted 70B (A100) | ~$0.30 | ~$0.30 | Flat cost/token at scale |
+| Self-hosted 7B (A10G) | ~$0.05 | ~$0.05 | Extremely cheap at scale |
 
-## Case Study: How Poor Context Management Burned a Budget
+At > 10M tokens/day, self-hosted open-source models are typically 5–20x cheaper than managed APIs.
 
-A real example: consuming 75% of a monthly API token budget in 7 days — not from excessive usage, but from inefficient context. The root cause was file-based RAG for code: when a function in `auth.ts` needed context from `db.ts`, the system pulled both *entire files*, when only the relevant function signatures were needed.
+---
 
-This is the **context confusion tax**: the LLM receives thousands of boilerplate tokens when it only needed hundreds of signal tokens, leading to hallucinated imports, broken logic, and 5–10x the API cost.
+## Cheat Sheet
 
-The fix: structure-aware retrieval. Parse code into symbol graphs that map relationships between functions and classes. Retrieve only the k-step neighborhood of the symbols relevant to the query — the function signature, its dependencies, and callers — not the entire file. Token usage drops ~70% per query with improved code quality.
-
-The lesson generalizes beyond code: always ask "what is the minimum context needed to answer this query correctly?" before blindly injecting full documents.
+- **Memory formula:** FP16 = 2 bytes/param. INT8 = 1 byte/param. INT4 = 0.5 bytes/param.
+- **70B FP16 = 140 GB = minimum 2× A100 80GB** for weights alone.
+- **PagedAttention:** virtual memory for KV cache. On-demand page allocation. Non-contiguous pages. Physical sharing of common prefixes. Result: 2–4x throughput vs naive serving.
+- **Continuous batching:** insert new requests at every decode step. No waiting for batch fill. 5–10x throughput vs static batching on mixed-length workloads.
+- **Prefill = compute-bound.** Optimized by FLOPS (faster GPU, tensor parallelism).
+- **Decode = memory-bandwidth-bound.** Optimized by quantization (less data moved per step), not raw compute.
+- **TTFT** = Time To First Token. User-perceived responsiveness. Driven by prefill.
+- **TPOT** = Time Per Output Token. Streaming speed. Driven by decode.
+- **Tensor parallelism:** splits weight matrices across GPUs. Requires NVLink for efficiency. Use minimum TP that fits model in memory.
+- **Pipeline parallelism:** splits layers across GPUs. Creates pipeline bubbles. Less common for inference than TP.
+- **Data parallelism:** N identical model copies. Scales throughput. Standard horizontal scaling pattern.
+- **INT4 risk:** degrades significantly on code generation, math, small models (≤7B), long context.
+- **AWQ > GPTQ** for quality at INT4. AWQ is also faster to quantize (minutes vs hours for 70B).
+- **NVLink >> PCIe** for TP. TP across PCIe GPUs can lose 30–50% throughput vs NVLink.
+- **H100 decode advantage:** 3.35 TB/s HBM vs A100's 2.0 TB/s = ~1.7x faster decode for memory-bandwidth-bound inference.
+- **vLLM default for self-hosted.** TensorRT-LLM for maximum NVIDIA performance. TGI for simplicity.
+- **Scale-to-zero** is only safe for non-real-time workloads (3–5 min cold start for 70B models).
+- **Spot instances:** 60–80% cost savings. 20% on-demand baseline + 80% spot is standard production mix.
+- **Prefix caching:** cache KV tensors for repeated prompt prefixes. 80–90% reduction in prefill cost for workloads with static system prompts.
+- **KV cache size (70B):** ~2.6 MB/token. 4k context = ~10 GB per concurrent request.
+- **GPU pick rule:** A100 80GB for 70B inference (cost-effective). H100 when latency SLA is aggressive. A10G for 7B–13B cost optimization.
+- **Autoscaling lag:** GPU pods take 3–5 min to start. Pre-warm minimum replicas. Never scale-to-zero for real-time user traffic.
+- **Quantization validation:** always benchmark on YOUR task. Aggregate benchmarks do not predict per-task degradation.
+- **Disaggregated prefill/decode (Distserve):** separate GPU pools for prefill and decode. Scale each independently. 2–4x better throughput for long-prompt workloads.
+- **Prefix-aware routing:** route requests with shared prefixes to the same replica to maximize KV cache hits.
+- **Least-outstanding-requests LB > round-robin** for variable-length LLM workloads.
+- **DP vs TP:** DP = N full model copies = N × model_memory. TP = 1 model across N GPUs = 1 × model_memory.
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+### Entry Level (0–2 years)
 
-**Q1. What is model quantization and why is it used?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Model quantization reduces the numerical precision of a model's weights from high-precision floating point to lower-precision formats, decreasing memory footprint and increasing inference speed at the cost of some accuracy.
-
-Standard training uses FP32 (32-bit floats, 4 bytes per parameter) or FP16/BF16 (16-bit, 2 bytes per parameter). Quantization can go further: INT8 (8-bit integers, 1 byte/parameter) or INT4 (4-bit, 0.5 bytes/parameter).
-
-For a 7B parameter model, this translates to: FP16 = ~14 GB GPU memory, INT8 = ~7 GB, INT4 = ~3.5 GB. This matters enormously for deployment costs — a 7B model that requires an A100 80GB at FP16 can run on a single RTX 4090 (24 GB) at INT4, dropping cost by 10x.
-
-The quality tradeoff is real but manageable for most tasks. INT8 introduces minimal quality degradation on most benchmarks. INT4 is noticeable on tasks requiring precise reasoning but often acceptable for summarization, classification, and RAG generation. The key rule is to always benchmark quantized model quality on your specific task — aggregate benchmark numbers may not reflect your use case.
-
-Quantization is primarily used for inference (not training, where precision loss compounds through gradient updates). Post-training quantization (PTQ) applies to already-trained models without retraining, making it practical to quantize open-source models like Llama for custom deployment.
-:::
-
-**Q2. What is knowledge distillation?**
+**Q1. What is model quantization and why is it used in LLM deployment?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Knowledge distillation is a training technique where a smaller "student" model is trained to mimic the behavior of a larger "teacher" model, transferring the teacher's performance to a cheaper, faster model.
+Model quantization reduces the numerical precision of model weights from FP16 (2 bytes per parameter) to lower-precision formats: INT8 (1 byte/param) or INT4 (0.5 bytes/param). This directly reduces memory requirements and reduces the data that must move from GPU HBM to SRAM on every decode step.
 
-The key insight is what the student learns from. Rather than training on hard labels (class 1: yes/no), the student trains on the teacher's full output probability distribution — the soft targets. If a teacher model assigns probabilities [0.7, 0.2, 0.1] to three sentiment classes, that distribution encodes richer information than the hard label "positive." The 0.2 probability on "neutral" tells the student this is somewhat ambiguous — information that a hard label loses entirely.
+Memory impact for a 7B parameter model: FP16 = 14 GB, INT8 = 7 GB, INT4 = 3.5 GB. A 7B model that requires one A100 40GB at FP16 can run on a single consumer RTX 4090 (24 GB) at INT8, or even on cheaper gaming GPUs at INT4.
 
-The training objective combines the standard cross-entropy loss against true labels with a KL-divergence loss against the teacher's soft outputs, weighted by a temperature parameter that controls how "soft" the teacher distribution is.
+Quality tradeoff: INT8 with LLM.int8() introduces minimal degradation (usually <1% on benchmarks) and is the safe default for most production use cases. INT4 is more aggressive — it is noticeably worse on code generation and mathematical reasoning tasks, but acceptable for summarization, classification, and RAG generation. Always benchmark on your specific task before deploying quantized models.
 
-In practice, distilled models consistently outperform models trained from scratch at the same parameter count. DistilBERT (Sanh et al., 2019) is 40% smaller and 60% faster than BERT while retaining 97% of its performance — the most widely cited example. GPT-3 era distillation showed that specialized student models can match or exceed teacher performance on narrow tasks.
-
-When to use distillation: you have a task-specific use case with abundant unlabeled data, and the teacher model's latency or cost is unacceptable. Distilled models are 3–10x cheaper to serve than teachers on narrow tasks.
+Quantization is primarily used for inference, not training. Post-training quantization (PTQ) applies to already-trained models without retraining, which is why it's practical: you can quantize any open-source Llama model and deploy it immediately.
 :::
 
-:::
-
-::: {.callout-warning title="Mid Level"}
-
-**Q1. Explain PagedAttention: what problem it solves and how it works.**
+**Q2. What is TTFT and why does it matter more than end-to-end latency for streaming applications?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-PagedAttention (Kwon et al., vLLM, 2023) solves the KV cache memory fragmentation problem that limits LLM serving throughput.
+TTFT (Time To First Token) is the elapsed time from when a user submits a request to when they see the first generated character appear on screen.
 
-**The problem:** during autoregressive generation, each token attends to all previous tokens. Those attention key-value pairs must be stored in GPU memory — the KV cache. Traditional serving frameworks allocate the maximum possible KV cache per request upfront (maximum sequence length × layers × attention heads × 2). For a 32k context window at FP16, one request can consume 10–20 GB of GPU memory. Even when the actual generation is short, that memory is reserved and unavailable to other requests. GPU memory utilization was typically 20–40% in practice — most of the allocated space was wasted.
+For streaming LLM applications (which is almost all production chat interfaces), TTFT is the primary determinant of perceived responsiveness. A 5-second response with a 200ms TTFT feels fast — users see the response starting immediately and watch tokens stream in. The same 5-second response with a 4-second TTFT feels broken — users stare at an empty screen thinking something is wrong.
 
-**The solution:** PagedAttention borrows virtual memory concepts from operating system design. Rather than contiguous allocation, the KV cache is divided into fixed-size "pages" (blocks) that are allocated on demand. Non-contiguous physical pages are mapped to a continuous logical address space for each sequence — exactly how OS virtual memory works.
+End-to-end latency (total time to full response) matters less for user experience because users are reading the response as it streams. By the time the last token arrives, the user has already read the first several hundred tokens.
 
-When a new token is generated, only the pages needed for that token are allocated. Pages from completed or terminated requests are immediately freed for reuse. Multiple requests can share the same physical memory pages for common prefixes (prompt caching).
-
-**The result:** 2–4x higher throughput at the same GPU footprint compared to traditional serving. vLLM achieves 3.5x higher throughput than HuggingFace Transformers on the same hardware by eliminating memory fragmentation. This is why vLLM has become the standard for self-hosted LLM serving in production.
+TTFT is determined by the prefill phase — how fast the model can process the input prompt. Optimizing TTFT means: using prefix caching (skip reprocessing common system prompts), using faster GPUs for prefill compute, or keeping prompt lengths short. End-to-end latency optimization is dominated by decode speed.
 :::
 
-**Q2. Compare GPTQ and AWQ quantization approaches.**
+**Weak vs Strong contrast:**
+
+*Weak answer to "What is PagedAttention?":* "PagedAttention is a memory optimization in vLLM that makes inference faster."
+
+*Strong answer:* "PagedAttention solves KV cache memory fragmentation. Traditional serving pre-allocates the maximum possible KV cache per request — so a system configured for 32k context allocates ~80 GB per request slot even if the actual generation is 200 tokens. PagedAttention stores KV cache in small, non-contiguous pages that are allocated on demand as tokens are generated, just like virtual memory in an OS. Pages from finished requests are immediately freed and given to new requests. Multiple requests can physically share pages for common prefixes. This eliminates the 60–80% memory waste of traditional serving and enables 2–4x higher concurrent request capacity at the same GPU footprint."
+
+**Q3. What is the difference between a model's memory size and the GPU memory needed to serve it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Both GPTQ and AWQ are post-training quantization methods targeting INT4 compression of LLMs, but they use fundamentally different strategies to decide which weights to preserve at higher precision.
+The memory size of a model (weights only) is just the baseline. Serving requires additional GPU memory for KV cache and framework overhead.
 
-**GPTQ** (Frantar et al., 2022) quantizes weights layer by layer by minimizing the reconstruction error of each layer's output. For each layer, it finds the set of 4-bit values that best approximates the FP16 weights by solving a second-order optimization problem using the Hessian of the layer's loss. Requires a calibration dataset (typically 128 samples from C4 or Wikipedia) to compute Hessians. The quantization itself is done once and takes several hours for a 70B model.
+**Weights:** for a 70B FP16 model: 70B × 2 bytes = 140 GB. This is the minimum just to load the model.
 
-**AWQ** (Lin et al., 2023 — Activation-aware Weight Quantization) takes a different insight: not all weights are equally important. Weights that multiply large activations contribute more to the output and are more sensitive to quantization error. AWQ identifies important weight channels by observing activation magnitudes over calibration data, then scales those channels to preserve them at effectively higher precision before quantization.
+**KV cache:** during generation, key-value tensors for all previous tokens must be kept in GPU memory. For a 70B model with a 4k context, one concurrent request consumes ~10 GB of KV cache. With 8 concurrent requests: ~80 GB additional. KV cache can exceed model weight memory at high concurrency.
 
-**Quality comparison:** AWQ generally produces better quality than GPTQ at the same compression ratio, especially on reasoning and instruction-following tasks. Benchmarks on Llama-2-7B show AWQ outperforms GPTQ-INT4 by 1–3 perplexity points.
+**Activations and overhead:** ~5% of total, including intermediate computation tensors and CUDA/PyTorch framework overhead.
 
-**Practical differences:** AWQ is faster to quantize (minutes vs. hours for large models) and produces smaller model files. GPTQ is more mature with broader tooling support (AutoGPTQ is widely used). For new deployments, AWQ is the current recommendation; for legacy compatibility, GPTQ remains well-supported.
+For a 70B FP16 model serving 8 concurrent requests at 4k context: 140 GB (weights) + 80 GB (KV cache) + 10 GB (overhead) ≈ 230 GB. This requires 3× A100 80GB — not 2× as the weights-only calculation suggests.
 :::
 
-**Q3. Walk through how you'd estimate the GPU memory required to serve a 70B parameter model at FP16.**
+**Q4. What is continuous batching and why is it better than static batching?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-GPU memory for LLM serving has three components: model weights, KV cache, and activation/overhead.
+Static batching groups a fixed number of requests, processes them together as a batch, and returns results when all requests in the batch are finished. Problems: if batch size is 8 but only 3 requests are ready, the server either waits (adding latency) or runs under-capacity. Worse, the batch is only complete when the longest sequence finishes — short sequences sit idle waiting for long ones to complete.
 
-**1. Model weights.** At FP16, each parameter requires 2 bytes. For 70B parameters: 70 × 10⁹ × 2 bytes = 140 GB. This is the baseline — before any inference, you need 140 GB just to load the weights. This immediately requires at least two A100 80GB GPUs (2 × 80 GB = 160 GB) or equivalent.
+Continuous batching (iteration-level scheduling) inserts new requests into the running batch at every token generation step. When a request finishes, its slot is immediately taken by the next waiting request. The GPU is always running at maximum capacity. No waiting for batch fill. No idle time from short sequences waiting for long ones.
 
-**2. KV cache.** During generation, key and value tensors for each token must be stored per layer. For a typical 70B model architecture (80 layers, 64 heads per layer, head dimension 128): KV cache per token = 2 (K and V) × 80 layers × 64 heads × 128 head_dim × 2 bytes (FP16) = ~2.6 MB per token. For a 4k context request: 4,096 tokens × 2.6 MB = ~10 GB per concurrent request. With 8 concurrent requests: ~80 GB additional KV cache. This is why high-concurrency serving requires significantly more memory than single-request inference.
-
-**3. Activations and framework overhead.** ~2–5% of total model memory for intermediate activations during the forward pass, plus framework overhead (PyTorch, CUDA) of 1–2 GB.
-
-**Total estimate for a 70B model serving 8 concurrent requests at 4k context:** 140 GB (weights) + 80 GB (KV cache) + 5 GB (overhead) = ~225 GB. Minimum practical setup: 3× A100 80GB or 4× H100 80GB (for headroom), or a single H100 NVL 94GB fails at this concurrency.
-
-Rule of thumb: start with "2 bytes per parameter" for weights, then add 30–50% for KV cache and overhead at typical serving loads.
+The result: 5–10x higher throughput on mixed-length workloads compared to static batching. This is built into vLLM and is one of the primary reasons vLLM significantly outperforms a naive HuggingFace inference loop.
 :::
 
-:::
-
-::: {.callout-important title="Forward Deployed Engineer"}
-
-**Q1. A customer needs <100ms p99 latency for their GenAI feature. Walk through the deployment architecture decisions you'd make.**
+**Q5. Why is INT4 quantization riskier than INT8 for production deployment?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-100ms p99 is extremely aggressive for LLM generation — most generation responses take 500ms–5s depending on output length. I'd start by clarifying whether this applies to the first token (time-to-first-token, TTFT) or the complete response, because the architecture decisions differ significantly.
+INT4 stores each weight in only 4 bits — 16 possible values. This is aggressive compression that can introduce meaningful rounding errors on weight values that do not quantize cleanly to 4-bit precision.
 
-**If TTFT must be <100ms:** this is achievable. TTFT depends on the prefill phase (processing the input prompt), not generation. Optimizations: use prefix caching to skip re-processing common prompt prefixes (e.g., system prompt appears in every request — cache it); use speculative decoding with a small draft model; keep the model on GPU with no cold start; and co-locate the serving infrastructure with the user (edge deployment or regional nodes).
+The risks are task-dependent. For tasks where the exact token choice matters (code generation, arithmetic, structured JSON extraction), even a small probability shift from quantization error can cause a wrong variable name, incorrect operator, or malformed output. For tasks where approximate language is acceptable (summarization, general QA, paraphrasing), INT4 is often indistinguishable from FP16.
 
-**If full response must be <100ms:** this is nearly impossible for generation longer than ~50 tokens at standard model sizes. Solutions require fundamentally different architecture: use a smaller, faster model (7B INT4 with vLLM can generate ~50 tokens in ~100ms on an A100); implement streaming so the user sees tokens as they're generated (perceived latency is TTFT, not total time); or for structured tasks, use a classifier/retrieval approach rather than generation (100ms is very achievable for classification + retrieval without generation).
+Small models (7B and under) are more sensitive because they have less redundancy — each weight carries more information. A 7B INT4 model can degrade significantly more than a 70B INT4 model.
 
-**Deployment architecture for minimum latency:** self-hosted vLLM with continuous batching on A100/H100; INT8 or INT4 quantization (reduces memory bandwidth per forward pass); tensor parallelism across GPUs to speed individual request processing; keep model in memory (no loading from disk); implement request queuing with max queue time to prevent latency spikes from burst traffic; use warm connections (no HTTP connection establishment overhead per request).
-
-For p99 specifically: identify the tail latency sources — long prompts, cold cache, context window boundary effects — and test under production-realistic load distributions.
+The rule: always benchmark INT4 on your specific task. Do not rely on aggregate benchmark numbers (MMLU, HellaSwag) — they may show <1% degradation while your task shows 10%.
 :::
 
-**Q2. The customer's inference costs are 10x higher than budgeted. What is your optimization playbook?**
+---
+
+### Mid Level (2–5 years)
+
+**Q1. Explain PagedAttention in detail: the problem, the mechanism, and the quantitative impact.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-I investigate cost drivers before optimizing, because the fix depends entirely on where the cost is coming from. Costs are tokens × price_per_token, so I start by measuring actual token consumption.
+**The problem:** during generation, every token's attention key and value tensors must be stored for future tokens to attend to. For a 70B model at 4k context, this is approximately 10 GB per request. Traditional serving allocates this maximum KV cache upfront at request start — reserving space for the full context window even if the generation ends at 200 tokens. With 20 request slots, you've reserved 200 GB for KV cache alone, most of which goes unused. GPU memory utilization in practice: 20–40%.
 
-**Step 1: Audit token consumption.** Log input tokens and output tokens separately for a sample of production requests. What's the average input token count? Average output? Compare to what was budgeted. Most surprises are in input tokens — context injection (RAG, conversation history, system prompts) that wasn't accounted for.
+**The mechanism:** PagedAttention stores KV cache in fixed-size pages (blocks), typically 16 tokens per page. Pages are allocated on demand — when a token is generated, one page is allocated if the current page is full. Non-contiguous physical pages are tracked via a block table per sequence (the same concept as a page table in OS virtual memory). The attention computation is modified to read from non-contiguous blocks using this indirection.
 
-**Step 2: Fix context bloat (highest-leverage intervention).** If you're injecting full documents as RAG context when only 3 relevant paragraphs are needed, you're paying 10x for retrieval quality you're not getting anyway. Reduce chunk count from top-10 to top-3 and measure if answer quality holds. Shorten the system prompt — remove redundant instructions. Compress conversation history by summarizing older turns instead of keeping the full transcript.
+When requests share a common prefix (e.g., same system prompt), they can physically share the pages for that prefix — one copy, many readers, using reference counting to prevent premature eviction. When a request finishes, all its pages are immediately freed.
 
-**Step 3: Right-size the model.** GPT-4o costs ~3x GPT-4o-mini for many tasks where mini is sufficient. Run your eval set on the smaller model — if accuracy drops less than 2%, switch. Many classification and extraction tasks perform equivalently on smaller models.
+**Quantitative impact:** vLLM achieves 3.5x higher throughput than HuggingFace Transformers on the same hardware. The paper showed 2–4x throughput improvement across various workload distributions. Memory utilization increases from 20–40% (traditional) to 80–95% (PagedAttention).
 
-**Step 4: Implement prompt caching.** If the system prompt and frequently-used context repeat across requests, prompt caching (Anthropic, OpenAI both support this) can cut input token costs by 80–90% for cached prefixes. On Claude, cached tokens cost 10% of uncached price.
-
-**Step 5: Batch non-real-time jobs.** If some requests aren't user-facing (nightly enrichment, classification jobs), use batch APIs at 50% discount.
-
-**Step 6: Consider self-hosted for high-volume use cases.** At >10M tokens/day, self-hosted Llama-3-70B on Modal or a dedicated GPU cluster typically costs 5–10x less than API pricing.
+**Follow-up:** Why not just use a smaller max_sequence_length to reduce pre-allocation? You can, but then you cannot serve requests that need the full context window. PagedAttention lets you efficiently serve both short and long requests simultaneously without choosing one or the other.
 :::
 
+**Q2. Compare AWQ and GPTQ quantization. Which would you choose for a production 70B model?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Both target INT4 compression of LLMs as post-training quantization (no retraining required), but use different strategies to minimize quality loss.
+
+**GPTQ** quantizes weights layer by layer by minimizing each layer's output reconstruction error using a second-order Hessian-based optimization. It requires a calibration dataset (128 samples from C4/Wikitext), takes several hours for a 70B model, and produces quantized weights that minimize per-layer error.
+
+**AWQ** takes a different insight: weight sensitivity to quantization error is not uniform — weights that multiply large activations contribute more to the output and are more sensitive. AWQ identifies important weight channels by measuring activation magnitudes over calibration data, scales those channels to preserve them (without actually keeping them in FP16, which would increase memory), then quantizes. This is faster (minutes for 70B) and produces better-quality quantized models.
+
+**Quality comparison:** AWQ consistently outperforms GPTQ at INT4 on reasoning, instruction-following, and code generation benchmarks. On Llama-2-7B, AWQ INT4 achieves ~1–3 perplexity points lower (better) than GPTQ INT4. The gap is larger on smaller models and reasoning-heavy tasks.
+
+**Production recommendation:** AWQ for new deployments. GPTQ if you need legacy tooling compatibility (AutoGPTQ ecosystem) or if pre-quantized AWQ models are not available for your target model. Both are natively supported in vLLM via `--quantization awq` or `--quantization gptq`.
+
+```python
+# Quantize a model with AWQ (run once, save to disk)
+from awq import AutoAWQForCausalLM
+from transformers import AutoTokenizer
+
+model = AutoAWQForCausalLM.from_pretrained("meta-llama/Llama-3-70b-instruct")
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3-70b-instruct")
+
+quant_config = {
+    "zero_point": True,
+    "q_group_size": 128,   # group size for quantization
+    "w_bit": 4,            # 4-bit quantization
+    "version": "GEMM",     # optimized kernel type
+}
+
+model.quantize(tokenizer, quant_config=quant_config)
+model.save_quantized("./Llama-3-70b-instruct-awq")
+tokenizer.save_pretrained("./Llama-3-70b-instruct-awq")
+```
 :::
+
+**Q3. Walk through estimating GPU memory for a 70B model at INT8 serving 16 concurrent users at 4k context.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Break it into three components:
+
+**1. Model weights (INT8):**
+```
+70B params × 1 byte/param = 70 GB
+```
+
+**2. KV cache:**
+For a 70B model (80 layers, 64 heads, 128 head_dim) at FP16 KV cache:
+```
+KV per token = 2 (K,V) × 80 layers × 64 heads × 128 head_dim × 2 bytes (FP16)
+             = 2 × 80 × 64 × 128 × 2 = 2,621,440 bytes ≈ 2.5 MB/token
+```
+
+For 16 concurrent users at 4k context:
+```
+KV cache = 16 requests × 4,096 tokens × 2.5 MB = ~164 GB
+```
+
+**3. Activation memory and overhead:** ~5 GB
+
+**Total:** 70 GB (weights) + 164 GB (KV cache) + 5 GB (overhead) ≈ 239 GB
+
+**Minimum hardware:** 3× A100 80GB (240 GB total — barely fits). In practice, use 4× A100 80GB for headroom and to allow vLLM's KV cache allocator room to operate without hitting OOM.
+
+**Key insight:** at high concurrency, KV cache can exceed the weight memory. This is why the serving concurrency target must be part of the hardware sizing calculation, not just the model size.
+:::
+
+**Q4. What is tensor parallelism, and what communication overhead does it introduce?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Tensor parallelism (TP) splits individual weight matrices across N GPUs. For each transformer layer, the attention QKV projection and FFN matrices are sharded: GPU 0 holds columns 0 to d/N, GPU 1 holds columns d/N to 2d/N, etc. Each GPU computes a partial output, and an AllReduce operation sums the partial results across all GPUs to produce the full output.
+
+**Communication overhead per layer:** one AllReduce per attention layer and one per FFN layer. For a 70B model with 80 layers: 160 AllReduce operations per forward pass. Each AllReduce moves a tensor of size [batch, seq_len, d_model] across all GPUs.
+
+**NVLink vs PCIe impact:** on NVLink-connected GPUs (600+ GB/s), the AllReduce for a batch size of 8 at d_model=8192 completes in ~0.5ms. On PCIe (64 GB/s), the same AllReduce takes ~5ms. Multiply by 160 layers: NVLink adds ~80ms overhead, PCIe adds ~800ms per forward pass. TP on PCIe severely degrades throughput.
+
+**When TP helps:** primarily as a memory distribution strategy. If the model fits in one GPU's memory, TP=1 is faster (no AllReduce). Use TP=2 for a 70B model on 2× A100 80GB. Use TP=4 only if needed for capacity or if the gains from parallel compute outweigh AllReduce cost (usually at large batch sizes).
+
+**In practice:** vLLM and TensorRT-LLM handle TP configuration automatically. Specify `--tensor-parallel-size N` and the framework distributes layers and manages AllReduce.
+:::
+
+**Q5. How does speculative decoding work and when should you use it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Speculative decoding addresses the decode phase bottleneck: generating tokens one at a time is slow because each step requires a full forward pass through the large model. Speculative decoding uses a small "draft" model to generate K tokens speculatively, then uses the large "target" model to verify all K tokens in a single parallel forward pass.
+
+**The mechanism:** the draft model (e.g., a 1B model) generates K tokens quickly. The target model (70B) runs a forward pass that processes the input plus all K draft tokens simultaneously. Because the target model processes them in parallel (like a prefill), this takes similar time to a single autoregressive step. The target model accepts draft tokens that match its probability distribution and rejects those that don't, regenerating from the first rejection point.
+
+**Expected speedup:** if the draft model has acceptance rate α, the expected tokens generated per target model forward pass is K×α + 1/(1-α) approximately. At 80% acceptance rate with K=4 draft tokens, this is roughly 3–4x the normal decoding rate.
+
+**When to use:** works best when the draft model's token predictions are highly correlated with the target model (same training data, same architecture family). Most effective for deterministic outputs (code generation, math, structured data) where predictions are predictable and acceptance rates are high. Less effective for creative generation where token distributions are broad.
+
+**When not to use:** if acceptance rate is below ~70%, speculative decoding adds overhead without benefit (the target model does more work to reject). Also not useful when prefill dominates (long prompts with short outputs) — speculative decoding only helps decode.
+
+vLLM supports speculative decoding natively: `--speculative-model <draft-model-name> --num-speculative-tokens 5`.
+:::
+
+**Q6. Explain disaggregated prefill/decode serving and what problem it solves.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Disaggregated prefill/decode (the Distserve pattern, Zhong et al., 2024) separates the two phases of LLM inference onto dedicated GPU pools.
+
+**The problem with coupled serving:** prefill (compute-bound) and decode (memory-bandwidth-bound) have different resource needs and interference with each other. A long prefill operation (processing a 4,000-token prompt) blocks the GPU for several hundred milliseconds during which all ongoing decode operations for other requests are stalled. This causes TTFT spikes and decode throughput degradation.
+
+**The disaggregated solution:** maintain separate GPU fleets for prefill and decode. When a request arrives, the prefill fleet processes the prompt, then transfers the resulting KV cache to the decode fleet via NVLink or high-speed interconnect. The decode fleet continues generation from there.
+
+**Benefits:** TTFT is determined by prefill fleet capacity; generation throughput is determined by decode fleet capacity; they scale independently. For a workload with long prompts and many concurrent users, you can provision more prefill GPUs to keep TTFT low without over-provisioning decode capacity (or vice versa).
+
+**Cost:** KV cache transfer adds latency (typically 5–20ms for typical context sizes). This cost is recovered many times over by improved utilization of each specialized fleet.
+
+**Availability:** vLLM has experimental support for disaggregated prefill. It is increasingly used at hyperscaler scale. For most teams at moderate scale, it is not yet necessary — but understanding it is expected at senior level.
+:::
+
+---
+
+### Senior / Lead / Staff Level (5+ years)
+
+**Q1. You're serving a 70B Llama model. Your p99 latency is 4 seconds and your SLA is under 1 second. Walk me through how you'd debug and fix this.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**First, separate TTFT from TPOT.** A 4-second p99 latency could mean TTFT is 4 seconds (prefill-bound) or TTFT is fast but generating 200 tokens at 20ms/token = 4 seconds (decode-bound) or both. The diagnosis changes completely based on this answer.
+
+**Step 1: Instrument and measure.** Add timing to your serving layer:
+```python
+import time
+from vllm import LLM, SamplingParams
+
+# Production pattern: log TTFT and total latency separately
+start = time.time()
+generator = llm.generate_with_streaming(prompt, sampling_params)
+first_token_time = None
+for output in generator:
+    if first_token_time is None:
+        first_token_time = time.time() - start
+e2e_time = time.time() - start
+
+print(f"TTFT: {first_token_time*1000:.1f}ms, E2E: {e2e_time*1000:.1f}ms, "
+      f"Tokens: {output.num_tokens}, TPOT: {(e2e_time - first_token_time)/output.num_tokens*1000:.1f}ms")
+```
+
+**If TTFT is 4 seconds (prefill-bound):**
+
+- Check prompt lengths at p99. Likely a long-context request (8k+ tokens) causing a multi-second prefill.
+- Implement prefill chunking: split long prefills into smaller chunks to prevent decode stalls for concurrent requests.
+- Apply prefix caching: if the system prompt is repeated across requests, caching those KV pages eliminates most of the prefill.
+- Scale prefill capacity: more GPUs (or disaggregated prefill fleet) processing long prompts faster.
+- Hard cap prompt length: if p99 prompts are outliers (e.g., 99th percentile users sending 16k-token prompts), enforce a max_input_length and return an error, protecting the p99 for the rest of traffic.
+
+**If TPOT is slow (decode-bound, e.g., 200 tokens × 20ms = 4 seconds):**
+
+- Check concurrency: if 32 requests are being decoded simultaneously, each gets 1/32 of the GPU's memory bandwidth. TPOT degrades linearly with batch size.
+- Apply quantization: INT8 reduces weight data moved per decode step by 2x, roughly doubling decode throughput. INT4 reduces it 4x.
+  ```python
+  # Switch from FP16 to INT8 serving:
+  # python -m vllm.entrypoints.openai.api_server \
+  #   --model meta-llama/Llama-3-70b-instruct \
+  #   --quantization bitsandbytes \
+  #   --tensor-parallel-size 2
+  ```
+- Add tensor parallelism: spreading the model across 4 GPUs (TP=4) means each GPU holds 1/4 of the weights — each decode step moves less data per GPU. AllReduce overhead adds ~5–10ms but reduces weight movement per GPU by 4x. Net gain: ~2x decode throughput on NVLink.
+- Enable speculative decoding: draft model generates 4 tokens, target verifies in parallel. At 80% acceptance: ~3x speedup.
+
+**If the SLA is 1 second total and output is always 200 tokens:**
+- Budget: 1000ms total. Allocate 200ms to TTFT (achievable with prefix caching + fast GPU), 800ms to decode = 4ms/token = 250 tokens/second per request.
+- For 70B at FP16 on A100 (2.0 TB/s bandwidth): approximate decode rate = 2 TB/s ÷ 140 GB/step ≈ 14 tokens/second single-request. To hit 250 tokens/second requires 18x speedup — this requires INT4 (4x) + TP=4 on H100s (2x bandwidth × 4 GPUs, minus AllReduce) + speculative decoding (3x). Not achievable with this model. Recommendation: use a smaller quantized model (34B INT4 fits on a single A100 and hits these speeds) or accept a revised SLA.
+
+> 🎯 **What great looks like:** The candidate immediately separates prefill from decode, instruments both, and presents a systematic decision tree. They know that TTFT is prefill-bound and TPOT is memory-bandwidth-bound. They correctly identify that quantization helps decode (reduces data moved per step) and that adding more GPUs via TP helps prefill (more compute) but has diminishing returns on decode due to AllReduce overhead. They know the memory bandwidth formula for decode speed estimation and use it to sanity-check whether the SLA is achievable at all with the given model size.
+
+> ⚠️ **Common Mistake:** Jumping straight to "add more GPUs" without separating TTFT from TPOT. Adding GPUs via TP helps prefill linearly but decode only sublinearly (AllReduce overhead). Candidates who do not understand the prefill/decode distinction cannot correctly triage this problem.
+:::
+
+---
+
+**Q2. Design a serving system for a 70B model with 500ms TTFT SLA, 10,000 concurrent users, and a $50k/month GPU budget.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**Step 1: Establish the math.**
+
+GPU cost assumptions: A100 80GB on AWS = ~$4.50/hr on-demand, ~$1.80/hr spot.
+$50k/month ÷ 720 hours = ~$69/hour GPU budget.
+On-demand A100s: $69 / $4.50 = ~15 A100s maximum.
+Spot mix (20% on-demand, 80% spot): effective cost = 0.2 × $4.50 + 0.8 × $1.80 = $2.34/hr. Budget supports ~29 A100s.
+
+**Step 2: Model sizing.**
+
+70B FP16 = 140 GB = 2× A100 80GB per replica minimum (for weights).
+Adding KV cache for concurrent serving: at 500 concurrent requests per replica at 2k average context:
+500 × 2,000 × 2.5 MB/token = 2,500 GB — obviously not per replica. With 10,000 users at p50 active (not all concurrent): assume 2,000 simultaneous active generations, each with average 1k token context = 2,000 × 1,000 × 2.5 MB = 5 TB KV cache total. Across 15 replicas: ~330 GB per replica. That requires 4+ A100 80GB per replica.
+
+Use INT4 (AWQ): model weights drop to 35 GB. Fits on 1× A100 80GB with room for KV cache.
+At INT4, a single A100 80GB can hold: 35 GB (weights) + 40 GB (KV cache, ~640 concurrent 4k-context requests) + 5 GB overhead = 80 GB. This is one possible configuration.
+
+**Step 3: Throughput requirement.**
+
+10,000 concurrent users. Assume average session: 2 turns/hour, each generating 300 tokens.
+Peak RPS: 10,000 users × 2 req/hr / 3600 = ~5.5 RPS at steady state. 2–3x for peak = ~15 RPS.
+At 300 tokens/request: 15 RPS × 300 = 4,500 tokens/second total system throughput.
+
+A100 80GB serving 70B AWQ INT4: roughly 60–100 tokens/second per GPU (decode, with batching).
+Required GPUs: 4,500 / 80 avg = ~56 A100 GPUs just for decode throughput.
+
+Hmm — this is much more than the 29-GPU budget. Resolution: 10,000 *registered* users ≠ 10,000 simultaneous active users. At typical SaaS concurrency ratios (~5–10% active simultaneously): 500–1,000 active concurrent users. Recalculate at 1,000 active users: 0.5 RPS peak → 150 tokens/second total → ~2 A100s for decode alone. Budget is achievable.
+
+**Step 4: Architecture.**
+
+```
+Internet → Load Balancer (prefix-aware routing)
+         → vLLM Cluster (6× nodes, each 4× A100 80GB, TP=1)
+              - 70B AWQ INT4 (35 GB weights/replica)
+              - Prefix caching enabled
+              - Continuous batching
+              - GPU memory utilization = 0.90
+         → KV cache: ~40 GB available per node for concurrent requests
+```
+
+6 nodes × 4 A100 80GB = 24 GPUs. Cost at spot mix: 24 × $2.34/hr × 720 hr = $40,320/month. Within budget with headroom.
+
+TTFT for 500ms SLA: at 70B AWQ INT4 on A100, prefill throughput ~1,000–2,000 tokens/second. For a 500-token average prompt: prefill time = 500 / 1,500 ≈ 330ms. With prefix caching for the system prompt (assume 200 tokens cached): effective prefill = 300 tokens → 200ms. TTFT ≈ 200ms, well within 500ms SLA.
+
+**Step 5: Autoscaling.**
+
+KEDA scales on queue depth: if requests/node > 20, add nodes. Min replicas = 3 (always warm). Max = 15. New nodes take 5 minutes to start (model loading from S3 with pre-cached artifacts). Spot interruption: drain in-flight requests within 2-minute termination notice, shift traffic to remaining nodes.
+
+**Step 6: Monitoring and cost control.**
+
+Alert on: GPU memory utilization >95% (KV cache pressure), queue depth >30 (throughput insufficient), TTFT p99 >400ms (SLA headroom shrinking).
+Cost control: set a hard autoscaler max at 14 nodes ($49k/month). If demand exceeds capacity at that cap, queue requests up to 5 seconds before rejecting.
+
+> 🎯 **What great looks like:** The candidate starts with the math — budget in dollars converts to GPU count, which must be compared against the serving capacity required at the stated concurrency. They recognize that 10,000 concurrent users is a misleading number (typical active concurrency is much lower) and clarify this assumption rather than accepting it at face value. They know the INT4 memory savings enable 1-GPU-per-replica for 70B (instead of 2), doubling the number of replicas per budget. They know vLLM prefix caching helps hit the TTFT SLA without excessive GPU spend on prefill capacity.
+
+> ⚠️ **Common Mistake:** Designing for 10,000 fully simultaneous users generating tokens at once, which would require an impossible GPU budget. The candidate should call out the concurrency assumption and reason about realistic active-user ratios.
+:::
+
+---
+
+**Q3. When does INT4 quantization significantly hurt model quality? Give specific examples.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+INT4 quantization introduces significant quality degradation in four well-documented categories:
+
+**1. Code generation (HumanEval benchmark).**
+Pass@1 on HumanEval drops 5–15% for 7B models at INT4 vs FP16. The mechanism: code generation requires precise token choices — a wrong variable name, missing closing bracket, or incorrect method call produces non-functional code. Quantization shifts the probability distribution of each token by a small amount, but even a 2% probability shift on a critical token can change the top-1 selection. The compounding effect across a 50-line function is significant. Llama-3-8B FP16 achieves ~55% pass@1 on HumanEval; at INT4, this can drop to 45%.
+
+**2. Mathematical reasoning (GSM8K, MATH benchmarks).**
+Multi-step arithmetic chains accumulate quantization errors at each step. A slight probability shift on a calculation step can produce a wrong intermediate result that cascades through subsequent steps. GSM8K accuracy on 7B models degrades 5–10% at INT4. For tasks requiring exact numerical computation, this is unacceptable.
+
+**3. Small models (≤7B parameters).**
+The quality gap between FP16 and INT4 is larger for small models because they have less representational redundancy. In a 70B model, many attention heads and neurons encode similar information — quantization error on one is compensated by others. In a 7B model, each parameter carries more unique information. Empirically, a 7B INT4 model often performs worse than a 7B INT8 model by 3–5 perplexity points, while a 70B INT4 model is within 1 perplexity point of 70B FP16.
+
+**4. Long-context tasks (>16k tokens).**
+Attention over long sequences is sensitive to small errors in the KV cache (which is typically stored in FP16 even for INT4 weight quantization). However, if the activation computations during attention are affected by weight quantization errors, these errors can compound over long sequences. Needle-in-a-haystack retrieval accuracy degrades noticeably at INT4 for contexts exceeding 16k tokens on many models.
+
+**Real-world decision rule:** for a production deployment, always evaluate INT4 on your specific task. Use INT8 as the default production quantization for code generation, math-heavy prompts, and structured extraction. Use INT4 only after verifying your task-specific quality delta is acceptable, and only for larger models (34B+) where the quality floor is higher.
+
+```python
+# Quick quality validation for quantized model
+from evaluate import load
+from transformers import pipeline
+
+# Run both FP16 and INT4 models on your task-specific evaluation set
+def evaluate_model(model_path, quantization=None, test_cases=None):
+    pipe = pipeline("text-generation", model=model_path,
+                   model_kwargs={"quantization_config": quantization} if quantization else {})
+
+    correct = 0
+    for test in test_cases:
+        output = pipe(test["prompt"], max_new_tokens=200)[0]["generated_text"]
+        if test["validate"](output):
+            correct += 1
+    return correct / len(test_cases)
+
+# Compare: if quality_delta > your_threshold, stay on FP16/INT8
+fp16_accuracy = evaluate_model("meta-llama/Llama-3-8b", test_cases=your_code_tests)
+int4_accuracy = evaluate_model("meta-llama/Llama-3-8b",
+                               quantization=bnb_config_int4,
+                               test_cases=your_code_tests)
+print(f"Quality delta: {fp16_accuracy - int4_accuracy:.3f}")
+```
+
+> 🎯 **What great looks like:** The candidate gives concrete benchmark numbers (HumanEval pass@1, GSM8K accuracy), explains the mechanism for each failure mode (probability shift on precise tokens, compounding arithmetic errors, lower redundancy in small models), and gives a practical decision rule for production. They do not just say "INT4 hurts quality" — they say *when* and *by how much* and *why*.
+
+> ⚠️ **Common Mistake:** Saying "INT4 always reduces quality." The correct answer is that INT4 quality degradation is task-dependent and model-size-dependent. For a 70B model on summarization tasks, INT4 is often indistinguishable from FP16 in production use. Undifferentiated answers suggest the candidate has not worked with quantized models in practice.
+:::
+
+---
 
 ## Further Reading
 
 - [Efficient Memory Management for LLM Serving with PagedAttention (Kwon et al., 2023)](https://arxiv.org/abs/2309.06180)
-- [GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers](https://arxiv.org/abs/2210.17323)
+- [GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (Frantar et al., 2022)](https://arxiv.org/abs/2210.17323)
+- [AWQ: Activation-aware Weight Quantization for LLM Compression (Lin et al., 2023)](https://arxiv.org/abs/2306.00978)
+- [Distserve: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving (Zhong et al., 2024)](https://arxiv.org/abs/2401.09670)
+- [LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale (Dettmers et al., 2022)](https://arxiv.org/abs/2208.07339)
+- [vLLM GitHub](https://github.com/vllm-project/vllm) — production serving framework
+- [KEDA Documentation](https://keda.sh/) — Kubernetes event-driven autoscaling for GPU inference

@@ -1,218 +1,1061 @@
+---
+title: "Advanced RAG Patterns"
+chapter: 28
+---
+
 # Advanced RAG Patterns {#sec-28}
 
 ::: {.callout-note}
 **Who this chapter is for:** Mid Level → FDE
+
 **What you'll be able to answer after reading this:**
 
-- Why GraphRAG outperforms vector search for cross-document and relationship queries
-- How agentic RAG, Self-RAG, and CRAG extend single-shot retrieval into multi-step reasoning loops
-- Which indexing strategies (parent-child, late chunking, contextual headers) improve precision without sacrificing recall
-- How to decompose multi-hop questions using IRCoT and RAPTOR
-- How to evaluate RAG systems using the RAGAS framework and separate retrieval quality from generation quality
+- Why standard RAG fails on multi-hop, aggregation, and relational queries — and which patterns fix each failure mode
+- How query transformation (HyDE, decomposition, step-back, multi-query) changes what gets retrieved
+- Which chunking strategy to reach for first and when to switch
+- How Self-RAG, CRAG, and FLARE make retrieval adaptive rather than fixed
+- When GraphRAG's expensive ingest cost is worth paying
+- How to design a two-stage retrieval pipeline with reranking and reliable source attribution
+- How to evaluate RAG across both retrieval and generation axes with RAGAS
 :::
 
-## GraphRAG: Retrieval over Knowledge Graphs
+---
 
-Standard vector RAG retrieves the top-k most similar text chunks to a query and passes them to the model. This works well for localized, fact-lookup questions but breaks down the moment a question requires reasoning across documents or understanding relationships between entities. If you ask "Which of our clients had supply chain disruptions in Q3?" against a corpus of 500 reports, no single chunk contains the answer — the evidence is distributed across many documents.
+## When Standard RAG Fails
 
-GraphRAG, developed by Microsoft Research and open-sourced in 2024, addresses this by transforming documents into a knowledge graph before retrieval. During ingestion, an LLM extracts entities (people, organizations, events, locations) and the relationships between them from every chunk. These entities and edges form a graph stored alongside the text. The result is a structured representation that preserves cross-document connections that would be invisible to embedding similarity.
+Standard RAG has a simple contract: embed the query, retrieve the top-k closest chunks, stuff them into a prompt, generate. That contract works well for a narrow slice of real queries — localized, factual, single-document lookups. The moment the query escapes that slice, the system silently degrades.
 
-Retrieval in GraphRAG operates in two modes. **Local search** starts from a query entity, traverses its neighborhood in the graph — connected entities, relationships, and associated text — and constructs a context from that subgraph. This excels at entity-centric questions ("What do we know about Company X?"). **Global search** works differently: before any query, GraphRAG runs community detection using the Leiden algorithm, which partitions the graph into hierarchical communities of densely connected entities. Each community is summarized by an LLM into a multi-level hierarchy of summaries. When a global question arrives ("What are the main themes across all reports?"), the model answers from community summaries, not raw chunks. This is critical — raw chunks lack the abstraction needed to answer thematic questions.
+Understanding the failure modes precisely is the first step toward fixing them.
 
-The cost model for GraphRAG is fundamentally different from standard RAG. Graph construction — entity extraction, relationship identification, community detection, summary generation — is an expensive ingest-time operation that can cost 10-100x more than standard chunking. However, it is a one-time cost paid per corpus update, not per query. At query time, global search queries community summaries, which are already pre-generated. The tradeoff is clear: higher ingest cost in exchange for qualitatively better answers on cross-document and relational queries. GraphRAG is not a replacement for standard RAG — it is the right choice when your query distribution contains thematic or multi-entity questions that span the corpus.
+**Single-hop vs. multi-hop.** A single-hop question has its answer in one place: "What is the capital of France?" A multi-hop question chains evidence: "Who is the CEO of the company that acquired Startup X in 2023, and what is their educational background?" No single chunk contains the full answer. Standard RAG retrieves chunks about Startup X's acquisition but misses the CEO's background — it is in a different document, and there is no way to issue a second query conditioned on the first result.
 
-## Agentic RAG: Retrieval as a Decision
+**Relevant-looking but wrong chunks.** Embedding similarity captures semantic proximity, not factual accuracy. A chunk that discusses "revenue projections for Q3" is semantically similar to "actual revenue for Q3" — the retriever will surface it confidently. The LLM receives it as evidence and generates an answer that is coherent but wrong. This is one of the hardest failure modes to catch because the system does not know it failed.
 
-Standard RAG is a fixed pipeline: retrieve-then-generate, once, unconditionally. Agentic RAG replaces the fixed pipeline with a reasoning loop. The LLM decides *whether* to retrieve, *what* to retrieve, and *when* to stop. This is implemented as a ReAct loop where retrieval is one of several available tools. The agent can call the retrieval tool multiple times in sequence, using the output of one retrieval to formulate the next query — a pattern called **multi-step retrieval**.
+**Aggregation queries.** "Which of our clients had supply chain issues last quarter?" requires scanning potentially hundreds of documents, identifying relevant mentions, and aggregating. No top-k retrieval strategy surfaces a distributed answer. The information exists only as an aggregate, never in a single chunk.
 
-**Self-RAG** takes this a step further by embedding retrieval decisions into the generation process itself. The model generates special reflection tokens during inference: `[Retrieve]` signals a need to retrieve before continuing; `[IsREL]` evaluates whether a retrieved document is relevant to the query; `[IsSUP]` assesses whether the model's generated claim is supported by the retrieved evidence; `[IsUSE]` judges whether the overall response is useful. These tokens are trained, not prompted — Self-RAG is a fine-tuned model variant that has learned to introspect on its retrieval needs and output quality. The practical effect is a model that skips retrieval on questions it can answer from parametric knowledge and critiques the relevance of what it retrieves before using it.
+**Knowledge graph relationships invisible to dense retrieval.** Dense retrieval finds chunks that are lexically or semantically similar to the query. It cannot traverse an implicit relationship: "What companies are in the same portfolio as Company A?" requires knowing a relationship structure (portfolio membership), which is never encoded in any single chunk.
 
-**CRAG (Corrective RAG)** adds a quality gate to the retrieval step. After retrieval, a lightweight evaluator model (fine-tuned for this purpose) scores the relevance of retrieved documents. If the score is high, CRAG proceeds normally. If the score is low (ambiguous retrieval), CRAG triggers a corrective action — typically a web search to supplement the low-quality local retrieval. This makes CRAG robust to sparse knowledge bases where the local corpus does not cover a question. The implementation architecture involves three components: the retriever, the evaluator, and the knowledge refiner that integrates web results when needed.
+::: {.callout-warning}
+**The silent failure problem.** Standard RAG does not know when it fails. The LLM generates a confident-sounding answer regardless of whether the retrieved chunks support it. Every advanced RAG pattern in this chapter exists to address this in some way — by making retrieval adaptive, adding quality gates, or building richer index structures that capture what flat embedding search cannot.
+:::
 
-## Multi-Hop and Reasoning-Intensive RAG
+| Failure Mode | Root Cause | Pattern to Apply |
+|---|---|---|
+| Multi-hop reasoning needed | Single retrieval pass | Iterative / agentic retrieval, IRCoT |
+| Relevant-looking wrong chunks | Embedding similarity ≠ factual accuracy | Reranking, Self-RAG critique tokens |
+| Aggregation across many docs | No single chunk contains answer | GraphRAG global search, RAPTOR |
+| Entity relationship queries | Graph structure not in embeddings | GraphRAG local search, knowledge graph |
+| Query vocabulary mismatch | User query and doc terms differ | HyDE, step-back prompting, multi-query |
+| Decontextualized chunks | Chunk meaning unclear without surroundings | Parent-child, contextual headers |
+| Long-range context lost | Chunking breaks cross-sentence dependencies | Late chunking, sentence window |
 
-Multi-hop questions require chaining evidence across multiple retrieval steps. "Who are the main investors in the company that acquired Startup X?" requires first retrieving who acquired Startup X, then retrieving the investors of that acquirer. Standard single-shot retrieval returns chunks related to Startup X, which may not contain investor information.
+---
 
-**Query decomposition** is the foundational technique: decompose the complex question into a directed acyclic graph of sub-questions. Each sub-question is answered independently through retrieval, and the sub-answers are assembled into the final answer. Decomposition can be sequential (later questions depend on earlier answers) or parallel (independent sub-questions answered simultaneously). The critical challenge is generating high-quality decompositions — poorly decomposed questions lead to irrelevant sub-retrievals.
+## Query Transformation
 
-**IRCoT (Interleaved Retrieval with Chain-of-Thought)** addresses decomposition implicitly by alternating between reasoning steps and retrieval steps. The model generates one chain-of-thought step, identifies what information is needed to continue reasoning, retrieves it, incorporates the retrieved content into context, and continues the reasoning chain. This produces a tightly coupled reasoning-retrieval loop that handles multi-hop questions without requiring explicit upfront decomposition.
+The query you receive from a user is rarely the optimal query to give to your retriever. Query transformation is a family of techniques that rewrite, expand, or decompose the user's query before retrieval — increasing the chance the retriever surfaces the right evidence.
 
-**RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval)** takes a corpus-level approach. Starting from raw document chunks (leaf nodes), RAPTOR clusters semantically similar chunks, summarizes each cluster with an LLM, and recursively clusters and summarizes the summaries until a single root summary exists. The result is a tree of abstractions at multiple granularities. At query time, retrieval can operate at any level of the tree: fine-grained for specific fact lookups, coarse-grained for thematic questions. This is architecturally similar to GraphRAG's global search but does not require entity extraction — it works on any text and is cheaper to build, at the cost of losing explicit relationship information.
+### HyDE: Hypothetical Document Embeddings
 
-## Indexing Strategies That Change Retrieval Quality
+**Plain English.** Instead of embedding the question, generate a fake answer, then embed the fake answer. Use that embedding to retrieve real documents.
 
-The chunking strategy used at ingest time determines the ceiling of retrieval quality. Most production RAG failures are chunking failures, not model failures.
+**Technical explanation.** Most queries are short, conversational, and written in a different register from the documents they query. A user asks "how does attention work in transformers?" The documents that answer this are textbook passages using technical vocabulary. The embedding of the question and the embedding of the relevant passage may not be close. HyDE bridges this gap by using an LLM to generate a hypothetical paragraph that looks like the kind of document that would answer the question — dense, technical, matching the style of the corpus. The embedding of that hypothetical document is much closer to real relevant documents than the query embedding was.
 
-**Parent-child chunking** separates indexing from context delivery. Small child chunks (100-150 tokens) are embedded and indexed — their granularity improves retrieval precision, as the embedding more closely captures the semantic meaning of a specific claim. When a child chunk is retrieved, the system returns its parent chunk (500-1000 tokens) to the LLM, providing the surrounding context needed for coherent generation. This decouples the chunk size used for retrieval from the chunk size used for generation, solving the classic tension between precision (small chunks) and coherence (large chunks).
+**Analogy.** You are looking for a specific book in a library. Instead of wandering the stacks with your question in mind, you first imagine what the table of contents of the answer book would look like, then search for books that match that imagined structure.
 
-**Sentence window retrieval** applies the same principle at the sentence level. Individual sentences are embedded and retrieved. When a matching sentence is found, a window of sentences surrounding it (e.g., the 2 sentences before and after) is passed to the model. This is especially effective for dense technical documents where each sentence encodes a distinct claim.
+**When to use.** Sparse corpora where the vocabulary gap between queries and documents is large. Zero-shot retrieval for knowledge-dense domains (medical, legal, scientific). Open-domain question answering.
 
-**Late chunking** is a newer approach that exploits long-context embedding models. Instead of chunking the document first and then embedding each chunk independently, late chunking embeds the entire document (or a long passage) as a sequence of token-level embeddings using a model like JinaAI's long-context embedder. The chunk-level embeddings are then derived from the token embeddings, preserving cross-chunk context in the embeddings. This is theoretically superior to standard chunking because each chunk's embedding reflects its surrounding context.
+**When not to use.** Narrow, specialized domains where the LLM has limited domain knowledge — the hypothetical document may confidently hallucinate technical details that steer retrieval in the wrong direction. High-latency-sensitive systems, because HyDE adds one full LLM generation step before retrieval. When the corpus is already well-matched to user query style.
 
-**Contextual chunk headers** are a simpler but highly effective technique. Before embedding a chunk, prepend a structured header containing the document title, section heading, and optionally a one-sentence document summary. This solves the decontextualization problem: a chunk reading "The dosage is 10mg twice daily" is meaningless without knowing it comes from a specific drug's prescribing guidelines. Adding that context to the chunk before embedding anchors the semantic meaning. Anthropic's contextual retrieval work (2024) demonstrated meaningful improvements in retrieval recall by prepending model-generated context summaries to each chunk.
+::: {.callout-warning}
+**Production gotcha.** HyDE can actively hurt retrieval quality in narrow domains where the LLM's generated hypothetical contains plausible-sounding but domain-incorrect vocabulary. The retriever faithfully retrieves documents near the hallucinated vocabulary, not the real answer. Always A/B test HyDE against baseline retrieval on your specific corpus before shipping it.
+:::
 
-## Evaluation of RAG Systems
+```python
+from openai import OpenAI
+import numpy as np
 
-RAG systems have two independent quality axes that must be evaluated separately: retrieval quality and generation quality. Conflating them is the most common evaluation mistake. A system can have excellent retrieval and poor generation (the LLM ignores or misuses retrieved evidence), or poor retrieval and accidentally correct generation (the model answers from parametric knowledge despite retrieving irrelevant chunks). Only by evaluating each axis separately can you diagnose and fix the right component.
+client = OpenAI()
 
-**RAGAS** (Retrieval Augmented Generation Assessment) is the standard evaluation framework. It computes four metrics given a question, ground-truth answer, LLM answer, and retrieved contexts. **Faithfulness** measures whether every claim in the LLM's answer is supported by the retrieved context — computed by extracting claims from the answer and checking each against the context using an LLM judge. **Answer Relevance** measures whether the answer actually addresses the question, ignoring factual correctness. **Context Precision** measures whether the retrieved chunks are relevant to the question (signal-to-noise ratio of retrieval). **Context Recall** measures whether the retrieved chunks contain all the information needed to answer the question.
+def hyde_retrieve(query: str, index, k: int = 5) -> list[dict]:
+    """
+    Hypothetical Document Embeddings retrieval.
+    1. Generate a hypothetical answer document.
+    2. Embed the hypothetical.
+    3. Retrieve using that embedding.
+    """
+    # Step 1: Generate a hypothetical answer document
+    hypothetical_prompt = f"""Write a short paragraph (3-5 sentences) that directly
+answers the following question. Write as if you are a technical document, not a
+conversational assistant. Do not hedge — write as if the answer is definitely known.
 
-Production monitoring requires distinguishing online and offline metrics. Offline: RAGAS scores on a curated test set, run on every pipeline change. Online: retrieval latency (p50/p95), reranker latency, end-to-end latency, cost per query, user satisfaction signals (thumbs up/down, follow-up question rate as a proxy for answer completeness). A degraded context precision score in offline eval tells you your retriever is returning noise — you should inspect your chunking, embedding model, or retrieval threshold. A degraded faithfulness score tells you the LLM is hallucinating beyond retrieved context — check your prompt's instructions to stay grounded and consider reducing temperature.
+Question: {query}
+
+Hypothetical answer paragraph:"""
+
+    hyp_response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": hypothetical_prompt}],
+        temperature=0.0,
+    )
+    hypothetical_doc = hyp_response.choices[0].message.content
+
+    # Step 2: Embed the hypothetical document
+    embed_response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=hypothetical_doc,
+    )
+    hyp_embedding = np.array(embed_response.data[0].embedding)
+
+    # Step 3: Retrieve using the hypothetical embedding
+    results = index.query(vector=hyp_embedding.tolist(), top_k=k, include_metadata=True)
+    return results["matches"]
+
+
+def hyde_vs_baseline(query: str, index, k: int = 5):
+    """Compare HyDE retrieval to standard retrieval side by side."""
+    # Standard embedding
+    std_embed = client.embeddings.create(
+        model="text-embedding-3-small", input=query
+    ).data[0].embedding
+    baseline = index.query(vector=std_embed, top_k=k, include_metadata=True)
+
+    # HyDE retrieval
+    hyde_results = hyde_retrieve(query, index, k)
+
+    return {
+        "baseline_ids": [r["id"] for r in baseline["matches"]],
+        "hyde_ids": [r["id"] for r in hyde_results],
+    }
+```
+
+### Query Decomposition
+
+**Plain English.** Break a hard multi-part question into smaller single-hop questions, answer each, then merge the answers.
+
+**Technical explanation.** Complex questions contain multiple information needs. "Compare the investment strategies of Warren Buffett and George Soros" requires retrieving about Buffett's strategy, Soros's strategy, and potentially a direct comparison. Query decomposition uses an LLM to generate a list of sub-queries, executes each sub-query against the retriever independently (in parallel where possible), collects the sub-answers, and runs a final synthesis pass.
+
+Decomposition can be sequential (later sub-queries depend on earlier answers — "first find who acquired Startup X, then retrieve information about that acquirer") or parallel (independent sub-queries that can all be issued simultaneously).
+
+**When to use.** Questions with "and," "compare," "contrast," or questions about multiple entities. Any question your evaluation shows requires evidence from 3+ documents.
+
+**When not to use.** Simple factual lookups — decomposition adds 1-2 extra LLM calls with no benefit. When latency is the primary constraint, decomposition increases it substantially. When questions are inherently holistic and resist decomposition.
+
+::: {.callout-warning}
+**Production gotcha.** Multi-hop decomposition creates latency explosion. If each hop requires an LLM call + retrieval, a 5-hop question might take 5-10x the latency of a single-hop question. Always profile worst-case hop counts in your query distribution before committing to this pattern.
+:::
+
+```python
+from openai import OpenAI
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable
+
+client = OpenAI()
+
+def decompose_query(query: str) -> list[str]:
+    """Use LLM to decompose a complex query into sub-queries."""
+    system_prompt = """You are a query decomposition assistant.
+Break the user's question into 2-4 simpler sub-questions that together
+fully answer the original question. Return ONLY a JSON list of strings.
+If the question is already simple, return a list with just the original question."""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Decompose: {query}"},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+    )
+    import json
+    result = json.loads(response.choices[0].message.content)
+    # Model returns {"sub_queries": [...]} or similar
+    if isinstance(result, list):
+        return result
+    return result.get("sub_queries", [query])
+
+
+def retrieve_and_answer(sub_query: str, retrieve_fn: Callable) -> dict:
+    """Retrieve chunks for a sub-query and generate a partial answer."""
+    chunks = retrieve_fn(sub_query)
+    context = "\n\n".join([c["text"] for c in chunks])
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Answer the question using only the provided context."},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {sub_query}"},
+        ],
+        temperature=0.0,
+    )
+    return {
+        "sub_query": sub_query,
+        "partial_answer": response.choices[0].message.content,
+        "source_chunks": chunks,
+    }
+
+
+def decomposition_rag(query: str, retrieve_fn: Callable) -> str:
+    """Full decomposition RAG pipeline with parallel sub-query execution."""
+    sub_queries = decompose_query(query)
+
+    # Execute sub-queries in parallel
+    with ThreadPoolExecutor(max_workers=len(sub_queries)) as executor:
+        partial_results = list(executor.map(
+            lambda q: retrieve_and_answer(q, retrieve_fn),
+            sub_queries
+        ))
+
+    # Synthesis pass
+    sub_answers_text = "\n\n".join([
+        f"Sub-question: {r['sub_query']}\nPartial answer: {r['partial_answer']}"
+        for r in partial_results
+    ])
+
+    synthesis_response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Synthesize the partial answers into a coherent final answer to the original question."},
+            {"role": "user", "content": f"Original question: {query}\n\n{sub_answers_text}"},
+        ],
+        temperature=0.0,
+    )
+    return synthesis_response.choices[0].message.content
+```
+
+### Step-Back Prompting
+
+**Plain English.** Before searching for the specific answer, search for the general concept it falls under. Let the general context inform the specific answer.
+
+**Technical explanation.** Many queries are too specific to retrieve the foundational context that makes the answer understandable. "What is the dosage of metformin for a 70kg patient with moderate renal impairment?" is so specific that retrieval might miss the general pharmacokinetics of metformin that contextualizes the answer. Step-back prompting generates a more abstract version of the query ("What factors affect metformin dosing?"), retrieves for that general query, and includes that general context alongside the specific retrieval result.
+
+**When to use.** Technical or scientific questions where foundational context is needed. Questions about specific instances of a general rule. Complex reasoning questions where the LLM needs domain grounding.
+
+### Multi-Query Retrieval
+
+**Plain English.** Rephrase the question N different ways, retrieve for each phrasing, take the union of results.
+
+**Technical explanation.** A single query embedding is a single point in vector space. The relevant documents might be distributed around multiple nearby points. Generating N semantically equivalent but lexically different phrasings and retrieving for each ensures broader coverage of the semantic neighborhood. The union of results is then deduplicated (by chunk ID) before passing to the LLM. Reciprocal Rank Fusion (RRF) can be used to re-score the union based on rank position across all N retrievals.
+
+```python
+def multi_query_retrieve(query: str, retrieve_fn: Callable, n_variants: int = 3, k: int = 5) -> list[dict]:
+    """
+    Generate N query variants, retrieve for each, return deduplicated union.
+    Uses Reciprocal Rank Fusion for scoring.
+    """
+    # Generate query variants
+    variant_prompt = f"""Generate {n_variants} different phrasings of the following question.
+Each phrasing should be semantically equivalent but use different words and structure.
+Return ONLY a JSON list of strings.
+
+Question: {query}"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": variant_prompt}],
+        response_format={"type": "json_object"},
+        temperature=0.7,
+    )
+    import json
+    variants_raw = json.loads(response.choices[0].message.content)
+    variants = variants_raw if isinstance(variants_raw, list) else list(variants_raw.values())[0]
+    all_queries = [query] + variants[:n_variants - 1]
+
+    # Retrieve for each variant
+    all_results: dict[str, list[int]] = {}  # chunk_id -> list of ranks
+    for q in all_queries:
+        results = retrieve_fn(q, k=k)
+        for rank, chunk in enumerate(results):
+            chunk_id = chunk["id"]
+            if chunk_id not in all_results:
+                all_results[chunk_id] = {"chunk": chunk, "ranks": []}
+            all_results[chunk_id]["ranks"].append(rank + 1)
+
+    # Reciprocal Rank Fusion score: sum of 1/(k + rank) for each appearance
+    rrf_k = 60  # standard RRF constant
+    scored = []
+    for chunk_id, data in all_results.items():
+        rrf_score = sum(1.0 / (rrf_k + r) for r in data["ranks"])
+        scored.append({"chunk": data["chunk"], "rrf_score": rrf_score})
+
+    scored.sort(key=lambda x: x["rrf_score"], reverse=True)
+    return [item["chunk"] for item in scored[:k]]
+```
+
+---
+
+## Advanced Chunking Strategies
+
+The ceiling of RAG quality is set at ingest time by chunking decisions. Most production failures trace back to chunking, not the embedding model, not the retriever, not the LLM. Get chunking right first.
+
+### Parent-Child Chunking
+
+**Plain English.** Index small precise pieces (children) but serve large context pieces (parents) to the LLM.
+
+**Technical explanation.** There is an inherent tension in chunk size: small chunks (100-150 tokens) produce precise, focused embeddings that match narrow queries well, but a chunk that reads "The maximum dose is 500mg" is useless without surrounding medical context. Large chunks (800-1200 tokens) preserve context but the embedding averages over many concepts, reducing precision. Parent-child chunking resolves this by maintaining two chunk sets. Child chunks are indexed in the vector store. When a child chunk is retrieved, the lookup table returns its parent (the larger surrounding passage). The LLM sees the parent — full context — but retrieval was optimized by the child.
+
+```python
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from typing import Iterator
+
+def build_parent_child_index(documents: list[str], parent_size: int = 800, child_size: int = 150, overlap: int = 20):
+    """
+    Build parent-child chunk structure.
+    Returns: list of (child_chunk, parent_chunk, child_id, parent_id) tuples.
+    """
+    parent_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=parent_size,
+        chunk_overlap=overlap,
+        separators=["\n\n", "\n", ". ", " "],
+    )
+    child_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=child_size,
+        chunk_overlap=overlap,
+        separators=["\n\n", "\n", ". ", " "],
+    )
+
+    index_entries = []  # (child_text, parent_text, child_id, parent_id)
+    parent_store = {}   # parent_id -> parent_text (for serving to LLM)
+
+    for doc_idx, doc in enumerate(documents):
+        parents = parent_splitter.split_text(doc)
+        for par_idx, parent_text in enumerate(parents):
+            parent_id = f"doc{doc_idx}_par{par_idx}"
+            parent_store[parent_id] = parent_text
+
+            children = child_splitter.split_text(parent_text)
+            for child_idx, child_text in enumerate(children):
+                child_id = f"{parent_id}_child{child_idx}"
+                index_entries.append({
+                    "child_id": child_id,
+                    "child_text": child_text,
+                    "parent_id": parent_id,
+                })
+
+    return index_entries, parent_store
+
+
+def retrieve_with_parent_expansion(query_embedding, vector_index, parent_store: dict, k: int = 5) -> list[str]:
+    """Retrieve child chunks, return deduplicated parent chunks."""
+    child_results = vector_index.query(vector=query_embedding, top_k=k * 2, include_metadata=True)
+
+    seen_parents = set()
+    parent_contexts = []
+    for match in child_results["matches"]:
+        parent_id = match["metadata"]["parent_id"]
+        if parent_id not in seen_parents:
+            seen_parents.add(parent_id)
+            parent_contexts.append(parent_store[parent_id])
+        if len(parent_contexts) >= k:
+            break
+
+    return parent_contexts
+```
+
+### Late Chunking
+
+**Plain English.** Embed the whole document first (preserving context across the full text), then derive chunk embeddings from the token-level representations, rather than embedding each chunk independently.
+
+**Technical explanation.** When you chunk a document first and embed each chunk separately, the embedding model processes each chunk in isolation. A sentence that refers to "it" or "the system" cannot resolve those references — the antecedents are in a different chunk. Late chunking (proposed for long-context embedders like JinaAI's `jina-embeddings-v2`) runs the entire document (or long passage) through the embedding model as a single sequence, producing a contextualized embedding for every token. Then chunk boundaries are applied post-hoc by averaging the token embeddings within each chunk. Each chunk embedding now reflects its original context in the document.
+
+**When to use.** Documents with dense cross-sentence dependencies. Long narratives, legal documents, scientific papers where entities and pronouns span many sentences.
+
+**When not to use.** Very long documents exceeding the model's context window. When ingest throughput is the constraint — late chunking is significantly slower than standard chunking.
+
+### Semantic Chunking
+
+Rather than splitting at fixed token counts, semantic chunking computes the embedding similarity between consecutive sentences. When the similarity drops below a threshold (a topic boundary), a chunk break is inserted. This produces variable-length chunks that respect semantic coherence rather than arbitrary token boundaries.
+
+```python
+import numpy as np
+from openai import OpenAI
+
+client = OpenAI()
+
+def semantic_chunk(text: str, threshold: float = 0.85, min_chunk_size: int = 100) -> list[str]:
+    """
+    Split text at semantic boundaries (similarity drops).
+    threshold: cosine similarity below which a boundary is inserted.
+    """
+    # Split into sentences (simple heuristic; use spaCy for production)
+    sentences = [s.strip() for s in text.replace("? ", "?|").replace("! ", "!|").replace(". ", ".|").split("|") if s.strip()]
+
+    if len(sentences) <= 1:
+        return [text]
+
+    # Embed all sentences in one batch call
+    response = client.embeddings.create(model="text-embedding-3-small", input=sentences)
+    embeddings = [np.array(d.embedding) for d in response.data]
+
+    # Compute consecutive similarities
+    similarities = []
+    for i in range(len(embeddings) - 1):
+        cos_sim = np.dot(embeddings[i], embeddings[i+1]) / (np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[i+1]))
+        similarities.append(cos_sim)
+
+    # Build chunks by splitting at low-similarity boundaries
+    chunks = []
+    current_chunk = [sentences[0]]
+    current_length = len(sentences[0])
+
+    for i, sim in enumerate(similarities):
+        if sim < threshold and current_length >= min_chunk_size:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [sentences[i + 1]]
+            current_length = len(sentences[i + 1])
+        else:
+            current_chunk.append(sentences[i + 1])
+            current_length += len(sentences[i + 1])
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
+    return chunks
+```
+
+### Sentence Window Chunking
+
+Index individual sentences for maximum retrieval precision. When a sentence is matched, return a window of N sentences before and after it as the context delivered to the LLM.
+
+**Analogy.** A librarian finds the exact sentence you asked about, then photocopies the whole paragraph it appears in so you have context.
+
+---
+
+## Multi-Hop Retrieval
+
+### Iterative Retrieval
+
+In iterative retrieval, the output of one retrieval step informs the next query. Rather than issuing all retrieval queries upfront, the system generates a partial answer or identifies a knowledge gap, uses that insight to formulate a follow-up query, and retrieves again. This continues until the answer is complete or a maximum hop count is reached.
+
+The key implementation decision is the stopping condition. Options: fixed hop count, model generates an `[ANSWER_COMPLETE]` token, or a confidence score exceeds a threshold.
+
+### Agentic RAG
+
+Agentic RAG promotes retrieval from a pipeline step to a tool in an agent's toolbox. The agent (an LLM with tool-use capability) receives the user query and decides: should I retrieve? What should I search for? Is what I retrieved sufficient? Should I search again with a different query? Should I search a different index?
+
+This is the most flexible architecture for multi-hop questions because the agent can plan arbitrarily many retrieval steps, combine results from multiple retrieval sources, and decide when it has enough information to answer confidently.
+
+::: {.callout-warning}
+**When agentic RAG is overkill.** If 90% of your queries are single-hop factual lookups, adding an agentic layer introduces latency, cost, and failure modes (agents hallucinate tool calls, loop indefinitely, or over-retrieve) with no benefit. Profile your query distribution before committing to agentic RAG. Start with standard RAG + reranking, and add agentic capability only for the query types that demonstrably need it.
+:::
+
+The decision framework:
+
+- **Single-hop factual:** Standard RAG
+- **Multi-hop with known hop structure:** Query decomposition (cheaper than agent)
+- **Multi-hop with unknown hop structure:** Agentic RAG
+- **Aggregation across corpus:** GraphRAG global search
+- **Entity relationships:** GraphRAG local search
+
+---
+
+## Self-RAG and Corrective RAG
+
+### Self-RAG
+
+Self-RAG is not a prompting technique — it is a fine-tuned model variant. The training process teaches the model to generate four special reflection tokens interspersed with normal generation:
+
+| Token | Meaning | When Generated |
+|---|---|---|
+| `[Retrieve]` | Pause, issue a retrieval call | After seeing the question |
+| `[IsREL]` | Retrieved doc is relevant / irrelevant | After each retrieved document |
+| `[IsSUP]` | Generated claim is supported / contradicted | After each claim in the answer |
+| `[IsUSE]` | Overall response usefulness (1-5) | End of response |
+
+The critical advantage over external retrieval routing is that Self-RAG's tokens are conditioned on the full generation context — the model knows what it has already generated and what it still needs. An external router sees only the original query; Self-RAG's decision is made mid-generation with full awareness of what has been said so far.
+
+**The downside:** Self-RAG requires a specialized fine-tuned model. You cannot apply it to any off-the-shelf LLM. In practice, its behavior can be approximated (imperfectly) with structured prompting and a ReAct loop.
+
+### Corrective RAG (CRAG)
+
+CRAG adds a quality gate between retrieval and generation. After retrieval, a lightweight evaluator model scores each retrieved document for relevance to the query. The evaluator outputs one of three judgments:
+
+- **Correct (high confidence):** Proceed normally with retrieved documents
+- **Incorrect (low confidence):** Discard retrieved documents, fall back to web search
+- **Ambiguous (medium confidence):** Use retrieved documents + supplement with web search
+
+The knowledge refiner step processes web search results to extract relevant passages, then combines them with (or replaces) local retrieval.
+
+**When CRAG is valuable.** Systems with sparse knowledge bases where some queries are simply not covered by the local corpus. Customer support bots that need to answer both product questions (local corpus) and general questions (web). Systems where retrieval failure is costly and silent failure is unacceptable.
+
+### FLARE: Forward-Looking Active Retrieval
+
+FLARE takes a different approach: rather than deciding whether to retrieve before generation, it retrieves during generation when uncertainty is detected. The model generates text one sentence at a time. If any token in the generated sentence falls below a probability threshold (the model is uncertain), FLARE pauses, uses the generated sentence so far as a retrieval query, retrieves supporting evidence, and regenerates the uncertain sentence with the retrieved context.
+
+**The key insight:** the model's own token probabilities are a signal of where it needs retrieval. FLARE exploits this signal in a way that static pre-retrieval cannot.
+
+---
+
+## Knowledge Graphs + RAG
+
+### GraphRAG (Microsoft)
+
+GraphRAG transforms a document corpus into a knowledge graph during ingest. During indexing, an LLM extracts entities (people, organizations, events, concepts) and the typed relationships between them from every chunk. These are merged across documents — the same entity appearing in 500 documents is a single node with all descriptions aggregated. The graph is then partitioned into hierarchically nested communities using the Leiden algorithm, and each community is summarized by an LLM.
+
+**Two retrieval modes:**
+
+- **Local search:** Start from a query entity, traverse its neighborhood (connected entities, relationships, associated chunks), assemble context from the subgraph. Best for entity-centric questions ("Everything about Company X").
+- **Global search:** Issue the query against pre-generated community summaries. Each summary is scored for relevance; top summaries become the context. Best for thematic/aggregation questions ("Main trends across all reports").
+
+**Cost model.** Graph construction — extraction, entity merging, community detection, summary generation — costs 10-100x standard RAG ingest. This is a one-time cost per corpus update, not per query. Query-time cost is comparable to standard RAG. The tradeoff is clear and must be justified by query distribution.
+
+**When graph structure earns its cost:**
+- Query distribution includes entity relationship questions (>20% of queries)
+- Aggregation queries across many documents (>10% of queries)
+- Named entity queries spanning multiple source documents
+- Domains with dense, well-defined entity relationships: legal, financial, biomedical
+
+**When it is not worth building:**
+- Mostly simple factual lookups
+- Unstructured narrative text with few explicit entity relationships
+- Small corpora where exhaustive chunk review is feasible
+- High-frequency corpus updates (graph rebuilds are expensive)
+
+::: {.callout-warning}
+**GraphRAG is not a drop-in upgrade.** It requires a significant infrastructure investment: graph database or graph storage, entity extraction pipelines, community detection at scale, and substantially higher ingest costs. Approach it as a separate system built for specific query types, not a better version of standard RAG.
+:::
+
+---
+
+## Reranking
+
+### Two-Stage Retrieval Architecture
+
+Standard dense retrieval uses a bi-encoder: the query and each document are embedded independently, and similarity is computed as a dot product. This is fast — you can search millions of vectors in milliseconds — but the independence assumption limits quality. The query and document embeddings never interact; similarity is purely geometric.
+
+A cross-encoder takes both the query and a document as input simultaneously, allowing full attention between query and document tokens. This produces dramatically better relevance scores but is too slow to run against the full corpus — its cost scales linearly with corpus size.
+
+Two-stage retrieval combines both: use the fast bi-encoder to retrieve a candidate set (top 50-100), then run the slow cross-encoder to rerank the candidates. Only the top 5-10 reranked results go to the LLM.
+
+**Available rerankers:**
+- **Cohere Rerank:** API-based, state-of-the-art quality, minimal integration friction
+- **BGE-Reranker:** Open-source, self-hostable, strong performance
+- **MS MARCO rerankers:** Fine-tuned on passage retrieval, strong general-domain performance
+- **ColBERT:** Late-interaction model that approximates cross-encoder quality with bi-encoder speed
+
+### Reciprocal Rank Fusion (RRF)
+
+When combining results from multiple retrieval strategies (dense, sparse BM25, multi-query variants), RRF is the standard merging approach. For each document, RRF computes:
+
+$$\text{RRF}(d) = \sum_{r \in R} \frac{1}{k + \text{rank}_r(d)}$$
+
+where R is the set of rankings and k is typically 60. Documents that appear in multiple ranked lists and at high positions accumulate higher scores. RRF is parameter-light and surprisingly robust compared to learned fusion approaches.
+
+### When Reranking Is Worth the Latency
+
+Reranking adds 50-200ms per query for API-based rerankers, or 20-100ms for locally deployed models. This is a real cost. It pays off when:
+
+- Initial retrieval recall is decent but precision is poor (you retrieve relevant documents but also a lot of noise — reranking cleans up the noise)
+- The LLM context window is limited (you must pick the best 3 from 20 candidates, not pass all 20)
+- Answer quality is high-stakes (medical, legal, financial — noise in context is a safety issue)
+- You have a high BM25/dense retrieval mismatch (different query types favor different retrieval strategies — reranking unifies them)
+
+Skip reranking when latency is the primary SLA constraint and initial retrieval quality is already high.
+
+---
+
+## Citation and Source Attribution
+
+Source attribution is not a nice-to-have for production RAG — it is a trust mechanism. Users need to verify claims; legal and compliance requirements may mandate it; and faithfulness without attribution is untestable.
+
+### Inline Citation Generation
+
+The standard approach: pass numbered chunks to the LLM with explicit instructions to cite by number. Instruct the model to output `[1]`, `[2]` inline whenever making a claim derived from a specific chunk.
+
+```python
+def generate_with_citations(query: str, chunks: list[dict]) -> dict:
+    """
+    Generate an answer with inline citations referencing chunk indices.
+    Returns the answer and a citation map.
+    """
+    # Build numbered context
+    numbered_context = "\n\n".join([
+        f"[{i+1}] {chunk['text']}" for i, chunk in enumerate(chunks)
+    ])
+
+    system_prompt = """You are a precise assistant. Answer the question using ONLY the provided
+numbered sources. After every factual claim, cite the source number(s) in brackets like [1] or [1,3].
+If you cannot find the answer in the sources, say "Not found in provided sources."
+Do not make up information."""
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Sources:\n{numbered_context}\n\nQuestion: {query}"},
+        ],
+        temperature=0.0,
+    )
+
+    answer = response.choices[0].message.content
+
+    # Build citation map: extract which source numbers were cited
+    import re
+    cited_indices = set(int(n) for n in re.findall(r'\[(\d+)\]', answer))
+    citation_map = {
+        idx: {"text": chunks[idx-1]["text"], "metadata": chunks[idx-1].get("metadata", {})}
+        for idx in cited_indices
+        if 1 <= idx <= len(chunks)
+    }
+
+    return {"answer": answer, "citations": citation_map}
+```
+
+### Faithfulness Checking
+
+Faithfulness measures whether every claim in the LLM's answer is supported by the retrieved context. The RAGAS implementation decomposes the answer into atomic claims, then checks each claim against the context with an LLM judge.
+
+```python
+def check_faithfulness(answer: str, context_chunks: list[str]) -> dict:
+    """
+    Simple faithfulness checker.
+    Decomposes answer into claims, verifies each against context.
+    Returns: {"faithfulness_score": float, "unsupported_claims": list}
+    """
+    combined_context = "\n\n".join(context_chunks)
+
+    # Step 1: Extract atomic claims from the answer
+    extract_prompt = f"""Extract all factual claims from the following answer as a JSON list.
+Each claim should be a single, verifiable statement.
+
+Answer: {answer}
+
+Return format: {{"claims": ["claim1", "claim2", ...]}}"""
+
+    claims_response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": extract_prompt}],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+    )
+    import json
+    claims = json.loads(claims_response.choices[0].message.content).get("claims", [])
+
+    # Step 2: Verify each claim against context
+    unsupported = []
+    for claim in claims:
+        verify_prompt = f"""Context:
+{combined_context}
+
+Claim: {claim}
+
+Is this claim fully supported by the context? Answer only "YES" or "NO"."""
+
+        verify_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": verify_prompt}],
+            temperature=0.0,
+        )
+        if "NO" in verify_response.choices[0].message.content.upper():
+            unsupported.append(claim)
+
+    score = 1.0 - (len(unsupported) / len(claims)) if claims else 1.0
+    return {"faithfulness_score": score, "unsupported_claims": unsupported, "total_claims": len(claims)}
+```
+
+---
+
+## Advanced RAG Technique Comparison
+
+| Technique | When to Use | Complexity | Latency Overhead | Best For |
+|---|---|---|---|---|
+| HyDE | Query-doc vocabulary gap | Low | +1 LLM call | Zero-shot open-domain QA |
+| Query decomposition | Multi-part, multi-entity questions | Medium | +2-3 LLM calls | Analytical and comparison questions |
+| Step-back prompting | Need foundational context for specific question | Low | +1 LLM call | Scientific / technical domains |
+| Multi-query retrieval | Low recall on single-phrasing queries | Medium | +1 LLM call, k×retrieval | Broad topic coverage |
+| Parent-child chunking | Need both precision and context | Medium (ingest) | None (query time) | Dense technical documents |
+| Late chunking | Cross-sentence dependencies | High (ingest) | None (query time) | Long narratives, legal, scientific |
+| Semantic chunking | Fixed-size chunks break coherence | Medium (ingest) | None (query time) | Multi-topic documents |
+| Sentence window | Very dense factual content | Low (ingest) | None (query time) | Technical manuals, specs |
+| Iterative retrieval | Multi-hop evidence needed | Medium | 2-5× standard | Knowledge-dense questions |
+| Agentic RAG | Unknown hop structure, diverse tools | High | Variable (3-10×) | Complex research questions |
+| Self-RAG | Need retrieval quality self-critique | High (requires fine-tune) | Variable | High-stakes generation |
+| CRAG | Sparse KB, need fallback | Medium | +evaluator call | Mixed domain coverage |
+| FLARE | Uncertainty-driven retrieval | High | Variable | Long-form generation |
+| GraphRAG local | Entity-centric questions | High (ingest) | Low | Named entity queries |
+| GraphRAG global | Thematic / aggregation questions | High (ingest) | Low-medium | Cross-document synthesis |
+| Reranking | Precision poor after initial retrieval | Low-medium | +50-200ms | High-stakes context selection |
+| RRF | Combining multiple retrieval strategies | Low | Negligible | Hybrid retrieval systems |
+
+---
+
+## Failure Mode → Solution Mapping
+
+| Observed Failure | Root Cause Diagnosis | Solution |
+|---|---|---|
+| Confident wrong answer | Semantically similar but factually wrong chunk retrieved | Reranking + faithfulness checking |
+| Can't answer multi-hop question | Single retrieval pass, no chaining | Iterative retrieval, query decomposition, IRCoT |
+| "Compare X across Q1, Q2, Q3" fails | Aggregation across documents, not single-chunk | GraphRAG global search, RAPTOR, query decomposition |
+| Entity relationship question fails | Relationship not in any single chunk | GraphRAG local search, knowledge graph |
+| Domain-specific query retrieves generic chunks | Query vocabulary doesn't match document style | HyDE (if broad domain), contextual chunk headers |
+| Answer cites wrong source | Citation hallucination | Inline citation prompt engineering, faithfulness checker |
+| System works on simple queries, fails on complex | Standard RAG ceiling reached | Decomposition routing: classify query complexity first |
+| Retrieval latency too high | Reranking or HyDE on every query | Route only complex queries through expensive paths |
+| High context token cost | Passing too many chunks to LLM | Reranking to select top 3-5, parent-child to control size |
+| Stale information in answers | Local corpus not updated | CRAG with web search fallback |
+| Answer ignores retrieved evidence | LLM answers from parametric memory | Stronger grounding instructions, Self-RAG, faithfulness gate |
+
+---
+
+## Cheat Sheet
+
+- **Standard RAG fails on three query types:** multi-hop (evidence spans documents), aggregation (answer is a synthesis of many chunks), and relational (answer requires graph traversal). Know which failure mode you are facing before choosing a fix.
+- **Query transformation before retrieval:** HyDE for vocabulary gaps, decomposition for multi-part questions, step-back for concept-first retrieval, multi-query for recall improvement.
+- **HyDE adds one LLM generation step before retrieval.** Test on your corpus first — it can hurt on narrow domains where the generated hypothetical introduces hallucinated vocabulary.
+- **Query decomposition latency multiplies with hop count.** Three sub-queries in parallel still takes 3× the LLM inference time. Profile before committing.
+- **Parent-child chunking is the highest-ROI chunking change.** Small children for retrieval precision, large parents for generation quality. Decouple chunk sizes for the two phases.
+- **Semantic chunking produces variable-length chunks** that respect topic boundaries — no sacred 512-token rule required.
+- **Late chunking preserves cross-sentence context** by deriving chunk embeddings from full-document token representations. Best for long narratives and dense cross-reference text.
+- **Two-stage retrieval:** fast bi-encoder for candidate recall, slow cross-encoder for precision. The combined system beats either alone.
+- **Reranking is worth it when:** context window is tight, answer quality is high-stakes, or initial retrieval has high noise.
+- **RRF is the robust default for combining multiple ranked lists.** No training required, robust to rank calibration differences between sources.
+- **Self-RAG requires a fine-tuned model** — it is not a prompting technique. Its reflection tokens are trained, not prompted. You can approximate it with a ReAct loop but it will not be as good.
+- **CRAG's value is its fallback path.** If your corpus is sparse and user queries routinely escape it, CRAG's web search fallback prevents confident wrong answers.
+- **FLARE retrieves mid-generation** when token probabilities signal uncertainty — useful for long-form generation where retrieval needs change as the answer develops.
+- **GraphRAG's two modes are fundamentally different systems.** Local search is subgraph traversal; global search is querying pre-generated community summaries. They serve different query types.
+- **GraphRAG ingest costs 10-100× standard RAG.** Pay that cost only when your query distribution justifiably includes entity-relationship and cross-document aggregation queries.
+- **Agentic RAG is overkill for single-hop queries.** Build a query classifier: route simple queries to standard RAG, complex ones to the agentic loop.
+- **RAGAS has four independent metrics.** Faithfulness (generation grounded in context), Answer Relevance (answer addresses question), Context Precision (retrieved chunks are on-topic), Context Recall (retrieved chunks contain needed information). Diagnose by which metric fails, not overall score.
+- **Low Context Recall → fix retrieval** (chunking, embedding model, retrieval threshold). Low Faithfulness → fix generation (grounding prompt, temperature, Self-RAG style critique).
+- **Faithfulness checking decomposes the answer into claims and verifies each against context.** An answer with 5 claims and 1 unsupported claim has 0.8 faithfulness, not a binary pass/fail.
+- **Inline citations require explicit prompt engineering.** The LLM must be instructed to cite, given numbered sources, and instructed not to fabricate. Verify citations programmatically after generation.
+- **Multi-hop latency explosion is a real production risk.** A 5-hop question might take 10-15 seconds end-to-end. Set maximum hop counts and communicate uncertainty when the system is forced to stop early.
+- **Contextual chunk headers are cheap and effective.** Prepend document title + section heading to every chunk before embedding. Prevents decontextualization failures at near-zero cost.
+- **The production decision tree:** simple factual → standard RAG + reranking → add decomposition → add iterative/agentic retrieval → add GraphRAG. Move right only when evaluation shows the current level failing.
+
+---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
-**Q1. What problem does GraphRAG solve that standard vector RAG cannot?**
+### 🟢 Entry Level
+
+**Q1. What is the difference between standard RAG and advanced RAG techniques?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Standard vector RAG retrieves the most similar text chunks to a query by embedding similarity. This works for localized fact-lookup questions where the answer lives in a single chunk, but fails when the answer requires reasoning across multiple documents or understanding relationships between entities.
+Standard RAG is a fixed pipeline: embed the query, retrieve top-k chunks by cosine similarity, stuff them into a prompt, generate an answer. It works for localized factual lookups but has three fundamental failure modes: multi-hop questions that require chaining evidence, aggregation questions where the answer is distributed across many documents, and relational questions requiring entity relationship traversal.
 
-GraphRAG solves this by building a knowledge graph from the corpus during ingest: entities are extracted, relationships are identified, and a graph structure is created. For global questions like "what are the main themes across all reports?" GraphRAG uses the Leiden community detection algorithm to partition the graph into communities of related entities, then pre-generates hierarchical summaries of each community. At query time, these summaries — not raw chunks — are used to answer thematic questions. This is fundamentally impossible with vector search alone, because no single chunk in any document contains a thematic synthesis.
+Advanced RAG techniques address these failures by adding one or more of: query transformation (rewriting the query to improve retrieval), better chunking strategies (parent-child, semantic, late chunking), multi-step retrieval (iterating retrieval instead of one shot), adaptive retrieval (deciding whether and what to retrieve), richer index structures (knowledge graphs, hierarchical summaries), and reranking (a second-pass relevance scoring step).
 
-The practical implication: if your query distribution includes cross-document questions, relationship queries, or thematic analysis, GraphRAG is necessary. If queries are mostly factual lookups into a single document, standard RAG is cheaper and sufficient. GraphRAG has a significant ingest cost — graph construction and summary generation — but this is paid once, not per query.
+The practical implication: do not apply advanced techniques by default. Identify which failure mode you are actually experiencing and apply the minimum technique that fixes it.
 :::
+
+**Q2. What is HyDE and when would you avoid it?**
+
+::: {.callout-note collapse="true" title="Model Answer — Weak vs. Strong"}
+**Weak answer:** HyDE is where you generate a hypothetical document and use that for retrieval instead of the original query. It helps with retrieval.
+
+**Strong answer:** HyDE (Hypothetical Document Embeddings) addresses the vocabulary and register mismatch between user queries and the documents being retrieved. User queries are short, conversational, and often use different vocabulary from the technical documents that answer them. HyDE generates a hypothetical answer paragraph — what the relevant document might look like — using the LLM, then embeds that paragraph for retrieval. The hypothetical paragraph's embedding sits much closer to real relevant documents in vector space than the original query embedding did.
+
+You would avoid HyDE in narrow, specialized domains where the LLM has limited domain knowledge. If you ask an LLM to generate a hypothetical paragraph about a specialized pharmacological compound it has never seen, it will hallucinate plausible-sounding vocabulary. The retriever then faithfully searches near that hallucinated vocabulary, retrieving irrelevant documents. Always A/B test HyDE on your specific corpus — it is not universally beneficial.
 :::
 
-::: {.callout-tip title="Entry Level"}
-**Q2. What is agentic RAG and how does it differ from standard RAG?**
+**Q3. What is parent-child chunking and what problem does it solve?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Standard RAG is a fixed, linear pipeline: receive query → retrieve once → generate answer. The retrieval step always happens, always happens once, and the model has no control over it.
+Parent-child chunking decouples the chunk size used for retrieval from the chunk size passed to the LLM for generation.
 
-Agentic RAG replaces this fixed pipeline with a reasoning loop. The LLM is given retrieval as a tool and decides dynamically: Should I retrieve? What should I search for? Is the retrieved information sufficient, or should I retrieve again? This is typically implemented as a ReAct (Reasoning + Acting) loop where the model can call the retrieval tool multiple times, using the result of one retrieval to formulate a more targeted follow-up query.
+The problem it solves is a fundamental tension: small chunks (100-150 tokens) produce precise embeddings — the query vector closely matches specific relevant claims — but small chunks lack surrounding context and read awkwardly in isolation. Large chunks (800-1200 tokens) provide coherent context for generation but their embeddings average over many concepts, reducing retrieval precision.
 
-The key difference is control and adaptability. Standard RAG always retrieves, regardless of whether retrieval helps. Agentic RAG can skip retrieval for questions the model can answer from its parametric knowledge, and can perform multi-step retrieval for complex questions that require chaining evidence. Self-RAG extends this further by training the model to generate special tokens that reflect on retrieval need and output quality during generation itself — making the retrieval decision intrinsic to the generation process rather than implemented as an external control flow.
+Parent-child chunking resolves this by maintaining two sets of chunks. Small child chunks are embedded and indexed in the vector store. When a child chunk is retrieved, the system returns its larger parent chunk (the surrounding passage) to the LLM. The LLM sees full context; retrieval was optimized by the precise child embedding.
+
+The practical gain: retrieval precision improves (child embeddings are focused), generation quality improves (parent context is coherent), and neither is sacrificed for the other.
 :::
-:::
 
-::: {.callout-tip title="Entry Level"}
-**Q3. What is parent-child chunking and why does it improve retrieval?**
+**Q4. What is reranking and when is it worth the latency cost?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Parent-child chunking is an indexing strategy that separates the chunk size used for retrieval from the chunk size passed to the LLM for generation.
+Reranking is a two-stage retrieval strategy. The first stage uses a fast bi-encoder (standard dense retrieval) to retrieve a candidate set of 50-100 documents. The second stage uses a slower cross-encoder to rerank the candidates — the cross-encoder takes both the query and each candidate document as input simultaneously, allowing full attention interaction. This produces much better relevance scores than the distance-only bi-encoder, but is too slow to run against the full corpus.
 
-Small child chunks (100-150 tokens) are embedded and stored in the vector index. Their small size means the embedding captures the semantic content of a specific claim with high precision — the query vector will closely match the relevant child chunk. However, small chunks lack surrounding context and read awkwardly in isolation.
+Reranking is worth the latency (typically 50-200ms additional) when: the LLM context window is tight and you need to select the best 3-5 from 20 candidates; the downstream use case is high-stakes (medical, legal, financial) where noise in context is a safety risk; or initial retrieval recall is good but precision is poor (many irrelevant chunks in the top-k).
 
-When a child chunk is retrieved, the system returns its parent chunk (the larger surrounding passage, typically 500-1000 tokens) to the LLM. The parent provides the context needed for coherent generation without sacrificing retrieval precision.
-
-This solves the fundamental tension in RAG chunking: small chunks improve retrieval precision but hurt generation quality; large chunks hurt precision but improve generation coherence. Parent-child chunking gets both by decoupling the two phases. The practical gain is meaningful — reducing chunk size from 1000 tokens to 150 tokens for indexing purposes typically improves retrieval recall while the larger context window still allows coherent answer generation.
-:::
+Skip reranking when latency is the primary SLA constraint and initial retrieval quality is already sufficient for the use case.
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q1. Walk through the GraphRAG pipeline from document ingestion to query answering.**
+**Q5. What does RAGAS measure and why does it measure four separate metrics?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-**Ingest phase:**
+RAGAS measures four independent dimensions of RAG quality: Faithfulness (are all claims in the answer supported by retrieved context?), Answer Relevance (does the answer actually address the question?), Context Precision (are the retrieved chunks relevant — signal-to-noise ratio?), and Context Recall (do the retrieved chunks contain all information needed to answer?).
 
-1. Documents are chunked into passages (GraphRAG uses larger chunks, ~600 tokens, because the LLM needs sufficient context for entity extraction).
-2. For each chunk, an LLM extracts a structured list of entities (name, type, description) and relationships (source entity, target entity, relationship description, strength).
-3. Entities and relationships are merged across chunks — the same entity appearing in 50 documents is consolidated into a single graph node with all descriptions aggregated.
-4. The Leiden community detection algorithm partitions the entity graph into hierarchically nested communities. Leiden is preferred over Louvain because it guarantees well-connected communities.
-5. For each community at each level of the hierarchy, an LLM generates a summary report covering key entities, relationships, and themes within that community. These summaries are stored.
+Four separate metrics exist because retrieval and generation can fail independently. A system can have excellent retrieval and poor generation — the LLM ignores evidence and answers from memory. Or it can have poor retrieval and accidentally correct generation — the model answers from parametric knowledge despite retrieving irrelevant chunks.
 
-**Query phase — Local search:**
-The query is mapped to relevant entities via embedding similarity. The system pulls the entity's descriptions, its direct relationships, neighboring entities, and associated text chunks. These are assembled into a context and passed to the LLM.
-
-**Query phase — Global search:**
-The query is sent to all community summaries at a chosen hierarchy level. Each summary is scored for relevance to the query, and the top summaries are assembled into the final context. The LLM synthesizes the answer from community summaries rather than raw chunks. This enables thematic answers that span the entire corpus.
-
-The key architectural insight is that all expensive LLM calls happen at ingest time. Query-time cost is comparable to standard RAG.
-:::
+By evaluating each axis separately, you can diagnose which component to fix. Low Context Recall means your retriever is missing relevant information — fix chunking, embedding model, or retrieval threshold. Low Faithfulness means your LLM is generating beyond the retrieved context — strengthen grounding instructions or add a faithfulness gate. Conflating the metrics leads to fixing the wrong component.
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q2. Explain Self-RAG — how does the model decide whether to retrieve?**
+---
+
+### 🟡 Mid Level
+
+**Q1. Walk through how you would implement multi-query retrieval with RRF. What are the failure modes?**
+
+::: {.callout-note collapse="true" title="Model Answer + Code"}
+Multi-query retrieval generates N semantically equivalent phrasings of the user query, retrieves for each phrasing independently, then merges the result lists using Reciprocal Rank Fusion.
+
+The implementation:
+1. Use an LLM to generate N-1 paraphrases of the original query (keep the original as one of the N queries).
+2. Issue all N retrieval calls in parallel.
+3. For each document in the union of results, compute its RRF score: sum of 1/(60 + rank) across all lists where it appears. Documents ranked highly in multiple lists accumulate the highest scores.
+4. Sort by RRF score and return the top-k to the LLM.
+
+**Failure modes:**
+- **LLM paraphrases diverge semantically:** If the LLM generates paraphrases that are not actually equivalent, you retrieve for partially different questions and confuse the LLM with mixed evidence.
+- **Latency:** N retrieval calls adds overhead. With parallel execution this is usually 1 retrieval call latency + LLM paraphrase generation, but worth profiling.
+- **Duplicate near-identical content:** If your corpus has many near-duplicate chunks, RRF will consistently surface them at the top even though they add no new evidence. Deduplicate aggressively after merging.
+- **Over-retrieval:** Passing all N×k raw results to the LLM without RRF-based pruning wastes the context window and can degrade generation quality.
+
+The key metric to watch: Context Precision (RAGAS). If multi-query retrieval is working, Context Precision should hold or improve because RRF tends to surface consistently relevant documents over single-retrieval noise.
+:::
+
+**Q2. Explain how CRAG works and when it prevents failures that standard RAG cannot catch.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Self-RAG is a fine-tuned model variant, not a prompting technique. The training process teaches the model to generate special reflection tokens interspersed with normal generation:
+CRAG (Corrective RAG) adds a relevance evaluator between the retriever and the generator. After retrieval, a lightweight classifier model scores each retrieved document's relevance to the query. The scores determine the corrective action:
 
-- `[Retrieve]` / `[No Retrieve]` — generated after seeing the input question. The model learns to predict whether retrieval would help based on question type.
-- `[IsREL]` — generated after seeing a retrieved document. Classifies the document as relevant or irrelevant to the query.
-- `[IsSUP]` — generated after each claim in the response. Indicates whether the claim is fully supported, partially supported, or contradicted by the retrieved evidence.
-- `[IsUSE]` — generated at the end of the response. Overall usefulness rating on a 1-5 scale.
+- **High confidence (relevant retrieval):** Proceed normally.
+- **Low confidence (irrelevant retrieval):** Discard retrieved documents entirely, trigger a web search, use the web results as context instead.
+- **Ambiguous (mixed confidence):** Use retrieved documents but supplement with web search results.
 
-The model is trained on data where these tokens are labeled by a separate critic model. At training time, the model learns to internalize these judgments.
+The failure standard RAG cannot catch is the case where retrieval confidently returns the wrong documents. Standard RAG has no mechanism to evaluate whether what it retrieved is actually relevant — it just passes top-k to the LLM, which then generates confidently using bad context. CRAG's evaluator is a quality gate that intercepts this case.
 
-At inference time, the `[Retrieve]` token triggers an actual retrieval call — the generation is paused, the retrieval engine is called, and the retrieved documents are inserted into the context. The model then generates `[IsREL]` to evaluate what it just retrieved. If marked irrelevant, the model can proceed without using the retrieved content.
+**When CRAG pays off:**
+- Your knowledge base is sparse relative to the query distribution — some queries simply have no good local answer.
+- Retrieval failures produce dangerous outputs (hallucinated facts in a medical or legal system).
+- You have a mixed-domain system where some questions are corpus questions and others are general knowledge questions.
 
-The critical advantage over external retrieval decisions is that Self-RAG's retrieval decisions are conditioned on the full generation context — the model knows what it has already generated and what it needs next. This is more accurate than a router that sees only the original query. The downside is that Self-RAG requires a specially fine-tuned model; you cannot apply it to any off-the-shelf LLM.
+**CRAG's cost:** an additional inference call for the evaluator, plus web search latency when triggered. The evaluator is typically a small fine-tuned model (e.g., a BERT-class classifier), so its latency is modest.
 :::
-:::
 
-::: {.callout-warning title="Mid Level"}
-**Q3. Compare RAPTOR vs. GraphRAG for handling large document collections.**
+**Q3. What is the difference between local search and global search in GraphRAG? Give a concrete example of a question each is suited for.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Both RAPTOR and GraphRAG build higher-level abstractions over raw documents to enable multi-document reasoning, but their approaches differ fundamentally.
+**Local search** starts from an entity relevant to the query, traverses its neighborhood in the knowledge graph (connected entities, typed relationships, associated text chunks), and assembles a context from that subgraph. It is essentially subgraph retrieval centered on a named entity.
 
-**RAPTOR** works bottom-up through recursive summarization. It clusters semantically similar chunks (using Gaussian mixture models in the original paper), summarizes each cluster, then clusters and summarizes the summaries recursively. The result is a tree of abstractions with raw chunks at the leaves and a root summary at the top. Retrieval searches nodes at all levels of the tree, with coarser nodes answering thematic questions and finer nodes answering specific factual queries.
+Example: "What is the relationship between Pfizer and BioNTech in vaccine development?" Local search finds the Pfizer node, finds BioNTech as a connected entity with a partnership relationship, retrieves the associated text, and assembles an answer from the subgraph.
 
-**GraphRAG** works by making structure explicit. It extracts entities and relationships, building a graph with typed nodes and edges. Community detection creates the hierarchical structure. Summaries are generated per community, not per arbitrary cluster.
+**Global search** does not start from a specific entity. It queries pre-generated community summary reports. Each report summarizes a community of densely interconnected entities and their themes. The system scores each summary for relevance to the query and assembles the top summaries as context. The LLM synthesizes an answer from community-level abstractions, not raw text.
 
-**Practical differences:**
+Example: "What were the main public health challenges discussed across all our research reports from 2022-2023?" No entity anchor exists; the question is thematic and cross-document. Global search retrieves the summaries of communities covering public health, disease, policy, and related themes and synthesizes across them.
 
-- **Ingest cost:** RAPTOR is cheaper — clustering and summarization do not require entity extraction. GraphRAG requires many LLM calls for extraction.
-- **Query types:** GraphRAG has a clear advantage for relationship queries ("how is entity A connected to entity B?") because relationships are explicit. RAPTOR has no relationship structure.
-- **Domain generality:** RAPTOR works on any text. GraphRAG is most effective on entity-rich domains (business reports, scientific literature, legal documents).
-- **Explainability:** GraphRAG's graph structure is inspectable — you can visualize which communities contributed to an answer. RAPTOR's cluster membership is less interpretable.
-
-In practice, GraphRAG wins for entity-relationship queries; RAPTOR is sufficient for thematic summarization and costs less to build.
-:::
+The practical implication: local search is fast and precise for entity questions; global search is necessary for questions whose answers only emerge at the level of the whole corpus.
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q1. A consulting firm needs to answer questions that span multiple client reports, like "which clients had supply chain issues?" Design the RAG architecture.**
+**Q4. You notice your RAG system has high context recall but low faithfulness. What is likely wrong and how do you fix it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-This query is a canonical cross-document aggregation problem that standard RAG cannot solve. The answer requires scanning all client reports, identifying supply chain issue mentions, and aggregating by client. No single chunk will contain this answer.
+High context recall means the retriever is successfully surfacing documents that contain the information needed to answer the question — the right evidence is reaching the LLM. Low faithfulness means the LLM's generated answer contains claims that are not supported by the retrieved context — the model is answering from its parametric memory rather than (or in addition to) the retrieved evidence.
 
-**Architecture recommendation: GraphRAG with metadata filtering**
+**Likely causes:**
+1. The system prompt does not sufficiently constrain the model to stay within the provided context. The model's parametric knowledge is overriding retrieved evidence.
+2. The retrieved context contains the answer but it is buried — the LLM picks up surface patterns from its training data instead of carefully reading the context.
+3. The model is a large, instruction-tuned model with strong opinions — it "knows" the answer and does not trust the retrieved context when they conflict.
 
-**Ingest design:**
-- Each client report is a separate document with metadata (client name, date, report type) stored alongside the graph.
-- During entity extraction, configure the entity types to include: Organization, Issue, Event, TimeperiodKeyword extraction should capture "supply chain," "logistics disruption," "inventory shortage," etc.
-- After graph construction, community summaries will naturally group clients with similar issue profiles.
+**Fixes:**
+- Strengthen grounding instructions: explicitly tell the model "Answer ONLY using the information provided in the context below. If the context does not support a claim, do not make it."
+- Add a faithfulness gate: after generation, run the claim-verification pass (decompose answer into claims, check each against context) and filter or flag unsupported claims.
+- Lower temperature: high-temperature generation increases parametric drift.
+- If using a very large model: consider a smaller, more instruction-following model for the generation step.
+- Self-RAG style [IsSUP] token post-processing, if available.
 
-**Query execution:**
-- Parse the incoming query to identify it as a global/aggregation query (not entity-lookup).
-- Run global search against community summaries filtered by "supply chain" concepts.
-- If the community summaries include client-level metadata, the response will enumerate affected clients with supporting evidence.
-
-**Hybrid enhancement:**
-- Layer metadata filtering: maintain a structured index (not just vector) with document-level metadata including client ID, date, and extracted topic tags.
-- For queries like "which clients had X," first retrieve documents tagged with the relevant topic, then run targeted extraction within those documents.
-
-**Guardrails for production:**
-- Per-client access control via metadata filtering — consultants should only see their own clients' data.
-- Citation tracking: every claim in the answer should trace back to a specific document section.
-- Confidence scoring: when the model synthesizes across reports, flag the response as aggregated inference, not direct quote.
-
-Estimated ingest cost: 5-10x standard RAG. Retrieval time: comparable. Correctness on cross-client queries: significantly better than vector search.
-:::
+Never confuse high context recall with the system working — it is possible to retrieve perfectly and generate badly.
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q2. A customer's RAG system answers simple factual questions well but fails on multi-step analytical questions. What pattern would you introduce?**
+**Q5. When would you choose query decomposition over agentic RAG for a multi-hop question?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Failing on multi-step analytical questions with a standard RAG system is expected — the pipeline is not architected for it. The fix requires introducing reasoning-coupled retrieval.
+Query decomposition and agentic RAG both address multi-hop questions, but they differ in who controls the hop structure.
 
-**Step 1: Diagnose the failure mode.**
-Multi-step failure can come from two places: the query requires evidence from multiple documents (multi-hop), or the question requires analytical reasoning over retrieved evidence (reasoning gap). Pull 20 failing queries and categorize them. This determines which pattern to apply.
+**Choose query decomposition when:**
+- The question has a known, finite, predictable hop structure. "Compare the revenue of Company A and Company B" decomposes cleanly into two parallel sub-queries. The decomposition can be planned upfront.
+- You need predictable latency. Decomposition with parallel sub-query execution is deterministic; an agent's hop count is variable and can balloon.
+- Lower cost is important. Decomposition uses one cheap LLM call to plan, then executes. Agentic RAG involves multiple LLM reasoning steps, each consuming tokens.
+- The questions in your distribution are structurally similar (you can test that decomposition works reliably for them).
 
-**Step 2: For multi-hop evidence gaps — introduce IRCoT.**
-Implement Interleaved Retrieval with Chain-of-Thought. Instead of one retrieval call, the agent generates one reasoning step, identifies what it needs next, retrieves it, and continues. Implementation: wrap the LLM call in a ReAct loop with a retrieval tool. The prompt should instruct the model to reason step-by-step and explicitly call the retrieval tool when it needs information to continue.
+**Choose agentic RAG when:**
+- The hop structure is unknown before retrieval begins — the agent must discover what it needs to look up based on what it finds.
+- Multi-modal retrieval is needed (different queries go to different tools: a vector store, a SQL database, a web search API).
+- Questions require conditional branching: "If Company A is public, get SEC filings; if private, get news articles."
+- The number of hops is genuinely unpredictable from the question alone.
 
-**Step 3: For thematic analytical questions — add RAPTOR or GraphRAG summaries.**
-If the multi-step questions are aggregative ("summarize the key trends"), the system needs pre-built abstractions. Layer in RAPTOR tree indexing over the existing corpus so the model can retrieve at the right level of abstraction.
-
-**Step 4: Query decomposition as a preprocessing step.**
-Before any retrieval, route complex questions through a decomposition step: a cheap LLM call that breaks the question into sub-questions. Each sub-question is answered independently via the existing RAG pipeline, and a synthesis step combines the sub-answers.
-
-**Step 5: Validate with RAGAS.**
-Measure context recall before and after changes — multi-step failures usually manifest as low context recall (needed information not retrieved), not low faithfulness. Track that metric specifically to confirm the fix is working.
-
-Start with IRCoT — it is the lowest-complexity intervention and handles the majority of multi-hop cases without requiring corpus re-indexing.
+**The cost:** agentic RAG is significantly more expensive and slower, and introduces agent-specific failure modes (infinite loops, hallucinated tool calls, over-retrieval). Use decomposition when the structure is predictable; escalate to agentic only when it is not.
 :::
+
+---
+
+### 🔴 Senior Level
+
+**Q1. When does standard RAG fail and you need agentic RAG? Walk through the decision.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Standard RAG fails when the answer requires evidence that cannot be gathered in a single retrieval pass. This manifests in three ways:
+
+**Multi-hop where the query cannot be specified upfront.** "Find all companies that partnered with firms mentioned in the Q3 report of our top 5 clients" cannot be issued as a single retrieval query — you first need to retrieve the top 5 clients' Q3 reports, extract the mentioned firms, then retrieve partner information for each. The queries at hop 2+ depend on what was found at hop 1. Neither standard RAG nor query decomposition (which plans all sub-queries upfront) handles this.
+
+**Multi-source retrieval with conditional logic.** "Answer questions about our product using the documentation; if the question is about pricing, check the pricing database; if the customer has an enterprise contract, check the contract terms." This requires an agent with multiple tools and routing logic that responds to what it finds.
+
+**Unknown complexity.** When you cannot determine from the question alone how many retrieval steps are needed, a fixed-pipeline approach will either over-retrieve (waste context) or under-retrieve (miss evidence). An agent can decide dynamically.
+
+**The decision framework:**
+1. Classify the query: is the hop structure known and fixed? → Decomposition. Is the hop structure unknown or conditional? → Agentic RAG.
+2. Profile the query distribution: what percentage of queries actually need multi-hop? If <10%, an agent infrastructure for 90% of queries is unjustified overhead. Route by complexity.
+3. Set guardrails: maximum hop count, fallback to "cannot answer" if max hops reached without sufficient confidence, human review path for high-stakes outputs.
+4. Instrument heavily: agent failures are harder to debug than pipeline failures. Log each tool call, each reasoning step, each retrieval result. RAGAS cannot evaluate an agent easily — you need custom evaluation.
+
+**What not to do:** add agentic RAG by default because multi-hop sounds impressive. It adds latency (3-10× standard), cost (multiple LLM inference calls), and new failure modes. Always start with the simplest pipeline that passes evaluation, and upgrade only when it demonstrably fails.
 :::
+
+> 🎯 **What great looks like:** The candidate does not just say "agentic RAG handles multi-hop" — they articulate the specific conditions that justify the transition, propose a routing mechanism so the agent is not used for simple queries, and enumerate the new failure modes introduced by agentic architectures.
+
+> ⚠️ **Common Mistake:** Treating agentic RAG as a universal upgrade over standard RAG. It solves specific problems and creates new ones. Candidates who cannot articulate the failure modes of agentic systems are not ready to deploy them.
+
+---
+
+**Q2. Design a RAG system that reliably cites sources and can handle multi-hop questions across a 10M document corpus.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This question has two coupled requirements: scale (10M docs), multi-hop capability, and citation reliability. Each constrains the architecture.
+
+**Indexing layer:**
+- 10M documents requires sharded vector storage (Pinecone, Weaviate, Qdrant at scale). Standard ANN with HNSW indexes handles this at sub-100ms retrieval.
+- Apply parent-child chunking: child chunks (150 tokens) indexed for retrieval, parent chunks (800 tokens) stored for serving. At 10M docs with ~5 chunks per doc, the index is 50M child vectors — manageable.
+- Add contextual chunk headers (document title + section) to every child chunk before embedding.
+- For multi-hop support: build a lightweight entity extraction index alongside the vector index. For each document, extract named entities and store them in a lookup table (entity → document IDs). This enables the first hop of entity-based queries without GraphRAG's full cost.
+
+**Retrieval layer:**
+- Stage 1: bi-encoder retrieval of top 50 candidates from the vector index.
+- Stage 2: cross-encoder reranking to top 10 (Cohere Rerank or BGE-Reranker).
+- Query classification: route complex multi-hop queries to an iterative retrieval loop; simple queries to single-shot retrieval. A small classifier fine-tuned on your query distribution handles this.
+- For multi-hop: iterative retrieval with max_hops=4. Each hop uses the partial answer to generate the next retrieval query.
+
+**Citation layer:**
+- Number all retrieved chunks before passing to the LLM: "[1] ...", "[2] ...", etc.
+- System prompt mandates inline citation: every claim must be followed by its source number(s).
+- Post-generation: extract cited indices, verify each cited chunk is actually in the context (catch hallucinated citation numbers), build citation map (answer_claim → source_document + metadata).
+- Run faithfulness check on the final answer: decompose into claims, verify each against cited chunk. Flag answers where faithfulness < 0.85.
+
+**Reliability at scale:**
+- RAGAS offline evaluation on a curated test set of ~500 questions covering single-hop, multi-hop, and aggregation types. Track Context Recall, Context Precision, Faithfulness, and Answer Relevance across every pipeline change.
+- Online: log retrieval results for all production queries. Sample 1% for manual review. Track citation accuracy rate and user correction rate.
+- Failure mode monitoring: alert when faithfulness drops below threshold in online evals.
+
+**Honest tradeoff:** At 10M documents, full GraphRAG is prohibitively expensive to build and maintain. The entity index provides partial multi-hop capability at much lower cost. For queries that genuinely require cross-document synthesis, RAPTOR-style pre-built hierarchical summaries over major topic clusters can be added incrementally.
+:::
+
+> 🎯 **What great looks like:** The candidate structures the answer in layers (indexing, retrieval, citation, evaluation), makes concrete technology choices with justification, and is honest about where GraphRAG is impractical at this scale. They quantify (50M vectors, max_hops=4, faithfulness threshold 0.85) rather than hand-waving.
+
+> ⚠️ **Common Mistake:** Proposing full GraphRAG on 10M documents without acknowledging the ingest cost. Or proposing complex solutions without a plan to evaluate whether they are working.
+
+---
+
+**Q3. Compare HyDE vs. query decomposition vs. multi-query retrieval. When would you choose each?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+All three are query transformation techniques that run before retrieval. They address different failure modes.
+
+**HyDE addresses vocabulary mismatch between the query and the corpus.** When a user's natural language question and the technical documents in the corpus use different vocabulary, embedding similarity fails even when the relevant document exists. HyDE generates a hypothetical answer that looks like a corpus document, and uses its embedding for retrieval. Choose HyDE when: your corpus is dense and technical (scientific papers, legal documents, medical literature), users phrase queries conversationally, and the LLM has sufficient domain knowledge to generate a realistic hypothetical. Avoid HyDE on narrow proprietary domains where the LLM will hallucinate domain-specific vocabulary.
+
+**Query decomposition addresses structural complexity.** When a question has multiple distinct information needs that need to be answered separately and combined, decomposition breaks the question into sub-queries, retrieves for each, and synthesizes. Choose decomposition when: the question contains "and," "compare," "contrast," asks about multiple entities, or explicitly requires chaining (the answer to part A determines what to retrieve for part B). The cost is latency: each sub-query adds an LLM call + retrieval call. Parallel sub-queries help but do not eliminate the overhead.
+
+**Multi-query retrieval addresses low recall from a single-phrasing retrieval.** A single query embedding is one point in vector space. Semantically equivalent phrasings produce nearby but distinct points, and relevant documents may cluster near some phrasings more than others. Multi-query generates N variants, retrieves for each, and merges with RRF. Choose multi-query when: you observe high sensitivity to exact query phrasing in A/B tests, when your corpus has uneven vocabulary coverage (some domains well-represented, others sparse), or when you are optimizing recall over precision. The cost is N retrieval calls plus an LLM paraphrase generation call.
+
+**They compose.** A complex question might benefit from decomposition (break into sub-questions) + HyDE on each sub-question (improve retrieval for each sub-question independently). Multi-query can be applied at the sub-question level after decomposition. The risk is latency multiplication — compose sparingly and profile.
+
+**The quick decision rule:** vocabulary gap → HyDE; structural complexity → decomposition; recall ceiling with single phrasing → multi-query.
+:::
+
+> 🎯 **What great looks like:** The candidate articulates the specific failure mode each technique addresses (not just what they do), explains the latency and cost implications of each, notes that they compose, and gives a concrete decision rule.
+
+> ⚠️ **Common Mistake:** Saying "HyDE improves retrieval" without specifying the failure mode it fixes. Or recommending all three together without acknowledging the latency multiplication.
+
+---
+
+**Q4. Your RAG pipeline answers simple questions well but fails on questions like "Compare the revenue of company A across Q1, Q2, and Q3." What's happening and how do you fix it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a classic aggregation failure. The question requires retrieving revenue figures from at least three distinct chunks (one per quarter), synthesizing them into a comparison, and likely producing a structured summary. Standard RAG's single retrieval pass will return the top-k most similar chunks, which may include some but not all three quarters — and even if all three chunks are retrieved, they may not be the top-k because individually each is only moderately similar to the aggregated query.
+
+**What is happening:**
+1. Embedding similarity retrieves the most individually similar chunks. "Q1 revenue for Company A" is retrieved if the query mentions Company A and revenue, but it competes with all other Company A content in the index. The Q2 and Q3 chunks may fall outside the top-k.
+2. Even if all three are retrieved, the LLM may not receive them in a form structured for comparison — they are raw text chunks, not structured data.
+3. There is no enforcement that the answer needs exactly three data points (one per quarter) before generation proceeds.
+
+**How to fix it:**
+
+**Option 1: Query decomposition with structured retrieval.** Detect aggregation queries (pattern: "compare X across Y, Z, W" — a comparison over a time series or categories). Decompose: ["Revenue of Company A in Q1", "Revenue of Company A in Q2", "Revenue of Company A in Q3"]. Issue all three retrievals. The LLM synthesizes from three targeted retrievals rather than one ambiguous retrieval.
+
+**Option 2: Structured metadata + filtered retrieval.** If financial reports are your primary corpus, add structured metadata at ingest: document_company, document_quarter, document_year. For aggregation queries, extract the entities and time references, then issue filtered retrievals: retrieve top-3 chunks from Company A, Q1; top-3 from Company A, Q2; top-3 from Company A, Q3. This guarantees coverage across all requested time periods.
+
+**Option 3: Pre-built aggregation tables.** For frequently requested structured comparisons (revenue, headcount, growth rate across time periods), extract and store structured data (JSON or tables) at ingest time alongside the text index. Route aggregation queries to a structured lookup, not a semantic search.
+
+**Detecting these queries at runtime:** A lightweight classifier (or even a simple regex / LLM routing prompt) that identifies temporal aggregation patterns routes these queries to the appropriate specialized path rather than the standard RAG pipeline.
+
+**The deeper lesson:** Standard RAG is optimized for "find the chunk most similar to this query." Aggregation queries require a coverage guarantee — all relevant chunks must be retrieved, not just the most similar. No density-based retrieval strategy provides coverage guarantees. You need either decomposition (multiple targeted queries) or structured filtering (metadata-based retrieval) to solve this class of failure.
+:::
+
+> 🎯 **What great looks like:** The candidate correctly identifies this as a coverage/aggregation failure (not a relevance failure), proposes multiple solutions at different implementation complexity levels, and explains why standard dense retrieval is structurally incapable of solving coverage problems without architectural changes.
+
+> ⚠️ **Common Mistake:** Suggesting "better embeddings" or "larger top-k" as the fix. Increasing top-k helps marginally but does not solve the coverage guarantee problem. Candidates who propose this do not understand the root cause.
+
+---
+
+**Q5. Your team is evaluating RAGAS on your production RAG system. Context Precision is 0.91 but Context Recall is 0.62. What does this mean and what do you fix?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Context Precision at 0.91 means almost everything retrieved is relevant — low noise, high signal in the retrieved chunks. Context Recall at 0.62 means 38% of the information needed to correctly answer the questions is not being retrieved at all. The retriever is precise but not complete.
+
+**What is causing low recall:**
+- The relevant information exists in the corpus but falls outside the top-k. The chunk containing the answer is ranked 12th; you are retrieving top-5.
+- The relevant information is in the corpus but chunked in a way that splits it across multiple non-contiguous chunks, and neither chunk individually is similar enough to the query to make the top-k.
+- The query vocabulary differs from the document vocabulary for a subset of questions — the relevant chunk exists but is not semantically close to the query.
+
+**Fixes to try (in increasing complexity):**
+1. **Increase k** (retrieval breadth) from top-5 to top-20, then apply reranking to prune back to top-5. This improves recall without sacrificing precision.
+2. **Inspect the 38% failure cases directly.** Pull the queries where recall is low. Is the missing information in the corpus? Is it present but not retrieved? This informs whether the fix is retrieval depth, chunking, or actually missing data.
+3. **Multi-query retrieval.** If the vocabulary gap hypothesis is correct, generating paraphrases and taking the union will surface chunks the single-query retrieval missed.
+4. **Chunking review.** Check whether relevant answers are split across chunk boundaries. If so, increase chunk size or add overlap.
+5. **HyDE** for the specific query types showing low recall (if they are vocabulary-gap queries).
+
+**What you do not touch:** Context Precision is 0.91 — the retriever is doing well on quality. Do not change the embedding model, the similarity threshold, or the reranking configuration in a way that would sacrifice precision to gain recall.
+
+This is why measuring both metrics separately is essential. "Overall RAG performance is poor" is not actionable. "High precision, low recall" immediately points to increasing retrieval breadth and checking chunking coverage.
+:::
+
+> 🎯 **What great looks like:** The candidate correctly interprets the RAGAS metrics (high precision + low recall = retriever is finding the right things but missing some), proposes a diagnostic approach (inspect failure cases) before jumping to fixes, and recommends increasing k + reranking as the first intervention.
+
+> ⚠️ **Common Mistake:** Confusing Context Recall with Answer Relevance, or proposing to change the embedding model when the existing one has 0.91 precision. The fix for low recall is retrieval breadth and chunking, not the embedding model.
+
+---
+
+**Q6. How would you make a RAG system production-safe when operating in a domain where hallucination is high-stakes (e.g., medical or legal)?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+High-stakes domains require defense in depth: you cannot rely on any single mechanism to prevent hallucination. The failure modes must be caught at multiple layers.
+
+**Retrieval layer hardening:**
+- Use high-quality domain-specific embedding models (BioBERT for medical, Legal-BERT for legal) rather than general-purpose models. Domain-specific models reduce retrieval errors from vocabulary mismatch.
+- Apply reranking with a domain-fine-tuned cross-encoder. General rerankers may not rank domain-specific relevance correctly.
+- Set a relevance threshold: if no retrieved chunk exceeds the threshold, return "insufficient information in the knowledge base" rather than passing low-quality context to the LLM.
+- CRAG-style fallback: if the evaluator scores retrieval as low-confidence, do not generate — return a "cannot answer" with a referral to a domain expert.
+
+**Generation layer hardening:**
+- Strict grounding prompts: "Answer ONLY using the information in the provided sources. Every claim must be traceable to a source. If the information is not in the sources, say 'Not found in available sources.'"
+- Post-generation faithfulness checking: decompose the answer into claims, verify each against retrieved context. If faithfulness score < threshold (e.g., 0.90 for medical), suppress the answer and return a disclaimer.
+- Inline citations: every claim must cite a source number. Programmatically verify that all cited source numbers exist in the context (no hallucinated citations).
+- Temperature = 0 or near-0. Stochastic generation in high-stakes contexts is not acceptable.
+
+**Human-in-the-loop design:**
+- Flag answers below faithfulness threshold for human review rather than automatic delivery.
+- Provide the retrieved sources alongside the answer so the human can verify.
+- Log all queries, retrieved chunks, and generated answers for audit purposes.
+- "Confidence" display: show the user the supporting evidence and let them judge, rather than presenting the LLM answer as authoritative.
+
+**Evaluation discipline:**
+- Maintain a domain expert-curated test set of 200+ queries with verified ground-truth answers. Run RAGAS on every pipeline change.
+- Include adversarial examples: queries about topics not in the knowledge base, ambiguous queries, contradictory source documents.
+- Track faithfulness and citation accuracy as primary metrics — not just answer correctness.
+
+The fundamental principle: do not treat LLM generation as authoritative in high-stakes domains. The system should make it easy for the user to verify the answer and should explicitly communicate uncertainty when it exists.
+:::
+
+> 🎯 **What great looks like:** The candidate proposes defense in depth (multiple layers of safeguards), includes the human-in-the-loop design, and frames the answer around what the system should do when it is uncertain — not just how to reduce hallucination.
+
+> ⚠️ **Common Mistake:** Treating faithfulness checking or citation generation alone as sufficient. One mechanism is never enough in high-stakes domains. Strong candidates understand that safety requires redundant, independent safeguards.

@@ -1,137 +1,1132 @@
-# Fine-Tuning LLMs
+---
+title: "Fine-Tuning LLMs"
+---
 
 ::: {.callout-note}
-**Who this chapter is for:** Mid Level
+**Who this chapter is for:** Entry / Mid / FDE
 **What you'll be able to answer after reading this:**
 
-- The difference between full fine-tuning and instruction tuning
-- How to build and curate a fine-tuning dataset
-- What catastrophic forgetting is and how to mitigate it
-- When fine-tuning beats prompting, and when it doesn't
+- When to fine-tune vs. prompt vs. RAG vs. continued pre-training — and why the wrong choice is expensive
+- The full memory math behind fine-tuning: why a 7B model needs 84 GB before you process a single example
+- What instruction tuning does (and does not) teach a model
+- How to build, clean, and quality-filter a fine-tuning dataset
+- How catastrophic forgetting works and four concrete mitigations
+- How to select hyperparameters, detect overfitting, and run a production-grade training loop
+- How to design a 13B-model fine-tuning pipeline end-to-end
 :::
+
+---
+
+## When to Fine-Tune: The Decision Framework
+
+Fine-tuning is not the first step — it is a last resort after cheaper options have been exhausted. The classic mistake is reaching for fine-tuning on day one before exploring prompting or RAG. The framework below walks through each option in order of cost.
+
+### The Four-Option Decision Matrix
+
+| Approach | Data Needed | GPU Cost | Handles New Knowledge | Latency | Best For |
+|---|---|---|---|---|---|
+| **Prompting** | 0–50 examples | None | Yes (inject in context) | Highest (large prompts) | Prototyping, evolving requirements, < 100 labeled examples |
+| **RAG** | 0 labeled (docs only) | Low (embedding) | Yes (retrieval) | Medium | Factual grounding, updated knowledge, attribution required |
+| **Fine-Tuning** | 500–50k examples | Medium–High | No (baked in at train time) | Low (shorter prompts) | Consistent format/style, domain vocabulary, cost reduction at scale |
+| **Continued Pre-Training** | 1B+ tokens unlabeled | Very High | Yes (bakes facts in weights) | Low | Rare domain, specialized vocabulary absent from base pre-training |
+
+> 💡 **Senior Tip:** These options are not mutually exclusive. The strongest production systems combine all four: a continued pre-trained base → SFT for behavior → RAG for live knowledge injection → prompting for per-request customization.
+
+### Fine-Tune WHEN:
+
+1. **Consistent format is non-negotiable.** The model produces wrong JSON schema, missing required fields, or incorrect markdown structure despite explicit instructions. Prompting cannot override a distribution gap.
+2. **Domain-specific vocabulary matters.** Medical ICD codes, legal citations, proprietary API names — if the base model has never seen the vocabulary, it will hallucinate. Fine-tuning on domain text closes that gap.
+3. **Latency / token cost is the constraint.** A 2,000-token few-shot prompt at 10M requests/day costs an order of magnitude more than a fine-tuned model requiring a 200-token prompt.
+4. **Distilling from a larger model.** GPT-4-generated responses used to fine-tune LLaMA-7B can produce a small, cheap model with GPT-4-level behavior on your specific task distribution.
+5. **Style / tone must be exact.** Brand voice, regulatory compliance, specific persona — behavioral fine-tuning encodes this permanently, reducing prompt engineering overhead.
+
+### Do NOT Fine-Tune WHEN:
+
+1. **The problem is solvable by prompting.** A few-shot prompt with 5–20 examples in context can match fine-tuning quality for many tasks. Start here, always.
+2. **You need fresh or frequently updated knowledge.** Fine-tuned weights are static. A model fine-tuned on product docs from Q1 does not know about Q2 changes. Use RAG for live knowledge.
+3. **You have fewer than ~500 examples.** Below this threshold, few-shot prompting with a strong model almost always wins, and fine-tuning risk (overfitting, catastrophic forgetting) outweighs benefit.
+4. **GPU budget is unavailable.** Even LoRA fine-tuning requires at minimum a single A100 or equivalent for non-trivial model sizes. If you cannot provision this, prompting is the path.
+5. **Requirements are still evolving.** Fine-tuning locks in behavior. If your task definition changes weekly, you will retrain weekly — a cost most teams cannot sustain in early stages.
+
+### RAG vs. Fine-Tuning: The Knowledge vs. Behavior Split
+
+This is one of the most commonly confused decisions at the mid level.
+
+| Need | Right Tool | Why |
+|---|---|---|
+| Answer questions about updated product docs | RAG | Docs change; retrieval is always fresh |
+| Respond in company brand voice | Fine-tuning | Voice is behavioral; no document to retrieve |
+| Know internal product terminology | Fine-tuning (or RAG if docs are comprehensive) | Vocabulary is structural |
+| Attribute answers to source documents | RAG | Fine-tuning cannot show which document was used |
+| Reduce per-request token cost | Fine-tuning | Encodes few-shot examples in weights |
+| Handle domain-specific reasoning patterns | Fine-tuning | Patterns are behavioral, not factual |
+
+> ⚠️ **Common Mistake:** Teams fine-tune a model on internal documentation expecting it to "know the product." But the model memorizes patterns from training examples, not the raw facts. When the docs change, the knowledge is stale. RAG is almost always the better answer for factual knowledge retrieval — fine-tuning is for style, format, and behavior.
+
+---
 
 ## Full Fine-Tuning
 
-Full fine-tuning means updating every parameter in the model on your domain-specific dataset. To understand why this is computationally demanding, you need to account for every component that must reside in GPU memory during training. The model weights at FP16 consume 2 bytes per parameter — so a 7B parameter model immediately demands 14GB just to hold the model. But that is only the beginning. The Adam optimizer, which is the standard choice for transformer training, stores two additional momentum vectors per parameter — the first moment (gradient mean) and second moment (gradient variance) — both typically kept in FP32 to maintain numerical stability. That adds 8 bytes per parameter, or 56GB for a 7B model. Gradients add another 2 bytes per parameter at FP16, contributing another 14GB. Before you have processed a single training example, you need approximately 84GB, plus the activation memory that accumulates during the forward pass. This means a 7B model requires at minimum two A100 80GB GPUs with tensor parallelism, and a 70B model requires an eight-GPU cluster. These numbers are why most teams cannot afford full fine-tuning on large models.
+Full fine-tuning updates every parameter in the model on your labeled dataset. It is the most powerful form of adaptation and the most expensive.
 
-Despite the cost, full fine-tuning is the right choice in specific circumstances. When you have tens of thousands of labeled examples — enough that the signal-to-noise ratio justifies the compute — and when the behavioral change you need is fundamental rather than stylistic, full fine-tuning is appropriate. PEFT methods like LoRA constrain updates to a low-rank subspace of each weight matrix, which means some types of deep behavioral change are simply out of reach for adapters but accessible through full fine-tuning. Latency is another consideration: adapter layers add inference overhead unless merged, and systems with microsecond latency budgets may prefer a single clean model. Typical justified use cases include retraining GPT-2 or similar smaller models from scratch on domain corpora like legal or medical documents, fully fine-tuning LLaMA-7B on a large customer support dataset where you want the model to internalize product-specific language and reasoning patterns, or adapting a code model to a proprietary internal programming language with syntax not present in pretraining.
+### Memory Math: Where the 84 GB Goes
 
-The mechanics of full fine-tuning follow the same process as pretraining: compute the forward pass, calculate the loss against your labels (cross-entropy for language modeling or classification), backpropagate gradients through every layer, and update all weights using the optimizer. The difference from pretraining is the data distribution: pretraining used a massive heterogeneous corpus, while fine-tuning uses your narrow, labeled dataset. This narrowing of distribution is both the strength and the weakness of full fine-tuning — the model becomes highly specialized for your distribution, which is exactly what you want, but it also means the model may lose generality on tasks not represented in your fine-tuning set. The learning rate for fine-tuning is typically much lower than pretraining — on the order of 1e-5 to 5e-5 rather than 1e-3 or higher — to avoid catastrophically overwriting the pretraining knowledge with noisy updates from a smaller dataset.
+To understand why full fine-tuning is prohibitively expensive for most teams, account for every GPU memory resident during training:
 
-A practical approach to full fine-tuning at limited compute is gradient checkpointing combined with mixed precision training. Gradient checkpointing trades compute for memory: instead of storing all activations during the forward pass, it recomputes them during backpropagation. This reduces activation memory from O(layers × sequence_length) to O(sqrt(layers × sequence_length)) at the cost of roughly 30% more compute time. Mixed precision training (BF16 or FP16 for forward/backward, FP32 for optimizer states) is now standard practice and provides the memory savings without sacrificing optimizer stability. Together, these techniques can reduce peak memory consumption enough to fit a full fine-tuning run of a 7B model onto a single A100 80GB GPU, though barely. Tools like DeepSpeed ZeRO-3 and Fully Sharded Data Parallel (FSDP) distribute optimizer states, gradients, and parameters across multiple GPUs, enabling full fine-tuning of much larger models on standard multi-GPU hardware.
+| Component | Precision | Bytes / Parameter | 7B Model | 70B Model |
+|---|---|---|---|---|
+| Model weights | FP16 | 2 | 14 GB | 140 GB |
+| Adam m (first moment) | FP32 | 4 | 28 GB | 280 GB |
+| Adam v (second moment) | FP32 | 4 | 28 GB | 280 GB |
+| Gradients | FP16 | 2 | 14 GB | 140 GB |
+| **Total (pre-activations)** | | **~16** | **~84 GB** | **~840 GB** |
+
+Activations add additional memory that scales with sequence length and batch size. The rough rule: **full fine-tuning requires ~16 bytes per parameter** in mixed-precision training. A 7B model barely fits on two A100 80GB GPUs; a 70B model requires an eight-GPU cluster at minimum.
+
+### Training Memory Requirements by Model Size
+
+| Model Size | Full FT Memory | LoRA Memory (r=16) | QLoRA Memory (4-bit) |
+|---|---|---|---|
+| 1B params | ~16 GB | ~4 GB | ~2 GB |
+| 7B params | ~84 GB | ~16 GB | ~6 GB |
+| 13B params | ~150 GB | ~28 GB | ~10 GB |
+| 70B params | ~840 GB | ~140 GB | ~48 GB |
+
+> 💡 **Senior Tip:** QLoRA (4-bit quantized base weights + LoRA adapters) makes 70B fine-tuning feasible on a single 8×A100 node. The quality hit relative to full FT is small for most behavioral tasks. See Chapter 9 for the full LoRA / QLoRA treatment.
+
+### Gradient Checkpointing and Mixed Precision
+
+Two standard techniques reduce full fine-tuning memory without changing the update semantics:
+
+- **Gradient checkpointing** trades 30% more compute for dramatically reduced activation memory. Instead of storing all intermediate activations during the forward pass, it recomputes them on demand during backpropagation. Activation memory drops from O(layers × seq_len) to O(sqrt(layers × seq_len)).
+- **Mixed precision (BF16/FP16 forward + FP32 optimizer states)** halves weight and gradient memory while maintaining optimizer numerical stability.
+
+Together these can fit a 7B full fine-tune on a single A100 80GB, though barely.
+
+### Multi-GPU with ZeRO and FSDP
+
+For models that exceed a single GPU, two distribution strategies are standard:
+
+- **DeepSpeed ZeRO-3** shards optimizer states, gradients, and parameters across GPUs. Each GPU holds only 1/N of each component, enabling linear memory scaling.
+- **PyTorch FSDP (Fully Sharded Data Parallel)** provides similar functionality natively in PyTorch 2.x with better compiler integration.
+
+### When Full Fine-Tuning Is Worth It
+
+1. You have a large compute budget and tens of thousands of labeled examples.
+2. The behavioral change needed is fundamental, not stylistic — LoRA's low-rank constraint cannot reach it.
+3. You plan to merge the fine-tuned model with other models (model merging requires full weights, not adapters).
+4. Inference latency is critical and you cannot afford adapter overhead.
+
+```python
+# Full fine-tuning with HuggingFace Trainer + gradient checkpointing
+from transformers import (
+    AutoModelForCausalLM, AutoTokenizer,
+    TrainingArguments, Trainer, DataCollatorForSeq2Seq
+)
+from datasets import load_dataset
+
+model_id = "meta-llama/Llama-3-8B"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer.pad_token = tokenizer.eos_token
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype="bfloat16",
+    device_map="auto",
+)
+model.gradient_checkpointing_enable()  # saves activation memory
+
+training_args = TrainingArguments(
+    output_dir="./full_ft_output",
+    num_train_epochs=3,
+    per_device_train_batch_size=2,
+    gradient_accumulation_steps=8,   # effective batch = 16
+    learning_rate=2e-5,              # much lower than pretraining
+    lr_scheduler_type="cosine",
+    warmup_ratio=0.05,               # 5% of steps
+    bf16=True,
+    save_strategy="steps",
+    save_steps=200,
+    eval_strategy="steps",
+    eval_steps=200,
+    load_best_model_at_end=True,
+    weight_decay=0.01,
+    logging_steps=50,
+    report_to="wandb",
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    data_collator=DataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8),
+)
+trainer.train()
+```
+
+> ⚠️ **Production Gotcha:** Setting `learning_rate=1e-3` (pretraining-level) on a fine-tuning run will catastrophically overwrite pretraining knowledge within the first 100 steps. Always start at 1e-5 to 5e-5 for full fine-tuning and monitor general benchmark performance in the first 500 steps.
+
+---
 
 ## Instruction Tuning
 
-Instruction tuning is supervised fine-tuning on a dataset of (instruction, response) pairs, with the goal of teaching the model to follow natural language directions. This is the technique that transforms a base language model — which only knows how to predict the next token in internet-style text — into a model that responds helpfully to user requests. The foundational insight from the FLAN paper (Wei et al., 2021) was striking: a model fine-tuned on thousands of diverse task descriptions phrased as instructions dramatically outperformed the same-sized base model on zero-shot tasks it had never seen. The mechanism is generalization: the model learns the meta-skill of reading and following instructions, which transfers across novel instructions at inference time. This was a conceptual breakthrough — it showed that instruction following is itself a learnable capability, not something that only emerges at extreme scale.
+Instruction tuning is supervised fine-tuning on (instruction, response) pairs with the explicit goal of teaching the model to follow natural language directions. It is the transformation that turns a next-token-predictor into a chat assistant.
 
-The format of the data matters as much as the content. Two dominant formats have emerged in the open-source ecosystem. The Alpaca format uses a three-field JSON structure — `{"instruction": "...", "input": "...", "output": "..."}` — where `instruction` is the task description, `input` is optional context (empty string if not needed), and `output` is the desired response. This format is simple and widely supported. The ShareGPT format captures multi-turn conversations as a list of `{from, value}` objects alternating between "human" and "gpt" speakers. Multi-turn format is important because real users ask follow-up questions, and a model fine-tuned only on single-turn examples will not know how to maintain context across turns. Modern chat models like LLaMA-3 Instruct and Mistral Instruct are trained on multi-turn ShareGPT-style data and expose this through their chat templates with system/user/assistant role tokens.
+### What It Actually Teaches
 
-OpenAI's InstructGPT paper (Ouyang et al., 2022), which described the training procedure behind the shift from GPT-3 to ChatGPT, used SFT as the first of three stages. In the SFT stage, human contractors wrote high-quality responses to a diverse set of prompts. This produced an initial model far better at following instructions than the base GPT-3, but still inconsistent and sometimes unsafe. The subsequent stages — reward modeling and PPO — addressed those remaining gaps (covered in depth in Chapter 10). The critical lesson from InstructGPT is that SFT alone is insufficient to produce a truly aligned model, but it is a necessary precondition: the RL-based training in stage 3 requires a base policy that already knows how to produce coherent conversational responses. You cannot skip SFT and go directly to RL from the base pretrained model.
+Instruction tuning does **not** inject new facts. The factual knowledge in an instruction-tuned model was learned during pretraining. What instruction tuning adds is behavioral:
 
-A subtle but important point about instruction tuning: it does not teach the model new knowledge. The factual knowledge in an instruction-tuned model comes from pretraining. What instruction tuning contributes is behavioral: the model learns how to express its knowledge helpfully, how to structure responses, how to signal uncertainty, and how to format output appropriately for conversational contexts. This has an important practical implication: if your use case requires the model to know facts that were not in the pretraining corpus (proprietary product information, recent events, internal documentation), instruction tuning alone will not provide that knowledge. You need either retrieval-augmented generation (RAG) to inject context at inference time, or you need to include that factual content in the instruction tuning dataset as grounded examples — ideally both. The model learns patterns from instruction tuning; it learns facts from pretraining.
+- How to read an instruction and respond to its intent (not just continue it as text)
+- How to format responses for conversational contexts
+- How to signal uncertainty gracefully
+- How to structure multi-step answers
+- How to follow system-prompt constraints
 
-## Dataset Curation — Quality Over Quantity
+The FLAN paper (Wei et al., 2021) demonstrated this memorably: fine-tuning on thousands of diverse instruction-formatted tasks dramatically improved zero-shot performance on **held-out tasks never seen in training**. The model learned the meta-skill of instruction following, not a task-specific lookup table.
 
-The LIMA paper (Zhou et al., 2023) produced one of the most important empirical findings in the instruction tuning literature: 1,000 carefully selected, high-quality examples were sufficient to produce a model that matched or exceeded models trained on 50,000 examples on a range of evaluation tasks. This result challenged the prevailing assumption that more data always wins, and it pointed to a deeper truth about what instruction tuning is actually doing. The model already contains the knowledge and linguistic capability from pretraining. Instruction tuning is alignment of output format and behavioral style — and that alignment requires only enough examples to teach the pattern, not an exhaustive enumeration of every possible scenario. Redundant examples that repeat the same pattern add noise but little signal, while a carefully selected diverse set forces the model to learn the underlying meta-skill of instruction following rather than memorizing specific input-output pairs.
+> ⚠️ **Common Mistake:** "We fine-tuned our model on our FAQs, so now it knows our product." Fine-tuning on FAQs teaches the model to answer FAQ-style questions in FAQ-style format. When a user asks something not in the FAQ, the model will confidently hallucinate. Factual knowledge injection requires RAG or continued pre-training on a large enough corpus to reliably memorize the facts.
 
-Quality in a fine-tuning dataset has four distinct dimensions. Diversity is the first and most important: your dataset must cover the full distribution of tasks and user intents that your application will encounter. A customer support dataset that over-represents billing questions and under-represents technical troubleshooting will produce a model that is systematically worse at troubleshooting, even if it has thousands of billing examples. Audit your dataset distribution carefully before training. Accuracy is the second dimension: every response must be factually correct and represent the desired behavior. A single incorrect example does not ruin the model, but systematic errors in a category of examples will teach the model to reproduce those errors. Format consistency is the third: if your desired output format is JSON, every example's output should be valid JSON with the same schema. If it is markdown with headers, every response should use that structure. The model learns the format from the examples and is confused by inconsistency. Difficulty distribution is the fourth: include easy examples (which the model already handles well) to anchor training, medium examples (the target capability), and hard examples (edge cases and complex reasoning) to push the model's ceiling.
+### Data Formats
 
-Practical dataset construction at scale requires systematic deduplication and filtering. Near-duplicate examples are common when you collect data from multiple sources or generate synthetic examples with similar templates — they waste training compute and can cause the model to over-fit to specific phrasings. MinHash Locality-Sensitive Hashing (LSH) is the standard approach for near-duplicate detection at scale: represent each document by a MinHash signature, then use banding to find pairs with high Jaccard similarity efficiently. For quality filtering, a lightweight classifier trained to distinguish high-quality from low-quality responses can process millions of examples at low cost. Common filtering targets: very short responses that don't answer the question, responses containing hate speech or personally identifiable information, responses with excessive repetition (a known failure mode in autoregressive generation), and responses in the wrong language. Perplexity-based filtering using a reference model is another effective approach: responses with anomalously high perplexity are often incoherent or malformed.
+**Alpaca format** — single-turn, three fields:
 
-The most powerful dataset strategy for production systems is a data flywheel: collect real user interactions with your deployed system, filter them for quality, label the highest-quality examples, and add them to your training set. This creates a self-reinforcing loop where each model version generates interactions that improve the next version. The key operational challenge is the quality filter: not all real user interactions are good training examples. You want examples where the model's response was effective (user continued productively, rated highly, did not immediately rephrase the question) and diverse (the example covers a case not already well-represented in the training set). Implementing this flywheel requires investment in logging infrastructure, annotation tooling, and dataset management — but it compounds over time and is a significant competitive moat for teams that build it systematically. Teams relying solely on static datasets fall behind teams with active data flywheels.
+```json
+{
+  "instruction": "Summarize the following customer complaint in one sentence.",
+  "input": "I've been waiting three weeks for my order and nobody has responded to my emails. This is unacceptable.",
+  "output": "Customer reports a three-week delivery delay with no support response and requests resolution."
+}
+```
+
+**ChatML / ShareGPT format** — multi-turn conversation:
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "You are a helpful customer support agent for Acme Corp."},
+    {"role": "user", "content": "Where is my order #12345?"},
+    {"role": "assistant", "content": "Let me look that up for you. Order #12345 was shipped on May 10th via FedEx with tracking number 123456789. Expected delivery is May 17th."},
+    {"role": "user", "content": "It says delivered but I never got it."},
+    {"role": "assistant", "content": "I'm sorry to hear that. I'll escalate this to our fulfillment team immediately and arrange a replacement shipment. Can you confirm your delivery address?"}
+  ]
+}
+```
+
+Multi-turn format is important for production chat applications. Models fine-tuned only on single-turn data fail at follow-up questions — they treat every message as a fresh conversation without context.
+
+### Data Formatting Code
+
+```python
+# Format Alpaca-style data for causal LM training
+def format_alpaca_example(example, tokenizer, max_length=2048):
+    """
+    Create the full prompt string and mask the instruction tokens
+    so loss is computed only on the response portion.
+    """
+    instruction = example["instruction"]
+    input_text  = example.get("input", "")
+    output      = example["output"]
+
+    if input_text:
+        prompt = (
+            f"### Instruction:\n{instruction}\n\n"
+            f"### Input:\n{input_text}\n\n"
+            f"### Response:\n"
+        )
+    else:
+        prompt = f"### Instruction:\n{instruction}\n\n### Response:\n"
+
+    full_text = prompt + output + tokenizer.eos_token
+
+    tokenized = tokenizer(
+        full_text,
+        max_length=max_length,
+        truncation=True,
+        padding=False,
+        return_tensors=None,
+    )
+
+    # Labels: -100 on prompt tokens (no loss), output tokens contribute to loss
+    prompt_len = len(tokenizer(prompt, add_special_tokens=False)["input_ids"])
+    labels = [-100] * prompt_len + tokenized["input_ids"][prompt_len:]
+    tokenized["labels"] = labels
+
+    return tokenized
+```
+
+### The LIMA Finding: Quality > Quantity
+
+The LIMA paper (Zhou et al., 2023) showed that 1,000 carefully curated examples matched or exceeded models trained on 52,000 Alpaca examples on a broad evaluation suite. This finding has deep practical implications:
+
+- Instruction tuning is **surface alignment**, not knowledge transfer. The model already has the knowledge; you are teaching the behavioral format.
+- Behavioral format requires far fewer examples to learn than factual knowledge.
+- Redundant examples (repeating patterns the model already handles) add noise and training compute but minimal signal.
+- The right strategy: diagnose failure cases, collect targeted examples for failures, invest in quality review per example.
+
+### The InstructGPT SFT Stage
+
+InstructGPT (Ouyang et al., 2022) used SFT as stage one of a three-stage pipeline. Human contractors wrote ideal responses to diverse prompts. This SFT base was then refined by reward modeling and PPO (Chapter 10). The key lesson: **SFT is a necessary precondition for RLHF, not a substitute**. SFT teaches the chat format and basic instruction following; reward modeling and RL address safety, alignment, and consistency at the tail.
+
+---
+
+## Task-Specific Fine-Tuning
+
+Task-specific fine-tuning trains the model to excel at a single, narrowly defined task: sentiment classification, named entity extraction, SQL generation, clinical note summarization.
+
+### Single-Task Fine-Tuning
+
+The task definition must be precise and consistent. Common pitfalls:
+
+- **Format ambiguity.** If some examples return class labels as integers and others as strings, the model learns inconsistent behavior.
+- **Prompt format sensitivity.** The same task with different prompt templates produces different models. Use one format throughout — the exact format you will use at inference.
+- **Label imbalance.** A 95/5 class split will produce a model that rarely predicts the minority class. Oversample or use class-weighted loss.
+
+```python
+# SFT for a classification task using TRL's SFTTrainer
+from trl import SFTTrainer, SFTConfig
+from peft import LoraConfig, get_peft_model
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "mistralai/Mistral-7B-v0.3"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer.pad_token = tokenizer.eos_token
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype="bfloat16",
+    device_map="auto",
+)
+
+peft_config = LoraConfig(
+    r=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+    bias="none",
+    task_type="CAUSAL_LM",
+)
+
+def format_example(example):
+    """Format for single-turn classification."""
+    return (
+        f"<|system|>Classify the sentiment of the following review.</s>\n"
+        f"<|user|>{example['review']}</s>\n"
+        f"<|assistant|>{example['label']}</s>"
+    )
+
+sft_config = SFTConfig(
+    output_dir="./sft_output",
+    num_train_epochs=3,
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,
+    learning_rate=2e-4,        # higher for LoRA adapters (newly initialized)
+    lr_scheduler_type="cosine",
+    warmup_ratio=0.05,
+    bf16=True,
+    max_seq_length=512,
+    packing=True,              # pack multiple short examples per sequence
+    save_strategy="epoch",
+    eval_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+)
+
+trainer = SFTTrainer(
+    model=model,
+    args=sft_config,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    peft_config=peft_config,
+    formatting_func=format_example,
+)
+trainer.train()
+```
+
+### Multi-Task Fine-Tuning
+
+Multi-task fine-tuning trains the model simultaneously on multiple tasks by mixing examples from all tasks in each batch. This serves two purposes: it prevents catastrophic forgetting by keeping general gradient signal alive throughout training, and it can improve individual task performance by forcing shared representations.
+
+The T5 paper and FLAN demonstrated that multi-task training consistently outperforms single-task fine-tuning for many task types, because the model develops generalizable representations rather than task-specific lookup tables.
+
+**Mixing ratio as a hyperparameter:** A common starting point is 80% domain task / 20% diverse general data. Too much general data dilutes specialization; too little fails to prevent forgetting. Tune via short ablations.
+
+### Format Sensitivity Warning
+
+The same underlying task with different prompt formats can produce models with 10–15% performance gaps. Empirically, models are sensitive to:
+
+- Whether the instruction appears before or after the input
+- The exact delimiter tokens used (newline vs. `###` vs. XML tags)
+- Whether few-shot examples are present during training but absent at inference
+- Chat template tokens (missing `<|user|>` vs. present)
+
+**Rule:** Use exactly the same prompt format at fine-tuning time and inference time. Test for this explicitly in your eval pipeline.
+
+> ⚠️ **Production Gotcha:** A team fine-tunes on the Alpaca format but deploys with a ChatML system prompt. Performance drops 15%. The model learned the Alpaca structural tokens as part of the task — changing format at serving time breaks the learned behavioral mapping. Always test the exact production prompt format, not a cleaned-up version.
+
+---
 
 ## Catastrophic Forgetting
 
-Catastrophic forgetting is the phenomenon where a neural network, when trained on a new distribution of data, loses previously acquired capabilities. In the context of LLM fine-tuning, this means that a model fine-tuned on a narrow domain — say, medical question answering — may degrade on coding tasks, mathematical reasoning, or general world knowledge that it handled well before fine-tuning. The mechanism is straightforward: gradient updates that improve performance on the fine-tuning distribution necessarily move the model's weights away from the configurations that encoded general capabilities. The optimizer does not know or care that the weights it is modifying also encode Python syntax or historical facts — it only knows that this gradient step reduces the loss on the medical QA examples in front of it. The severity of forgetting depends on the distance between the fine-tuning distribution and the original pretraining distribution: the more specialized and narrow the fine-tuning data, the more forgetting you typically observe.
+Catastrophic forgetting is the degradation of previously learned capabilities when a model is fine-tuned on a narrow distribution. It is not a theoretical concern — it is a regular occurrence in production fine-tuning pipelines when not managed carefully.
 
-Detecting catastrophic forgetting requires evaluating on held-out general benchmarks before, during, and after fine-tuning. A standard practice is to checkpoint the model at regular intervals (every 100-500 gradient steps depending on the dataset size) and evaluate each checkpoint on a suite of benchmarks — MMLU for general knowledge breadth, HellaSwag for commonsense reasoning, HumanEval for coding ability, and any other capabilities relevant to your deployment context. Plotting these benchmark scores against training steps gives you a forgetting curve: you can see exactly when and how much general capability is being sacrificed for domain-specific improvement. The goal is to find the checkpoint that maximizes domain-specific performance while keeping benchmark scores within acceptable bounds of the pre-fine-tuning baseline. Without this monitoring, you may train to convergence on your domain task while unknowingly producing a model that fails on the general queries that make up 40% of your real production traffic.
+### Why It Happens
 
-Four mitigation strategies address catastrophic forgetting with different tradeoffs. Replay buffers are the simplest: mix a fraction of diverse pretraining-style data (typically 5-10% of each batch) into the fine-tuning dataset. This forces the model to maintain a gradient signal for general capabilities throughout training. The tradeoff is that replay data dilutes domain-specific learning — you need to tune the replay fraction to balance the two objectives. Elastic Weight Consolidation (EWC) is a more principled approach: after measuring each weight's importance to general capabilities (via the Fisher information matrix), EWC adds a penalty term to the loss function that resists changes to important weights. This is computationally expensive to implement at scale but provides precise protection against forgetting specific capabilities. Multi-task fine-tuning trains the model simultaneously on your domain task and a diverse set of general tasks — the model is explicitly supervised to maintain performance on both. This requires curating the general task data and managing the multi-task training loop, but it produces models with the best balance of domain specialization and general capability retention. Finally, PEFT methods like LoRA inherently limit forgetting by restricting gradient updates to a small set of adapter parameters — the frozen base model weights retain all their original capabilities, and only the adapters change.
+The optimizer updates weights to minimize loss on the fine-tuning distribution. Those weight updates are indifferent to what else those weights encode. A gradient step that improves medical QA performance may simultaneously degrade the weight configuration encoding Python syntax, arithmetic reasoning, or commonsense facts — because all of these representations share the same parameter space. The severity scales with:
 
-## Prompting vs. Fine-Tuning Decision Framework
+- **Narrowness of the fine-tuning distribution** — the narrower the domain, the more the gradient updates diverge from the pretraining gradient direction.
+- **Learning rate** — higher LR means larger updates that overwrite more.
+- **Number of training steps** — more steps accumulate more drift.
+- **Model size relative to dataset size** — a 7B model fine-tuned on 500 examples has many more degrees of freedom than needed, making it easy to overfit and forget.
 
-The decision between prompting and fine-tuning is not about what's technically possible — a sufficiently large prompt with many examples can often match a fine-tuned model's output quality on many tasks. It is about what is practical, economical, and reliable at production scale. Prompting should be your first choice when you are in early-stage development, when you have fewer than 100 labeled examples, when your requirements are evolving rapidly, or when the task responds cleanly to natural language instructions. Few-shot prompting with 5-20 examples in the context window can achieve high quality for many tasks and requires zero training infrastructure. The ability to iterate on a prompt in minutes rather than days is a powerful advantage when you are still discovering what your application needs to do.
+Analogy: imagine a musician who spent years learning classical piano, jazz, and blues. You hire them as a full-time jazz club house musician for 6 months. When they leave, they play jazz brilliantly but have lost the muscle memory for classical fingerings. Fine-tuning is the same process — extended practice on one distribution erodes others.
 
-Fine-tuning becomes the right choice when prompting has hit a wall. The clearest signals: the model produces the wrong output format despite explicit instructions in every few-shot example; the few-shot examples in your prompt consume more than 30% of the available context window (implying prohibitive token cost at scale); you need behavior that is consistent across thousands of edge cases and prompt-based solutions keep failing on a long tail of inputs; or the model lacks domain-specific factual knowledge that you cannot always inject through context. A common path is to start with prompting, collect failure cases, build a labeled dataset from those failures, and use that dataset to drive the fine-tuning decision. If you find yourself writing increasingly elaborate prompts with dozens of examples and still hitting consistent failure modes, that is a strong signal that fine-tuning is justified.
+### Detection: The Forgetting Curve
 
-The economics of fine-tuning vs. prompting are increasingly favorable for fine-tuning at production scale. Every few-shot example added to a prompt increases the input token cost for every single API call. A prompt with 2,000 tokens of examples, served to 10 million requests per day, represents massive cumulative token spend. A fine-tuned model encodes those examples implicitly in its weights and may require only a short system prompt, dramatically reducing per-request cost. A rough heuristic: if your prompt exceeds ~1,000 tokens and your traffic exceeds 1 million requests per month, the compute cost of a fine-tuning run often pays for itself within weeks of deployment. This calculation is what has driven many production teams to invest in fine-tuning pipelines even when the quality improvement over prompting is modest — the cost reduction alone justifies it.
+```python
+# Minimal forgetting monitor: evaluate general benchmarks at every checkpoint
+import evaluate
+from transformers import pipeline
 
-Red flags that indicate fine-tuning is needed cluster around three categories: format, knowledge, and consistency. Format failures occur when the model produces incorrect structure (wrong JSON schema, missing required fields, wrong markdown structure) despite clear instructions — the model's pretraining distribution doesn't include enough examples of your exact format, and prompting alone cannot overcome that. Knowledge failures occur when the model fabricates information or answers incorrectly on your domain despite being given relevant context — it may need more exposure to your domain's vocabulary, conventions, and reasoning patterns than a few-shot prompt can provide. Consistency failures occur at the edge cases: the model handles 90% of inputs correctly with prompting but fails on a specific category of inputs in a predictable pattern. Fine-tuning on that failure category, combined with regression testing, can close the gap systematically in a way that prompt engineering cannot.
+GENERAL_BENCHMARKS = {
+    "mmlu_sample": mmlu_sample_dataset,    # factual knowledge breadth
+    "hellaswag_sample": hellaswag_sample,  # commonsense reasoning
+    "humaneval_sample": humaneval_sample,  # coding ability
+}
+
+def evaluate_forgetting(model, tokenizer, step):
+    results = {"step": step}
+    for benchmark_name, dataset in GENERAL_BENCHMARKS.items():
+        # Run benchmark-specific evaluation
+        score = run_benchmark(model, tokenizer, dataset)
+        results[benchmark_name] = score
+    return results
+
+# Call this in your training loop callback at every checkpoint
+# Plot step vs. score to produce the forgetting curve
+# Optimal checkpoint: max domain score subject to benchmark scores
+# remaining within X% of pre-fine-tuning baseline
+```
+
+Monitor two things simultaneously: domain task performance (training objective) and general benchmark scores. The optimal checkpoint is typically before final convergence on the domain task — often at 60–80% of planned training steps.
+
+### Four Mitigations
+
+**1. Replay Buffer (simplest)**
+
+Mix 5–20% diverse general data into every fine-tuning batch. The general examples generate gradient signal that counteracts domain-specific forgetting. Tune the replay fraction via ablation — too high dilutes domain learning, too low fails to prevent forgetting.
+
+**2. Elastic Weight Consolidation (EWC)**
+
+After measuring each weight's importance to general capabilities (via Fisher information matrix approximation), add a regularization term to the loss that penalizes changes to high-importance weights.
+
+```
+L_total = L_task + λ * Σ_i F_i * (θ_i - θ_i*)²
+```
+
+Where `F_i` is the Fisher importance of weight `i` and `θ_i*` is the pre-fine-tuning value. This provides precise protection but is expensive to compute at scale.
+
+**3. Multi-Task Fine-Tuning**
+
+Train simultaneously on domain task + general tasks. Every batch contains examples for both objectives, so the model cannot drift away from general capability. Most robust solution but requires curating and maintaining the general task replay dataset.
+
+**4. LoRA (structural mitigation)**
+
+LoRA freezes all base model weights and only trains small adapter matrices. Because base weights never change, all capabilities encoded in them are perfectly preserved. The only thing that can be forgotten is what LoRA adapters explicitly contradict — which is structurally constrained by their low-rank nature. This is the most widely used mitigation in practice.
+
+---
+
+## Data Requirements and Curation
+
+### Minimum Data Thresholds
+
+| Goal | Minimum Examples | Recommended | Notes |
+|---|---|---|---|
+| Basic format / style adaptation | 100–300 | 500+ | With strong base model |
+| Task-specific fine-tuning | 500–1,000 | 2,000–5,000 | More for complex tasks |
+| Significant capability change | 5,000+ | 10,000–50,000 | Still no substitute for pre-training scale |
+| Domain continued pre-training | 100M+ tokens | 1B+ tokens | Unlabeled text, not labeled pairs |
+
+### Data Quality Checklist
+
+A high-quality fine-tuning dataset has five dimensions:
+
+1. **Diversity.** The dataset covers the full distribution of production inputs. Cluster your examples and verify every important cluster is represented. A customer support dataset over-representing billing and under-representing technical issues will produce a model that is systematically bad at technical issues.
+
+2. **Accuracy.** Every response is factually correct and represents the exact desired behavior. A single error type repeated across 50 examples will teach the model to reproduce that error. Systematic errors in a category produce systematic model failures.
+
+3. **Format consistency.** If the desired output is JSON, every example's output is valid, schema-compliant JSON. If it is markdown, every response uses the same header/bullet structure. Inconsistency teaches the model that any format is acceptable.
+
+4. **Appropriate difficulty distribution.** Include easy examples (anchors learning), medium examples (main target behavior), and hard/edge-case examples (pushes the ceiling). Pure easy examples produce a model that fails on edge cases; pure hard examples confuse the optimizer.
+
+5. **No data contamination.** The eval set must be drawn from the same distribution but must not appear in the training set. Contamination produces inflated offline metrics that crash in production.
+
+### Data Cleaning Pipeline
+
+```python
+from datasketch import MinHash, MinHashLSH
+import hashlib
+
+def build_dedup_pipeline(examples, threshold=0.85, num_perm=128):
+    """
+    Near-duplicate detection using MinHash LSH.
+    Returns the set of indices to keep.
+    """
+    lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
+    minhashes = {}
+
+    for idx, example in enumerate(examples):
+        m = MinHash(num_perm=num_perm)
+        # Shingle the response text
+        text = example["output"].lower()
+        for i in range(len(text) - 3):
+            m.update(text[i:i+3].encode("utf-8"))
+        lsh.insert(str(idx), m)
+        minhashes[str(idx)] = m
+
+    keep = set()
+    seen = set()
+    for idx in range(len(examples)):
+        key = str(idx)
+        if key in seen:
+            continue
+        result = lsh.query(minhashes[key])
+        keep.add(idx)
+        seen.update(result)
+
+    return sorted(keep)
+
+def quality_filter(example):
+    """Basic quality filters — tune thresholds for your domain."""
+    output = example["output"]
+    # Too short to be useful
+    if len(output.split()) < 10:
+        return False
+    # Excessive repetition (known model failure mode)
+    words = output.split()
+    if len(set(words)) / len(words) < 0.4:
+        return False
+    # Instruction not answered (check for refusal / deflection patterns)
+    refusals = ["i cannot", "i'm unable", "as an ai", "i don't know"]
+    if any(r in output.lower() for r in refusals):
+        return False  # adjust if refusals are valid in your domain
+    return True
+
+# Apply to dataset
+clean_indices = build_dedup_pipeline(raw_examples)
+clean_examples = [raw_examples[i] for i in clean_indices]
+filtered_examples = [ex for ex in clean_examples if quality_filter(ex)]
+print(f"Raw: {len(raw_examples)} → Deduped: {len(clean_examples)} → Filtered: {len(filtered_examples)}")
+```
+
+### Synthetic Data from GPT-4
+
+GPT-4 as a teacher model is one of the most cost-effective data generation strategies. The pattern:
+
+1. Provide GPT-4 with a system prompt defining the task and a response format specification.
+2. Generate responses for your input distribution (can be partially automated).
+3. Human review a sample (10–20%) to validate quality.
+4. Use a lightweight classifier to filter the remainder at scale.
+
+> 💡 **Senior Tip:** GPT-4-generated instructions outperform 100k human-written Alpaca examples on many benchmarks (see WizardLM, Orca papers). The key is diversity of instruction types — use seed tasks to guide GPT-4 toward coverage of your full task space, not just the easy cases it generates by default.
+
+---
+
+## Training Hyperparameters
+
+### Learning Rate
+
+| Training Type | LR Range | Notes |
+|---|---|---|
+| Pre-training | 1e-4 to 3e-4 | Large steps from random init |
+| Full fine-tuning | 1e-5 to 5e-5 | Preserve pretraining knowledge |
+| LoRA fine-tuning | 1e-4 to 3e-4 | Adapters are randomly initialized |
+| QLoRA fine-tuning | 2e-4 to 5e-4 | Slightly higher, adapters compensate for quantization |
+
+**Learning rate schedule:**
+
+- **Cosine decay** is standard for most fine-tuning runs. Starts at peak LR, decays smoothly to near-zero.
+- **Constant LR with linear warmup** is acceptable for short runs (< 1 epoch). Simpler to reason about, less sensitive to total step miscounts.
+- **Warmup:** Always use linear warmup for 3–10% of total steps. Prevents large updates in the first steps before Adam has accumulated reliable gradient statistics.
+
+### Batch Size and Gradient Accumulation
+
+Real batch size is constrained by GPU memory. Effective batch size is controllable via gradient accumulation:
+
+```
+effective_batch_size = per_device_batch_size × num_gpus × gradient_accumulation_steps
+```
+
+A typical target effective batch size for fine-tuning is 32–128. With a single A100 and `per_device_batch_size=4`, you need `gradient_accumulation_steps=8` to reach effective batch 32.
+
+> ⚠️ **Production Gotcha:** Gradient accumulation simulates a larger batch but does NOT accelerate throughput — it takes `gradient_accumulation_steps` forward passes to produce one optimizer step. Wall-clock time per step scales linearly. Budget accordingly.
+
+### Epochs
+
+- **3–5 epochs** is the standard range for most fine-tuning tasks.
+- Below 2 epochs: the model may not have seen enough of the dataset to converge.
+- Above 5 epochs: high risk of overfitting, especially for datasets under 10k examples.
+- Use **early stopping** (monitor validation loss, stop when it plateaus or rises) rather than a fixed epoch count.
+
+### Weight Decay and Regularization
+
+- `weight_decay=0.01` is a safe default. Increase to 0.1 for small datasets (< 2k examples).
+- `lora_dropout=0.05` for most LoRA runs; increase to 0.1 for datasets under 1k examples.
+- Gradient clipping at `max_grad_norm=1.0` prevents gradient explosions, especially important with high LRs.
+
+---
+
+## Continued Pre-Training vs. SFT
+
+### The Difference
+
+| | Continued Pre-Training | SFT (Supervised Fine-Tuning) |
+|---|---|---|
+| **Data** | Unlabeled text corpus | (instruction, response) pairs |
+| **Objective** | Next-token prediction (same as original pre-training) | Cross-entropy on response tokens |
+| **Goal** | Domain vocabulary and knowledge | Behavioral alignment and instruction following |
+| **Scale** | 100M–10B+ tokens | 500–100k examples |
+| **When** | Domain has specialized vocabulary absent from base pre-training | Behavioral adaptation, format/style |
+
+### Standard Production Sequence
+
+```
+Base model
+    → Continued Pre-Training (if domain is specialized)
+    → SFT (instruction following, format)
+    → RLHF / DPO (alignment, safety)
+    → Deployment
+```
+
+Not every application needs every stage. Most production fine-tuning is SFT only, on top of a base or already-instruction-tuned model.
+
+### When Continued Pre-Training Is Needed
+
+Continued pre-training is justified when your domain has vocabulary, syntax, or reasoning patterns so specialized that they are rare or absent in the base model's pre-training corpus:
+
+- **Medical:** ICD codes, drug names, clinical trial methodology, diagnostic reasoning
+- **Legal:** Jurisdiction-specific statutes, case citation formats, contract clause structures
+- **Code:** Proprietary internal programming languages, unusual DSLs, highly specialized APIs
+- **Scientific:** Domain-specific notation, experimental protocols, field-specific abbreviations
+
+A useful diagnostic: feed a sample of your domain text to the base model and measure its perplexity. Significantly higher perplexity than on general text suggests the domain is outside the base model's pre-training distribution — continued pre-training is warranted.
+
+> 💡 **Senior Tip:** MedPaLM 2, BioMedLM, and CodeLlama all start with continued pre-training on domain corpora before SFT. The sequence is not optional when the domain is genuinely out-of-distribution for the base model.
+
+---
+
+## Overfitting Detection and Prevention
+
+### Detection
+
+Set up a train/validation split (90/10 minimum) before any training. Monitor:
+
+1. **Training loss vs. validation loss.** Overfitting shows as continued training loss decrease while validation loss plateaus or rises.
+2. **Qualitative eval.** Run 20–50 held-out prompts through the model at each checkpoint. Read the responses manually. Overfit models often produce responses that look good statistically but fail logically.
+3. **General benchmark regression.** As described in the forgetting section — a concurrent drop in general benchmarks alongside near-zero training loss is a strong overfitting + forgetting signal.
+
+### Prevention by Dataset Size
+
+| Dataset Size | Primary Risk | Top Interventions |
+|---|---|---|
+| < 500 examples | Overfitting | LoRA r=4–8, dropout=0.1, early stopping after ~2 epochs, augmentation |
+| 500–2,000 examples | Moderate overfitting | LoRA r=8–16, dropout=0.05, early stopping |
+| 2,000–10,000 examples | Mild overfitting | Standard LoRA or full FT, 3–5 epochs |
+| 10,000+ examples | Underfitting | Full FT viable, more epochs, higher LR |
+
+---
+
+## Cheat Sheet
+
+- **Decision order:** Prompting → RAG → Fine-tuning → Continued pre-training. Start cheap.
+- **Fine-tune for:** consistent format, domain vocabulary, style/tone, token cost reduction.
+- **Use RAG for:** updated factual knowledge, attribution, frequently changing content.
+- **Use continued pre-training for:** rare domain vocabulary absent from base model pre-training.
+- **Memory rule:** Full fine-tuning ≈ 16 bytes/parameter. 7B model → ~84 GB before activations.
+- **LoRA is ~5× more memory-efficient** than full fine-tuning; QLoRA is ~14× more efficient.
+- **Full FT LR:** 1e-5 to 5e-5. **LoRA LR:** 1e-4 to 3e-4.
+- **Warmup:** 3–10% of total steps with linear schedule. Never skip warmup.
+- **Epochs:** 3–5 is the default. Use early stopping rather than fixed count.
+- **Batch size:** Effective batch 32–128. Use gradient accumulation to reach target without OOM.
+- **LIMA finding:** 1,000 high-quality examples ≈ 52,000 mediocre Alpaca examples.
+- **Quality > quantity:** Every example should represent a distinct behavioral pattern.
+- **Data minimum:** ~500 examples for simple adaptation; 5,000+ for meaningful capability change.
+- **Catastrophic forgetting detection:** Run MMLU, HellaSwag, HumanEval at every checkpoint.
+- **Simplest forgetting mitigation:** Replay buffer — 10–20% general data in every batch.
+- **Structural forgetting mitigation:** LoRA — frozen base weights cannot forget anything.
+- **Prompt format:** Must be identical at training time and inference time. Test this explicitly.
+- **Overfitting signal:** Training loss near zero + validation loss rising + qualitative failures.
+- **Data deduplication:** Use MinHash LSH. Near-duplicates waste compute and cause overfitting.
+- **Synthetic data:** GPT-4-generated examples fine-tuned into smaller models works well for format/style tasks.
+- **Gradient checkpointing:** Always enable — saves ~30–40% memory at ~30% compute cost.
+- **Weight decay:** 0.01 default; increase to 0.1 for small datasets.
+- **Multi-task fine-tuning:** Prevents forgetting and often improves individual task quality — underused.
+- **Continued pre-training sequence:** Domain corpus (next-token prediction) → SFT → RLHF.
+- **Production validation gate:** Block model promotion if any eval category drops > 3% from previous version.
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+### Entry Level
 
 **Q1. What is the difference between pretraining and fine-tuning?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Pretraining is the initial large-scale training phase where a model is trained on a massive, diverse corpus of text — typically hundreds of billions to trillions of tokens scraped from the internet, books, and code repositories — with the objective of predicting the next token. This phase is where the model acquires general language understanding, factual knowledge, reasoning patterns, and coding ability. Fine-tuning is a subsequent, much shorter training phase that updates the pretrained model's weights on a smaller, curated, task-specific dataset. Fine-tuning teaches the model new behaviors (how to follow instructions, how to answer in a specific format, how to respond appropriately to your use case), but the underlying knowledge comes from pretraining. Analogy: pretraining is a generalist education spanning years; fine-tuning is a targeted professional training course of a few weeks. You cannot fine-tune a model into knowing facts it never saw during pretraining, but you can fine-tune it to express its knowledge in precisely the way your application requires.
+Pretraining is the large-scale initial training phase where a model learns on a massive, diverse corpus — hundreds of billions to trillions of tokens from the internet, books, and code — using next-token prediction. This is where the model acquires language understanding, factual knowledge, reasoning patterns, and coding ability. Fine-tuning is a shorter, subsequent training phase that updates the pretrained model's weights on a smaller, curated, task-specific dataset. Fine-tuning teaches the model new behaviors — how to follow instructions, how to respond in a specific format, how to handle your use case — but the underlying knowledge comes from pretraining.
+
+**Weak answer:** "Fine-tuning is training a model on your own data."
+
+**Strong answer:** "Pretraining builds the model's foundational knowledge and capabilities from scratch on a massive corpus. Fine-tuning adapts a pretrained model's behavior to a specific task or distribution using a much smaller labeled dataset, while preserving the knowledge acquired during pretraining. You cannot fine-tune a model into knowing facts it never saw during pretraining — but you can fine-tune it to express its knowledge in precisely the format your application requires."
 :::
 
-**Q2. What is instruction tuning?**
+**Q2. What is instruction tuning and what does it teach a model?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Instruction tuning is supervised fine-tuning on a dataset of (instruction, response) pairs, where each instruction describes a task in natural language and the response is the desired model output. The goal is to teach the model the meta-skill of following instructions — so that at inference time, it can generalize to novel instructions it has never seen. Before instruction tuning, base language models could only continue text; they had no concept of "answer this question" or "summarize this document." After instruction tuning, the model has internalized a behavioral pattern: read an instruction, produce the appropriate response. The seminal demonstration was Google's FLAN (2021), which showed that fine-tuning on thousands of diverse task descriptions phrased as instructions dramatically improved zero-shot performance on held-out tasks. Instruction tuning is stage one of the RLHF pipeline used to build ChatGPT and similar chat models — it provides the behavioral foundation that the subsequent reward modeling and RL stages refine.
+Instruction tuning is supervised fine-tuning on (instruction, response) pairs with the goal of teaching the model the meta-skill of following natural language directions. Before instruction tuning, base models only know how to continue text; they have no concept of "answer this question" or "translate this." After instruction tuning, the model knows the behavioral pattern: read an instruction, produce the appropriate response.
+
+**Weak answer:** "Instruction tuning teaches the model to follow instructions using a dataset of instruction-response pairs."
+
+**Strong answer:** "Instruction tuning teaches behavioral alignment — how to read an instruction and produce a response appropriate to its intent — not factual knowledge. The FLAN paper showed that a model trained on diverse instruction-formatted tasks dramatically outperforms the same base model on zero-shot tasks it has never seen, because it learned the meta-skill of instruction following itself. Instruction tuning does not inject new facts; the facts come from pretraining. If the model needs to know something that was not in pretraining, you need RAG or continued pre-training, not more SFT."
 :::
 
-**Q3. What is catastrophic forgetting?**
+**Q3. What is catastrophic forgetting and how do you mitigate it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Catastrophic forgetting is the degradation of previously learned capabilities when a neural network is trained on a new, narrower data distribution. In LLM fine-tuning, this means that a model fine-tuned on a specialized domain — medical text, legal documents, a specific product's support data — may become measurably worse at general tasks like coding, reasoning, or answering questions outside that domain. The cause is gradient-based learning: the optimizer updates weights to minimize loss on the fine-tuning examples, and these updates overwrite some of the weight configurations that encoded general capabilities. The severity scales with the narrowness of the fine-tuning distribution and the number of training steps. It can be detected by evaluating on general benchmarks (MMLU, HumanEval, HellaSwag) before and after fine-tuning. Mitigations include replay buffers (mixing general data into fine-tuning batches), elastic weight consolidation (penalizing changes to important weights), multi-task fine-tuning, and PEFT methods like LoRA (which freeze base weights entirely).
+Catastrophic forgetting is the degradation of previously learned capabilities when a neural network is trained on a new, narrow data distribution. A model fine-tuned on medical text may become measurably worse at coding or math. The cause is gradient-based learning: optimizer updates minimize loss on fine-tuning examples, and these updates overwrite some weight configurations that encoded general capabilities.
+
+Four mitigations: (1) Replay buffer — mix 10–20% diverse general data into fine-tuning batches; (2) Elastic Weight Consolidation — penalize changes to weights that are important for general capabilities; (3) Multi-task fine-tuning — train on domain task + general tasks simultaneously; (4) LoRA — freeze base model weights entirely so they structurally cannot change.
 :::
 
-:::
-
-::: {.callout-warning title="Mid Level"}
-
-**Q4. You have 500 labeled examples for a customer support classification task. Would you full fine-tune, use LoRA, or use few-shot prompting? Justify your choice.**
+**Q4. What is the Alpaca format and why does data format matter for fine-tuning?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-With 500 labeled examples, LoRA fine-tuning is typically the right choice, though the specific decision depends on a few factors. Few-shot prompting is viable if your 500 examples are diverse enough to select good in-context examples from, but a classification task with fixed output categories is a strong candidate for fine-tuning because the model needs to learn a specific output schema consistently. Full fine-tuning with 500 examples risks overfitting — you have enough signal to train a LoRA adapter but likely not enough to justify updating all 7 billion parameters without aggressive regularization, and the compute cost is not warranted. LoRA gives you the benefits of fine-tuning (consistent format, lower inference-time token cost, better performance on your specific distribution) with a fraction of the training compute and a low risk of catastrophic forgetting since base weights are frozen. The practical workflow: split your 500 examples 400/100 train/validation, train a LoRA adapter on the training set, evaluate on the validation set, and compare to a few-shot baseline. If LoRA is within 2% of few-shot accuracy, consider prompting for simplicity; if it's clearly better, deploy the adapter. For a classification task specifically, LoRA almost always wins once you have more than ~200 examples.
+The Alpaca format is a three-field JSON structure for single-turn instruction tuning: `{"instruction": "...", "input": "...", "output": "..."}`. The instruction describes the task, input provides optional context, and output is the desired response.
+
+Format matters because the model learns the structural tokens as part of the task. A model fine-tuned with `### Instruction:` delimiters will perform poorly if those delimiters are absent at inference time. The format must be identical between training and serving. This is a common source of production degradation: a team carefully fine-tunes with one template and deploys with another, then wonders why performance dropped 15%.
 :::
 
-**Q5. What makes a fine-tuning dataset high quality vs. low quality? What specific properties do you look for?**
+**Q5. When would you choose fine-tuning over prompting?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-A high-quality fine-tuning dataset has four core properties. First, diversity: the dataset must cover the full distribution of inputs your model will encounter in production. A dataset that represents only common cases trains a model that fails systematically on edge cases. Measure diversity by clustering your examples and checking that every cluster important to your use case is well-represented. Second, accuracy: every response must be correct and represent the exact behavior you want the model to exhibit. Errors in the dataset become errors in the model — there is no noise tolerance. Third, format consistency: if your desired output is structured JSON, every response in the dataset should be valid JSON with the same schema. Inconsistency in format teaches the model that any format is acceptable. Fourth, appropriate difficulty distribution: include easy examples (to anchor learning), medium examples (the main target behavior), and hard/edge-case examples (to push the model's ceiling). Specific red flags for low quality: duplicate or near-duplicate examples (mine entropy, not volume); very short responses that don't fully demonstrate the desired behavior; responses that are technically correct but stylistically inconsistent; and examples where the response requires knowledge not available in the prompt (forcing the model to hallucinate during training).
+Fine-tuning over prompting when: (1) the model consistently produces the wrong output format despite explicit instructions — a distribution gap that prompting cannot overcome; (2) few-shot examples in the prompt consume > 30% of the context window, making per-request token cost prohibitive at scale; (3) the model lacks domain-specific vocabulary that the base model never saw during pretraining; (4) you need perfectly consistent behavior across thousands of edge cases that prompt-based solutions keep failing on.
+
+The decision path: start with prompting, collect failure cases, build a labeled dataset from failures, and use that to justify the fine-tuning investment. If you are still engineering prompt complexity after 2 weeks without solving the core failures, fine-tuning is likely justified.
 :::
 
-**Q6. The LIMA paper claimed 1,000 examples could match models trained on 50,000 examples. What does this tell us about dataset quality and data collection strategy?**
+**Q6. What does the LIMA paper tell us about fine-tuning data?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The LIMA finding (Zhou et al., 2023) encodes a fundamental insight about what instruction tuning actually does. Instruction tuning is not teaching the model new knowledge — the model already has vast knowledge from pretraining. Instruction tuning is surface alignment: teaching the model to express that knowledge in the format and style appropriate for a helpful assistant. The amount of data needed to learn a behavioral format is much smaller than the amount needed to learn a factual corpus. A model trained on 50,000 redundant examples has mostly seen the same patterns repeated, providing limited additional signal beyond the first thousand. Carefully curated diverse examples, each demonstrating a distinct behavioral pattern, are far more efficient teachers. The practical implication for data collection strategy is: do not scale your dataset by adding more examples of things the model already handles well. Diagnose failure cases — tasks where the model's output is wrong or misformatted — and add examples specifically for those failure modes. Invest in annotation quality over annotation quantity: one high-quality, carefully reviewed example is worth more than twenty mediocre ones. This also makes human labeling tractable — 1,000 high-quality examples is achievable for a small team, whereas 50,000 requires industrial-scale annotation infrastructure.
+The LIMA paper (Zhou et al., 2023) showed that 1,000 carefully curated high-quality examples matched or exceeded models trained on 52,000 Alpaca examples. This works because instruction tuning is surface alignment, not knowledge transfer. The model already has the knowledge from pretraining; you are teaching the behavioral format. Behavioral format requires far fewer examples to learn than factual knowledge. The practical implication: invest in quality (diverse, accurate, carefully reviewed examples) over quantity. Diagnose failure cases and add targeted examples for those failures, rather than scaling up volume of easy cases the model already handles.
 :::
 
-**Q7. How would you detect catastrophic forgetting during a fine-tuning run before it's too late?**
+**Q7. What are the two main data formats for instruction tuning?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The key is systematic checkpoint evaluation throughout training, not just at the end. Set up an evaluation harness that runs automatically at fixed intervals — typically every 100-500 gradient steps, depending on the total dataset size. The harness should evaluate two categories of tasks: your target domain task (the training objective) and a set of general capability benchmarks representative of what you need the model to retain. For most applications, a minimal general benchmark suite includes MMLU or a subset for factual knowledge, one coding benchmark like HumanEval, and HellaSwag for commonsense reasoning. Plot both domain performance and general benchmark scores against training steps. The forgetting signal is a diverging plot: domain performance rising while benchmark scores fall. You want the checkpoint where domain performance is high and benchmark degradation is still acceptable — this is often well before final convergence. Early warning signs: if benchmark scores start dropping before your domain task has substantially converged, your learning rate is too high, your replay fraction is too low, or your fine-tuning dataset is too narrow. Catching this at step 500 out of 5,000 lets you adjust hyperparameters and restart; catching it at the end is expensive. Also monitor validation loss on a held-out sample of general pretraining data — a rising validation loss on that held-out set is a direct signal of catastrophic forgetting.
+The two dominant formats are Alpaca (single-turn) and ShareGPT/ChatML (multi-turn). Alpaca uses a three-field structure (instruction, input, output) for single-turn tasks. ShareGPT/ChatML represents conversations as alternating system/user/assistant turns. Multi-turn format is important for production chat applications because real users ask follow-up questions — a model fine-tuned only on single-turn data treats every message as a new conversation without maintaining context.
 :::
 
-:::
+---
 
-::: {.callout-important title="Forward Deployed Engineer"}
+### Mid Level
 
-**Q8. A customer wants to fine-tune a model on their internal docs so it "knows their product." Walk through the full data, compute, and deployment considerations you'd raise.**
+**Q1. You have 500 labeled examples for a customer support classification task. Would you full fine-tune, use LoRA, or use few-shot prompting? Justify your choice.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-This is a common request that requires careful scoping before any training begins. On the data side, the first question is what "knows their product" actually means. If the goal is factual knowledge retrieval — answering questions about product features, pricing, policies — fine-tuning is probably the wrong solution. RAG is better suited because it can be updated as the product evolves without retraining, and it provides attribution (you can show the user which document was cited). Fine-tuning is appropriate when the goal is behavioral: adopt our terminology, respond in our brand voice, follow our specific response structure. For behavioral fine-tuning, you need (instruction, response) pairs — not just raw documents. Raw internal docs must be converted into training examples, typically by having domain experts write ideal Q&A pairs, or by using a strong model to generate synthetic examples and then having experts review and filter them. The dataset should cover the full distribution of user queries you expect, not just the easy cases documented in the FAQ. On the compute side, for most teams a LoRA fine-tune of a 7B or 13B model is the right scope — full fine-tuning is rarely justified for behavioral customization. Compute for a LoRA run on 1,000-10,000 examples takes hours on a single A100, not days. On deployment, discuss: model versioning (when the product changes, you need to retrain — what is the retraining cadence and who owns it?), evaluation (what is the success metric, and how will you know if a new model version is better?), fallback (if the fine-tuned model fails, what happens?), and data security (the training examples may contain sensitive internal information — where is training happening and who has access?).
+LoRA fine-tuning is the right default with 500 examples, but the decision requires explicit reasoning through each option:
+
+**Few-shot prompting:** viable if your 500 examples are diverse enough to select good in-context examples and if the task responds cleanly to natural language instructions. For a classification task with fixed output categories, prompting is a reasonable baseline to establish first.
+
+**Full fine-tuning:** too risky at 500 examples. A 7B model has billions of degrees of freedom — far more than 500 examples can meaningfully constrain. Overfitting is near-certain without aggressive regularization, and the compute cost (84 GB+ GPU memory) is not justified for a behavioral adaptation that LoRA can accomplish at 16 GB.
+
+**LoRA:** the right choice. LoRA constrains updates to a low-rank subspace, dramatically limiting overfitting risk. 500 examples is well within the regime where LoRA adapters (r=8–16) generalize well. You get consistent format output, lower inference-time token cost, and better performance on your specific distribution vs. prompting.
+
+Practical workflow: split 400/100 train/validation, establish a few-shot prompting baseline first, then train LoRA. If LoRA is clearly better on eval, deploy the adapter. If the gap is negligible, prefer prompting for simplicity.
+
+**Follow-up:** What if you only had 100 examples?
+
+With 100 examples, the risk of overfitting even a LoRA adapter increases substantially. Prefer few-shot prompting as the primary approach. If you must fine-tune, use LoRA with very low rank (r=4), high dropout (0.1), and early stopping after 1–2 epochs. Augment with GPT-4-generated paraphrases to effectively multiply the dataset.
 :::
 
-**Q9. The customer's fine-tuned model performs well in offline evaluation but poorly in production. What are the five most likely root causes you'd investigate?**
+**Q2. Walk me through how you would build a data quality pipeline for a fine-tuning dataset.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Distribution shift is the first and most common cause: the offline evaluation test set does not represent the real distribution of production queries. If the test set was sampled from the training data distribution or was manually curated by the team, it will be biased toward cases the model handles well. Collect a random sample of actual production queries and evaluate on those — the gap often becomes immediately apparent. Second, prompt drift: the production prompt template differs from the training template, even subtly. Fine-tuned models are sensitive to their prompt format because they learned the format from training. A missing system prompt, a changed field order, or different token spacing can degrade performance. Third, input preprocessing differences: the offline evaluation pipeline may handle tokenization, encoding, special characters, or input length differently than the production serving stack. Fourth, output postprocessing: the offline evaluation may be lenient about format compliance (accepting close matches) while production relies on exact structured output. Fifth, temperature and sampling parameters: if offline eval used greedy decoding but production uses a nonzero temperature with nucleus sampling, the output distribution shifts meaningfully. Investigation protocol: replay a sample of production requests through the offline eval pipeline with exact production parameters; compare token-by-token output between production and offline eval for the same inputs; log and inspect all production failure cases; and shadow-test the model against the old baseline on live traffic before fully deploying.
+A production data quality pipeline has four stages:
+
+1. **Collection:** gather from production logs (real user queries), human annotation, and synthetic generation (GPT-4 as teacher). Prioritize diversity — cluster the input space and ensure all clusters are represented.
+
+2. **Deduplication:** run MinHash LSH near-duplicate detection at Jaccard threshold 0.85. Near-duplicates waste compute and cause overfitting. For a 100k example dataset, expect 10–20% deduplication rate from common sources.
+
+3. **Quality filtering:** apply heuristic filters (minimum response length, repetition ratio, language detection) plus a lightweight quality classifier (train a BERT-scale classifier on a small set of human-labeled good/bad examples to score at scale). Perplexity-based filtering using a reference model catches incoherent outputs.
+
+4. **Format validation:** for structured outputs (JSON, SQL, code), run a parser on every example and reject examples with syntax errors. For free-form text, check that responses match the expected structural format (headers, bullets, length range).
+
+After filtering, audit the distribution: cluster examples by embedding similarity and verify that every important use case cluster has sufficient coverage. This audit often reveals systematic gaps that need targeted data collection before training.
 :::
 
+**Q3. The LIMA paper claimed 1,000 examples could match models trained on 50,000 examples. What does this tell us and what are its limits?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+LIMA reveals that instruction tuning is surface alignment — teaching the model to express knowledge it already has from pretraining in the expected behavioral format — rather than knowledge transfer. Surface alignment requires far fewer examples to learn than factual knowledge. Redundant examples that repeat patterns the model already handles add noise but minimal signal.
+
+**Practical implication:** Focus data collection efforts on coverage and quality, not volume. Diagnose failure cases and collect targeted examples for failures. One carefully reviewed example for a failure mode is worth more than twenty mediocre easy-case examples.
+
+**Limits:** LIMA's result holds for behavioral/format adaptation. For genuine capability improvement — tasks the model cannot currently perform — you need far more data. LIMA used GPT-4-grade, carefully reviewed examples; the finding does not mean "1,000 randomly collected examples beats 50,000." It means "1,000 thoughtfully curated diverse examples beats 50,000 automatically collected ones." The quality bar per example must be very high.
+
+**Follow-up:** How would you operationalize "quality" in data collection?
+
+Each example should: (1) represent a distinct behavioral pattern not already covered by existing examples; (2) have a response that is factually correct and stylistically consistent with the target behavior; (3) have been reviewed by a domain expert, not just auto-generated; (4) demonstrate the target format precisely.
 :::
+
+**Q4. How would you detect and prevent overfitting during a fine-tuning run on a small dataset?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Detection:** Monitor validation loss at every checkpoint. Overfitting manifests as training loss continuing to decrease while validation loss plateaus or rises — the divergence point is the overfitting threshold. For small datasets (< 1,000 examples), this can appear within tens of steps. Also run 20–50 qualitative evaluation prompts at each checkpoint; overfit models often look statistically fine but fail logically on held-out prompts.
+
+**Prevention hierarchy:**
+
+1. **Use LoRA** (not full fine-tuning). Constrained parameter space is inherently regularizing — fewer degrees of freedom means less memorization capacity.
+2. **Early stopping.** Save the checkpoint at minimum validation loss. With 500 examples, optimal checkpoint is often after 1–3 epochs, not 5.
+3. **Reduce learning rate.** High LR causes rapid overfitting on small datasets. Start at 1e-5 for LoRA, try lower if validation loss diverges in the first epoch.
+4. **Increase LoRA dropout** to 0.1. Prevents adapter from memorizing specific phrasings.
+5. **Data augmentation.** Use GPT-4 to generate 2–3 paraphrases of each training example. Verify semantic correctness before including. Effective dataset multiplier of 2–3×.
+6. **Weight decay** at 0.1 (higher than default for small datasets).
+
+```python
+# Overfitting-resistant config for small dataset
+peft_config = LoraConfig(
+    r=8,                  # low rank = less memorization capacity
+    lora_alpha=16,
+    lora_dropout=0.1,     # higher dropout for small datasets
+    target_modules=["q_proj", "v_proj"],  # fewer modules = less capacity
+)
+
+training_args = SFTConfig(
+    learning_rate=1e-5,       # conservative LR
+    num_train_epochs=5,       # will early-stop before this
+    weight_decay=0.1,
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+)
+```
+:::
+
+**Q5. How do you choose between cosine LR decay and constant LR for fine-tuning?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Cosine decay** is the default for most fine-tuning runs: starts at peak LR, decays smoothly to near-zero over the training run. It outperforms constant LR in most benchmarks because the decaying LR allows the optimizer to make large updates early (covering the parameter space quickly) and small, precise updates late (converging carefully). Best for runs of 2+ epochs where you know the total step count in advance.
+
+**Constant LR** is acceptable for very short runs (< 1 epoch) or when you are doing iterative fine-tuning and don't know the total step count. Simpler to reason about — the update magnitude is constant throughout. The risk is that the model may not converge as tightly.
+
+**Linear decay** is a middle ground: starts at peak LR and decays linearly to zero. Simpler than cosine, slightly worse empirically.
+
+For LoRA adapters specifically, a 3-phase schedule sometimes outperforms pure cosine: linear warmup → cosine decay → brief constant tail. The constant tail prevents the LR from reaching near-zero, which can cause the adapter to under-converge in the final steps.
+
+Practical rule: use cosine unless you have a specific reason not to. The difference between cosine and linear is usually < 1% — more important to get the peak LR and warmup ratio right.
+:::
+
+**Q6. What is multi-task fine-tuning and when does it help?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Multi-task fine-tuning trains the model simultaneously on multiple tasks by mixing examples from all tasks in each training batch. It serves two purposes: preventing catastrophic forgetting (general task examples generate gradient signal that counteracts domain drift) and sometimes improving individual task quality (shared representations can generalize better than task-specific ones).
+
+**When it helps:** (1) When you have a primary domain task but need to preserve general capabilities (add 10–20% general replay data); (2) When tasks share underlying structure — e.g., training on summarization + extraction simultaneously often improves both because both require understanding document structure; (3) When deploying a single model for multiple tasks and want to avoid maintaining separate fine-tunes.
+
+**When it does not help:** (1) When tasks are contradictory — training simultaneously on "be brief" and "be comprehensive" tasks will confuse the model; (2) When you need maximum performance on a single task and can accept forgetting general capability.
+
+**Mixing ratio:** Tune via short ablations. Starting point is 80–90% domain / 10–20% general. Monitor both domain performance and general benchmarks at each checkpoint.
+:::
+
+**Q7. Walk through a full fine-tuning hyperparameter selection for a new task.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Start with defaults and adjust based on evidence, not intuition:
+
+1. **Model size:** Choose the smallest model that can plausibly perform the task. Fine-tuning a 70B model when a 7B fine-tune would suffice is a 10× waste of compute.
+
+2. **PEFT vs. full FT:** Default to LoRA unless you have > 50k examples and the specific behavioral change requires full rank updates. LoRA r=16, alpha=32, target modules = q/k/v/o projections.
+
+3. **Learning rate:** Start at 2e-4 for LoRA, 2e-5 for full FT. Run a 200-step LR sweep at 3–4 candidates (e.g., 1e-5, 5e-5, 1e-4, 2e-4) and pick the one with lowest validation loss at step 200.
+
+4. **Batch size:** Target effective batch size of 32–64. Use gradient accumulation to reach it within your GPU memory budget.
+
+5. **Epochs:** Start with 3. Monitor validation loss — if it hasn't converged, add more; if it has peaked before epoch 3, enable early stopping.
+
+6. **Warmup:** 5% of total steps, linear schedule.
+
+7. **Evaluation frequency:** Every 100–500 steps depending on dataset size. Checkpoint at every eval.
+
+8. **Stopping criterion:** Best validation loss (primary) + no general benchmark regression > 5% (secondary).
+:::
+
+---
+
+### Senior Level
+
+**Q1. Design a fine-tuning pipeline for a 13B model with 10,000 labeled customer support examples. Walk through data preparation, training setup, evaluation, and deployment.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**Data Preparation:**
+
+1. **Audit the raw 10,000 examples.** Check class/topic distribution by clustering embeddings (use a small BERT model). Identify underrepresented clusters and either collect more data or flag as edge cases for special handling.
+2. **Deduplication.** Run MinHash LSH at threshold 0.85. Expect 5–15% reduction.
+3. **Quality filtering.** Minimum response length (> 20 words), repetition ratio (unique words / total words > 0.5), format validation (if JSON output, parse all examples), domain expert review of a 200-example sample.
+4. **Split.** 9,000 train / 500 validation / 500 test. The test set must remain unseen until final evaluation. Draw all three splits from the same distribution but ensure no contamination.
+5. **Format.** Choose ChatML multi-turn format if the task involves conversation history; single-turn Alpaca format if inputs are independent. Apply the exact format that will be used at inference. Verify the tokenized length distribution — examples exceeding the model's context window at training time will be truncated; at inference time they will fail.
+
+**Training Setup:**
+
+- **Method:** QLoRA (4-bit base + LoRA adapters). A 13B model full fine-tune requires ~150 GB — 2× A100s at minimum. QLoRA runs comfortably on 1× A100 80GB.
+- **LoRA config:** r=16, alpha=32, dropout=0.05, target modules = q/k/v/o projections + down_proj/up_proj in MLP if compute allows.
+- **LR:** 2e-4 with cosine decay, 5% warmup.
+- **Batch:** Per-device batch size 4, gradient accumulation 8 = effective batch 32.
+- **Epochs:** 3–5 with early stopping on validation loss.
+- **Monitoring:** Log training loss, validation loss, and three general benchmarks (MMLU sample, HumanEval sample, HellaSwag) at every 200 steps. Alert if any benchmark drops > 5% from baseline.
+
+**Evaluation:**
+
+- **Primary metric:** Task-specific metric (F1 for classification, ROUGE for summarization, pass@1 for code). Measure on the 500-example test set.
+- **Regression suite:** 100 held-out examples from previous production queries representing the full range of observed failure modes.
+- **Adversarial eval:** 50 hand-crafted examples covering known edge cases and the hardest cases from the raw dataset.
+- **General benchmark regression:** Confirm no catastrophic forgetting on general capabilities.
+- **Qualitative review:** 30-minute human review of 50 random model outputs. Catches failure modes that automatic metrics miss.
+
+**Deployment:**
+
+- Merge LoRA adapter into base model weights before serving (eliminates adapter inference overhead).
+- Version the merged checkpoint with the training data hash and eval scores.
+- Deploy behind A/B test: 10% of traffic to new model, 90% to previous model, for 48 hours. Monitor production quality metrics (user satisfaction proxy, escalation rate, response error rate).
+- Define rollback criteria: automatic rollback if production quality drops > 3% relative to previous model within 48-hour window.
+- Gate full rollout on passing all eval criteria + A/B test.
+
+> 🎯 **What great looks like:** The answer covers all four phases with specific numbers, explains the rationale for each choice (why QLoRA not full FT, why those specific metrics), describes a production-grade evaluation suite including adversarial and qualitative review, and includes a deployment safety mechanism (A/B test with rollback criteria). Generic answers that say "train a model and evaluate it" miss the operational engineering that makes production systems reliable.
+
+> ⚠️ **Common Mistake:** Skipping the data audit step and assuming the raw 10,000 examples are ready to train on. Production-collected data almost always has class imbalance, near-duplicates, format inconsistencies, and low-quality outliers that will hurt model quality if not addressed.
+:::
+
+**Q2. Your fine-tuned model performs great on the eval set but drifts after 2 weeks in production. Walk me through your diagnosis.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**Step 1: Collect the evidence.** Pull a random sample of 100–200 production requests from the failure window and run them through both the eval pipeline and the fine-tuned model. Compare outputs to the pre-drift baseline model. Characterize the failure mode: is it format regression, factual errors, refusals, style drift, or something task-specific?
+
+**Step 2: Diagnose root causes in priority order:**
+
+1. **Input distribution shift.** The real users in week 3 are asking different questions than the users in weeks 1–2. Embed all production inputs and compare week-1 vs. week-3 centroids. A shift in embedding space confirms distribution drift. The model was evaluated on a test set drawn from week-1 distribution and does not generalize to week-3 queries.
+
+2. **Prompt template drift.** Has the production prompt changed — new system prompt, different field ordering, updated instructions from the product team? Even minor prompt changes can degrade fine-tuned model behavior because the model learned the exact training format.
+
+3. **Data pipeline regression.** Is input preprocessing at serving time still matching what was used at training time? Character encoding, whitespace normalization, special token handling — check the preprocessing code diff for the deployment that went out 2 weeks ago.
+
+4. **Upstream dependency change.** Did an external service that generates inputs to the model change its output format? A CRM system that started including different fields, a retrieval system that changed its response format, or a change in how conversation history is formatted.
+
+5. **Model quantization or serving optimization.** Was the model re-quantized or compiled for a new serving backend in the 2-week window? Quantization changes can cause subtle output distribution shifts on certain input types.
+
+**Step 3: Remediate based on root cause.**
+
+- Distribution shift → collect new labeled examples from the current production distribution and retrain. Add the current distribution to the eval test set permanently.
+- Prompt drift → fix the prompt to match training format, or retrain with the new prompt.
+- Preprocessing regression → fix the preprocessing code, confirm parity in a shadow test.
+- Serving regression → rollback the serving change and validate.
+
+**Step 4: Build forward-looking guards.**
+
+- Add automated distribution monitoring: compute embedding distance between production traffic distribution and training distribution daily. Alert when distance exceeds threshold.
+- Shadow-run the current production model against the previous version on live traffic daily. Alert when output divergence exceeds 5%.
+- Maintain an eval dataset that includes the last 4 weeks of representative production queries, refreshed weekly.
+
+> 🎯 **What great looks like:** A structured diagnostic process that moves from evidence collection to hypothesis generation to root cause confirmation. Not jumping to "retrain the model" as the first step — diagnosis first, remediation second. Including forward-looking monitoring infrastructure that prevents the next recurrence.
+
+> ⚠️ **Common Mistake:** Immediately concluding "the model needs retraining" without investigating why. If the root cause is a prompt template change, retraining will not fix it — and you will have spent GPU compute to produce the same failure.
+:::
+
+**Q3. How do you prevent overfitting on a dataset of only 500 examples for a 7B model?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+500 examples for a 7B model creates a severe memorization risk — the model has 7 billion parameters and 500 data points. Preventing overfitting requires a multi-layer strategy:
+
+**Layer 1: Structural constraint (highest leverage)**
+Use LoRA with low rank (r=4 or r=8) and target only a subset of modules (q_proj + v_proj, not all projections). This reduces effective trainable parameters from 7B to ~4–8M — a ratio the 500 examples can meaningfully constrain.
+
+**Layer 2: Regularization**
+- `lora_dropout=0.1` — dropout on adapter activations breaks memorization of specific phrasings
+- `weight_decay=0.1` — L2 penalty prevents large adapter weight magnitudes
+- `gradient_clipping=1.0` — prevents explosive updates on edge-case examples
+
+**Layer 3: Training dynamics**
+- `learning_rate=1e-5` — very conservative; large LR overfits faster
+- Early stopping on validation loss with patience of 2–3 checkpoints
+- Maximum 2–3 epochs; optimal checkpoint often appears in epoch 1 for datasets this small
+
+**Layer 4: Data augmentation**
+Use GPT-4 to generate 2–3 semantically equivalent paraphrases of each training example. Validate 10% of augmented examples manually to confirm semantic correctness. This multiplies the effective dataset size to 1,000–1,500 examples at low cost.
+
+**Layer 5: Evaluation rigor**
+Reserve 100 of the 500 examples as validation set. Never use these for any tuning decision. Run qualitative review of model outputs at every checkpoint — statistical metrics can look stable while qualitative quality degrades.
+
+**Quantitatively:** with these interventions applied, a 500-example fine-tune on a 7B model should converge at validation loss within 5% of training loss. If the gap is > 10%, drop rank further or reduce epochs.
+
+```python
+# Overfitting-resistant config for 500-example 7B fine-tune
+peft_config = LoraConfig(
+    r=4,                          # very low rank for small dataset
+    lora_alpha=8,
+    lora_dropout=0.1,             # higher regularization
+    target_modules=["q_proj", "v_proj"],  # minimal modules
+    bias="none",
+    task_type="CAUSAL_LM",
+)
+
+training_args = SFTConfig(
+    num_train_epochs=3,           # will early-stop before this
+    learning_rate=1e-5,           # very conservative
+    weight_decay=0.1,
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    eval_steps=50,                # frequent evals for small dataset
+    save_steps=50,
+)
+```
+
+> 🎯 **What great looks like:** Multiple layers of intervention at different levels (architecture, regularization, training dynamics, data). Explains why each intervention helps. Provides quantitative targets. Includes code showing the configuration.
+
+> ⚠️ **Common Mistake:** Only applying early stopping and calling it done. Early stopping helps but is insufficient alone — the model can still memorize the training set before the validation loss signal becomes clear enough to trigger stopping.
+:::
+
+**Q4. When would you choose continued pre-training over SFT? Give a concrete example.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**The core distinction:** Continued pre-training adds knowledge by updating the model's representation of a domain through next-token prediction on unlabeled text. SFT adds behavior by teaching the model to respond appropriately to instructions. Choose continued pre-training when the domain has vocabulary, concepts, or reasoning patterns that are rare or absent in the base model's training data — patterns the model simply does not know exist, not just patterns it does not know how to apply helpfully.
+
+**Diagnostic test:** Feed a 1,000-token sample of your domain text to the base model and compute perplexity. Compare to the model's perplexity on general English text. A ratio > 2× suggests the domain is genuinely out-of-distribution and continued pre-training is warranted.
+
+**Concrete example — clinical NLP:**
+
+A healthcare company wants to build a model that can extract structured information from clinical notes. They have 500,000 de-identified clinical notes (unlabeled) and 5,000 expert-annotated extraction examples.
+
+The right sequence:
+1. **Continued pre-training** on the 500,000 clinical notes with standard next-token prediction objective. This teaches the model: ICD-10 code syntax, SNOMED terminology, common clinical abbreviations (SOB = shortness of breath, PMHx = past medical history), the reasoning patterns in clinical documentation (SOAP note structure), and drug names + dosage formats. After this stage, perplexity on clinical text drops significantly.
+
+2. **SFT** on the 5,000 annotated examples. Now the model knows the domain vocabulary and uses it to produce accurate extractions in the required structured format.
+
+3. **RLHF/DPO** (if needed) for safety and tone in patient-facing applications.
+
+**Why SFT alone fails:** If you skip continued pre-training and go straight to SFT on 5,000 examples, the model will produce structured outputs in approximately the right format, but it will hallucinate drug names, misinterpret clinical abbreviations, and fail on uncommon but important ICD codes. The SFT data is not large enough to teach domain vocabulary from scratch — the base model's representations of these rare tokens are insufficient.
+
+**Other examples where continued pre-training is clearly warranted:**
+- Legal documents (jurisdiction-specific statutes, case citation formats, Latin terms)
+- Scientific literature (domain notation, experimental methodology, field-specific abbreviations)
+- Proprietary internal programming languages or DSLs
+
+**When continued pre-training is NOT needed:**
+- Domain uses standard English with common vocabulary
+- You need behavioral change (format, tone, structure) not knowledge change
+- You have < 100M tokens of domain text (usually insufficient for continued pre-training to matter)
+
+> 🎯 **What great looks like:** A concrete example with specific vocabulary, a diagnostic test (perplexity ratio), clear explanation of why SFT alone fails in that scenario, and a sense for the scale of data needed (500,000 documents vs. 5,000 annotated examples are very different scales serving different purposes).
+
+> ⚠️ **Common Mistake:** Recommending continued pre-training whenever fine-tuning quality is insufficient, without first checking whether the knowledge gap is real (rare domain vocabulary) vs. a data quality or SFT training issue. Continued pre-training is expensive and usually not the root cause of poor fine-tuning quality.
+:::
+
+**Q5. Your team is evaluating whether to use RAG or fine-tuning to give a model knowledge of your company's internal product documentation. How do you make the decision?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+This is a knowledge injection vs. behavioral adaptation question. The answer depends on the nature of the knowledge and how it is used.
+
+**Use RAG when:**
+- Documentation changes frequently (quarterly releases, policy updates) — fine-tuned knowledge is stale the moment the model is trained.
+- You need attribution ("this answer comes from document X, section Y") for compliance, trust, or debugging.
+- The knowledge is factual and discrete — look up "does our product support feature X" is a retrieval problem.
+- Your documentation is large and comprehensive — RAG can index the full corpus; fine-tuning cannot memorize it all.
+
+**Use fine-tuning when:**
+- The goal is behavioral adaptation to product terminology and style, not factual lookup. The model should respond in the product's voice, use the product's vocabulary, and follow the product's interaction conventions.
+- You want shorter production prompts (cost reduction at scale).
+- The patterns you want to teach are repetitive and structural, not specific facts (e.g., always format pricing as "$X/month/seat", always end responses with a CTA).
+
+**Typical right answer:** Both. Use continued pre-training or SFT to teach the model the product's vocabulary and response style (behavioral layer), combined with RAG to inject current, attributable facts at inference time (knowledge layer). The fine-tuned model knows how to respond in the product's voice; RAG ensures the facts it voices are current and verifiable.
+
+**Decision framework:**
+1. Will the documentation change? If yes → RAG is mandatory for the factual layer.
+2. Do you need attribution? If yes → RAG is mandatory.
+3. Do you need behavioral style adaptation beyond what few-shot prompting can achieve? If yes → consider fine-tuning.
+4. Is per-request token cost a constraint? If yes → fine-tuning can reduce prompt size.
+
+> 🎯 **What great looks like:** Recognizes that this is not a binary choice. Distinguishes between factual knowledge (where RAG dominates) and behavioral knowledge (where fine-tuning helps). Proposes a combined architecture.
+
+> ⚠️ **Common Mistake:** Recommending fine-tuning on raw documentation as the primary solution. Fine-tuning on documents teaches patterns from those documents, not the facts themselves — and when the docs change, the fine-tuned model's "knowledge" is stale with no mechanism for update.
+:::
+
+**Q6. How would you design a continuous weekly fine-tuning pipeline that incorporates new production data?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+Continuous fine-tuning requires solving three simultaneous problems: incorporating new signal without overfitting to recent data, preventing catastrophic forgetting of previous fine-tuning, and maintaining a reliable deployment pipeline with safety gates.
+
+**Pipeline Architecture:**
+
+1. **Weekly data collection (Monday):**
+   - Pull production interactions from the past 7 days.
+   - Quality filter: keep interactions where the model output was rated positively, user did not rephrase, and task was completed.
+   - Deduplicate against the full historical training set (MinHash LSH). Retain only genuinely new patterns.
+   - Target: 50–200 high-quality new examples per week. Quality over volume.
+
+2. **Dataset composition (Tuesday):**
+   - 40% new examples (this week's data)
+   - 40% replay from historical fine-tuning data (randomly sampled, diversity-weighted)
+   - 20% general pretraining replay (prevents catastrophic forgetting of base capabilities)
+   - Validate distribution balance across all major task categories
+
+3. **Incremental training (Tuesday–Wednesday):**
+   - Start from current production adapter, NOT from the base model. This is adapter continuation.
+   - Use 50% of the original peak learning rate (model is already near optimal).
+   - Train for 1–2 epochs over the composed dataset.
+   - Run checkpoint evaluation at every 100 steps.
+
+4. **Automated validation gate (Thursday):**
+   - Run the full regression suite: all historical eval test cases (500+ examples accumulated over all prior weeks).
+   - Run the current week's new test cases (20% of this week's data held out from training).
+   - Run general benchmark sample (MMLU, HumanEval).
+   - Block promotion if: any category drops > 3% from current production model, or any general benchmark drops > 5%.
+
+5. **Shadow deployment (Thursday–Friday):**
+   - Route 10% of production traffic to candidate model.
+   - Compare production quality metrics (satisfaction proxy, error rate) against current model.
+   - 48-hour minimum shadow period before full rollout.
+
+6. **Full rollout + versioning (Saturday):**
+   - Version every adapter with timestamp, training data hash, eval scores.
+   - Maintain 4 weekly checkpoints for rapid rollback.
+   - Log all training metadata to enable reproducibility.
+
+**What can go wrong:**
+- New data quality degrades → catches in validation gate.
+- Forgetting of historical fine-tuning → catches via regression suite on historical test cases.
+- Base capability regression → catches via general benchmark monitoring.
+- Silent production degradation → catches via shadow deployment monitoring.
+
+> 🎯 **What great looks like:** A complete pipeline with specific data composition ratios, a safety gate with quantitative rollback criteria, shadow deployment, versioning, and a description of what monitoring catches each failure mode.
+
+> ⚠️ **Common Mistake:** Designing a pipeline that only looks at new data performance and ignores historical regression. Every weekly update is a potential catastrophic forgetting event for the previous fine-tuning. Regression testing on historical eval cases is not optional.
+:::
+
+---
 
 ## Further Reading
 
 - [FLAN: Finetuned Language Models Are Zero-Shot Learners](https://arxiv.org/abs/2109.01652)
-- [Self-Instruct: Aligning LMs with Self-Generated Instructions](https://arxiv.org/abs/2212.10560)
 - [LIMA: Less Is More for Alignment (Zhou et al., 2023)](https://arxiv.org/abs/2305.11206)
 - [InstructGPT: Training Language Models to Follow Instructions with Human Feedback](https://arxiv.org/abs/2203.02155)
+- [Self-Instruct: Aligning LMs with Self-Generated Instructions](https://arxiv.org/abs/2212.10560)
 - [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
+- [QLoRA: Efficient Finetuning of Quantized LLMs](https://arxiv.org/abs/2305.14314)
+- [Scaling Instruction-Finetuned Language Models (FLAN-T5)](https://arxiv.org/abs/2210.11416)
+- [TRL: Transformer Reinforcement Learning Library](https://github.com/huggingface/trl)

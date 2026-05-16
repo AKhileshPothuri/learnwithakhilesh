@@ -1,215 +1,808 @@
-# Common GenAI Customer Use Cases
+---
+title: "Customer Discovery & Scenarios"
+---
+
+# Customer Discovery & Scenarios
 
 ::: {.callout-note}
-**Who this chapter is for:** FDE
+**Who this chapter is for:** FDE (Forward Deployed Engineer)
+
 **What you'll be able to answer after reading this:**
 
-- The canonical GenAI use cases and the architecture patterns behind each
-- How to match a customer's problem to the right GenAI pattern
-- What "good" vs. "bad" looks like for each use case type
-- How to quickly prototype and de-risk a solution
+- How to run a structured discovery call before proposing any technical solution
+- How to translate vague business asks ("make our chatbot smarter") into concrete technical requirements
+- The canonical enterprise GenAI use cases and the implementation patterns behind each
+- How to scope MVP vs. full solution and define "done" for AI projects
+- How to recognize red flags early, say no gracefully, and frame ROI
 :::
 
-## Use Case Taxonomy
+---
 
-| Use Case | Core Pattern | Key Technical Challenge |
+## Why Discovery Comes Before Architecture
+
+The most common mistake FDEs make is proposing a solution within the first five minutes of a customer conversation. A customer says "we want to add AI to our product" and the engineer immediately starts talking about RAG pipelines and vector databases. This is backwards. The customer's stated want is not the same as their underlying problem — and the underlying problem may not need AI at all.
+
+Discovery is the practice of understanding a customer's problem deeply before proposing any solution. It is not a soft skill; it is a technical discipline. A well-structured discovery conversation collects the information required to make an architectural decision and surfaces the constraints that will determine whether a project succeeds or fails. An undiscovered constraint — "we can't send data to external APIs" — discovered six weeks into a build is not a planning failure; it is a discovery failure.
+
+The mental model: **diagnose before prescribing**. A doctor who prescribes medication before examining the patient is practicing malpractice. A field engineer who architects a system before understanding the customer's workflow is doing the same thing, with a smaller but still real blast radius.
+
+::: {.callout-warning title="Anti-Pattern: Solution-First Discovery"}
+A customer says "we want AI in our customer support." The FDE immediately says "great, we can build a RAG system with your knowledge base, connect it to Zendesk, and have a chatbot handling tickets within 8 weeks."
+
+Problems: The FDE doesn't know the current ticket resolution time (baseline). Doesn't know if the knowledge base exists or is maintained. Doesn't know latency requirements. Doesn't know whether the customer is regulated. Doesn't know who will own the system post-deployment. This engagement is already at risk and no code has been written.
+:::
+
+---
+
+## The 5 Discovery Questions
+
+Every discovery conversation should answer these five questions before a whiteboard is touched.
+
+### Question 1: What Does Success Look Like?
+
+**One sentence:** What specific, measurable outcome would make this project a success in the customer's eyes?
+
+Without a definition of success, you cannot evaluate whether the project worked. "Success" is often stated in business language ("faster support," "better search," "smarter recommendations") and must be translated into measurable technical metrics. Press until you get numbers.
+
+Good follow-ups:
+- "If we build this and it works perfectly, what's different about your business six months from now?"
+- "How would you know, six months after launch, whether this was worth building?"
+- "What's the primary metric your team would track — CSAT score, ticket resolution time, analyst hours saved?"
+- "Is there a baseline metric today you'd be comparing against?"
+
+The answers reveal whether the customer has thought concretely about value. A customer who says "we'd reduce support ticket volume by 40%" has thought about this. A customer who says "it would just be a lot better" has not, and you need to help them get specific before scoping anything.
+
+::: {.callout-tip title="Translation Example"}
+**Business language:** "Our support team is overwhelmed."
+**Technical requirements:** Reduce average handle time from 8 min → 4 min; deflect 30% of tier-1 tickets; maintain CSAT ≥ 4.2/5; human escalation path for all complex issues.
+:::
+
+### Question 2: What Is the Current Workflow?
+
+**One sentence:** Walk through exactly what happens today, step by step, before we build anything.
+
+You need to understand the current system to know what "better" means. Current workflow questions surface integration requirements, data sources, stakeholder handoffs, and the failure modes of the existing process.
+
+Good follow-ups:
+- "Walk me through what happens when a customer submits a support ticket right now, step by step."
+- "Where does the workflow break down today? Where do things slow down or go wrong?"
+- "What does your support agent do when they get a ticket — what systems do they open, what do they look up?"
+- "Are there cases the current system handles well that we should be careful not to break?"
+
+You are building a map of the current state that will become the architectural requirements for the future state.
+
+### Question 3: What Data Do You Have?
+
+**One sentence:** What data exists, where does it live, how clean is it, and who controls access to it?
+
+AI systems require data. The data questions determine whether the project is technically feasible at all and shape every downstream architectural decision.
+
+Good follow-ups:
+- "What data sources would the AI need to draw from — knowledge base, product docs, previous ticket history?"
+- "Is this data currently in a structured format, or is it spread across PDFs, emails, Confluence pages?"
+- "How often does this data change — does the knowledge base stay current, or is it frequently out of date?"
+- "Are there any data residency or sovereignty requirements — does the data need to stay on-prem or in a specific region?"
+- "Who has access to the data — is it siloed by team or department, or centralized?"
+
+::: {.callout-important title="Red Flag: No Data"}
+A customer wants to build a document Q&A system. You ask about their knowledge base. They say: "We're planning to build it as part of this project." This is not a knowledge base project with AI on top — it is a data problem. The right first step is not AI; it is building and maintaining a source of truth. Recommend starting there.
+:::
+
+### Question 4: What Are the Constraints?
+
+**One sentence:** What are the hard limits — technical, legal, organizational, budgetary — that the solution must operate within?
+
+Constraints are architectural requirements in disguise. A constraint discovered after design forces a redesign; a constraint discovered in discovery becomes a design input.
+
+Key constraint categories:
+
+| Category | Example Questions |
+|---|---|
+| Data residency / compliance | "Can data leave your infrastructure? Are you HIPAA/GDPR/SOC2 constrained?" |
+| Latency | "What's the maximum acceptable response time for a user-facing feature?" |
+| Budget | "What's the rough budget envelope — are we talking a $5K POC or a $500K platform?" |
+| Integration | "What does this need to connect to — specific CRMs, databases, auth systems?" |
+| Ownership | "Who will maintain this system after we build it? Does your team have ML engineers?" |
+| Change management | "How will you get users to adopt this? Is there a training plan?" |
+
+### Question 5: Who Are the Stakeholders?
+
+**One sentence:** Who needs to approve, who will use it, who will maintain it, and who can kill it?
+
+Stakeholder mapping prevents a common failure mode: building the right thing for the wrong person, who then loses funding or changes priorities. You need to know:
+
+- **The economic buyer** — who controls the budget and makes the final go/no-go decision?
+- **The technical sponsor** — who owns the integration and will maintain it post-launch?
+- **The end users** — what does their day-to-day workflow look like, and what would adoption require?
+- **The skeptic** — who in the organization is most likely to block or slow this project, and what are their concerns?
+- **The champion** — who is most invested in this succeeding and will advocate for it internally?
+
+::: {.callout-tip title="Stakeholder Red Flag"}
+If the person you're talking to cannot answer "who would sign off on the budget for this," they are not the economic buyer. Get to the economic buyer before investing significant time in architecture. Projects die when the champion doesn't control the budget.
+:::
+
+---
+
+## Translating Business Language into Technical Requirements
+
+Customers speak in business outcomes. Engineers need technical specifications. The translation layer is part of the FDE's job.
+
+| Business Statement | What to Ask | Technical Requirement |
 |---|---|---|
-| Document Q&A | RAG | Retrieval quality, context length |
-| Internal search | Embeddings + semantic search | Index freshness, hybrid retrieval |
-| Code generation / copilot | Fine-tuned decoder | Security, hallucination in code |
-| Customer support chatbot | RAG + guardrails | Hallucination, escalation logic |
-| Data extraction / classification | Structured output | Consistency, edge cases |
-| Summarization | Direct generation | Length control, faithfulness |
-| Report generation | Agents + RAG | Multi-step reasoning, citations |
+| "Make our chatbot smarter" | How do you define smart? What does it do wrong today? | Accuracy ≥ 90% on top-50 intent categories; latency < 2s P95; hallucination rate < 2% |
+| "We want AI in our product" | What user problem would AI solve? What's the specific workflow? | Scoped feature list; specific user journey; measurable outcome |
+| "Our search is bad" | What makes it bad? Too slow? Wrong results? Misses concepts? | P95 latency < 500ms; MRR ≥ 0.7 on representative query set; zero unauthorized results |
+| "We need to process these documents faster" | How fast is it today? What's the bottleneck? | Processing time from N hours → M minutes; extraction accuracy ≥ 95% on key fields |
+| "We want to automate our reports" | What's in the report? Who reads it? What decisions does it drive? | Automated generation of weekly summary with 5 specified sections; human review before distribution |
+| "Our analysts spend too much time on data" | How many hours? What's the specific data work? | 15 analyst-hours/week → 3 hours/week on specified query types |
 
-## Document Q&A
+The framework: every business statement contains a **pain** (what's wrong today), a **metric** (how you'd measure improvement), and a **threshold** (how much improvement is enough). Extract all three before designing anything.
 
-The most common enterprise use case. A user asks a natural-language question; the system retrieves relevant document sections and generates a grounded answer with citations.
+---
 
-**Architecture:**
-1. Ingest documents → chunk → embed → store in vector DB
-2. At query time: embed query → retrieve top-k chunks → inject into LLM prompt
-3. LLM generates answer citing specific retrieved passages
+## Common Enterprise AI Use Cases: Patterns and Implementation
 
-**The questions that determine architecture:**
-- How large is the document corpus? (determines vector DB choice)
-- How often do documents change? (determines ingestion pipeline complexity)
-- What's the acceptable latency? (determines whether re-ranking is affordable)
-- What access control is needed? (document-level auth in the retrieval layer)
+### Customer Support Automation
 
-**Key failure modes:** retrieving irrelevant chunks (fix: re-ranking + hybrid search), hallucinating beyond the retrieved context (fix: explicit grounding instruction + faithfulness eval), stale answers from outdated index (fix: event-driven re-ingestion).
+**One sentence:** Automatically handle tier-1 support requests using intent classification, knowledge retrieval, and guardrailed response generation, with a human escalation path for everything the system can't confidently handle.
 
-## Enterprise Search
-
-Replacing keyword search with semantic + hybrid search. Users often don't know the exact terminology — they search by concept, not by the specific words a document uses.
-
-**Architecture:**
-- Index documents with both dense embeddings and BM25 sparse index
-- At query time: execute both, fuse results with Reciprocal Rank Fusion (RRF)
-- Optional: add faceted filters (department, date range, document type) on top of semantic results
-
-**When keyword search still wins:** compliance lookups ("find all documents citing regulation 45 CFR 164.514"), exact product code lookups, anything where the user knows the precise string.
-
-## Code Copilots
-
-In-editor autocomplete (GitHub Copilot model) vs. chat interface (Cursor model) are architecturally different products.
-
-**Autocomplete** requires sub-100ms latency — speculative decoding, small fine-tuned models, prefix caching. **Chat** can afford 2–5 second responses and benefits from full repository context.
-
-**Security considerations:** the model sees proprietary source code. For enterprise customers: on-prem deployment or VPC-deployed API, audit logging of all completions, output scanning for secrets and PII.
-
-**Evaluation:** run the model on your actual codebase, measure pass@k on unit tests the model doesn't see, track whether suggestions require edits before acceptance.
-
-## Customer Support Automation
+Customer support is the most deployed enterprise GenAI use case because the data (historical tickets, knowledge base articles) typically exists, the value proposition is clear (cost reduction, faster resolution), and the failure mode (wrong answer to a customer) is visible and measurable.
 
 **Architecture:**
 ```
 User message
-  → Intent classifier (is this in-scope?)
-  → RAG retrieval (relevant policy/product docs)
-  → LLM response generation
-  → Output safety check
-  → If confidence < threshold: human escalation
+  → Input safety classifier (in scope? safe?)
+  → Intent classifier (ticket type → routing logic)
+  → RAG retrieval (relevant KB articles, policy docs)
+  → LLM response generation (grounded in retrieved context)
+  → Output safety check (factual? policy-compliant? no commitments beyond authority)
+  → Confidence threshold check
+    → High confidence: return response to user
+    → Low confidence: route to human agent with context summary
 ```
 
-The escalation path is not optional — it's the core reliability mechanism. A system that handles 80% of tickets accurately but fails silently on 20% is worse than no automation.
+**Critical components:**
+- **Intent classifier:** a lightweight classifier (BERT-class, not a large LLM) that determines whether the message is in-scope, what category it falls into, and whether it should immediately route to a human (billing disputes, legal complaints, threats). This runs fast and cheap before the expensive LLM call.
+- **Human escalation:** not optional. Define escalation triggers: confidence < 0.75, sentiment = negative, topic = legal/billing/safety, explicit user request. The escalation path should pass the full conversation context to the human agent so they don't start from scratch.
+- **Output constraints:** the LLM must not make commitments the business can't keep — specific refund amounts, timeline promises, guarantees. System prompt explicitly prohibits these: "Do not commit to specific refund amounts or timelines. If a customer requests these, explain that a human agent will follow up."
 
-**Tone and safety guardrails:** input classifiers for harmful content, output classifiers for policy violations, explicit prohibition on the model making commitments the business can't keep (refund amounts, timelines, guarantees).
+**When to use:** Tier-1 support with a maintained knowledge base and well-defined intent taxonomy. When NOT to use: highly regulated industries where every customer interaction requires human accountability (some financial services, healthcare), or when the knowledge base is nonexistent or severely out of date.
 
-## Data Extraction and Structured Output
+```python
+# Simplified intent + routing logic
+from anthropic import Anthropic
 
-The pattern: give the LLM an unstructured document and a JSON schema, ask it to fill the schema. LLMs are surprisingly good at this for complex documents (contracts, medical records, financial filings) that rule-based extractors fail on.
+client = Anthropic()
 
-**Validation loop:**
-1. LLM generates candidate JSON
-2. Schema validation (Pydantic, jsonschema) — catch structural errors
-3. Business logic validation — catch semantic errors ("end date before start date")
-4. If validation fails: retry with error message in context (typically 1–2 retries resolves 95%+ of failures)
+SYSTEM_PROMPT = """You are a customer support assistant for Acme Corp.
+Answer questions using ONLY the provided knowledge base articles.
+If the answer is not in the provided articles, say: "I don't have that information — let me connect you with a specialist."
+Do NOT promise specific refund amounts, timelines, or outcomes.
+If the customer expresses frustration, acknowledge it and offer to escalate."""
 
-**Confidence signals:** ask the model to include a `confidence` field per extracted item. Items below threshold route to human review rather than auto-acceptance.
+def handle_support_ticket(user_message: str, retrieved_articles: list[str]) -> dict:
+    context = "\n\n".join([f"[Article]: {a}" for a in retrieved_articles])
+
+    response = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=512,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {"role": "user", "content": f"Knowledge base:\n{context}\n\nCustomer message: {user_message}"}
+        ]
+    )
+
+    answer = response.content[0].text
+    # Simple heuristic for escalation detection
+    escalate = any(phrase in answer.lower() for phrase in
+                   ["connect you with", "specialist", "don't have that information"])
+
+    return {"answer": answer, "escalate": escalate}
+```
+
+### Document Processing and Extraction
+
+**One sentence:** Use LLMs to extract structured data from unstructured documents (contracts, invoices, medical records) where rule-based extractors fail due to format variability and domain complexity.
+
+**Architecture:**
+1. Document ingestion: OCR for scanned documents (Azure Document Intelligence, AWS Textract)
+2. LLM extraction: provide document text + JSON schema → fill the schema
+3. Schema validation: Pydantic validates structural correctness
+4. Business logic validation: check semantic rules (end date after start date, amounts within valid range)
+5. Confidence routing: high confidence → auto-accept; low confidence → human review queue
+
+**Validation loop (implement this — it resolves ~95% of failures):**
+```python
+from pydantic import BaseModel, validator
+from anthropic import Anthropic
+import json
+
+client = Anthropic()
+
+class ContractExtraction(BaseModel):
+    counterparty: str
+    effective_date: str
+    expiration_date: str
+    contract_value_usd: float | None
+    auto_renewal: bool
+    governing_law: str | None
+    confidence: float  # 0.0-1.0
+
+EXTRACTION_PROMPT = """Extract the following fields from this contract.
+Return valid JSON matching this schema exactly.
+For fields you cannot find with high confidence, set them to null and set confidence below 0.7.
+
+Schema: {schema}
+
+Contract text:
+{document}"""
+
+def extract_contract(document_text: str, max_retries: int = 2) -> ContractExtraction:
+    schema = ContractExtraction.model_json_schema()
+
+    for attempt in range(max_retries + 1):
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": EXTRACTION_PROMPT.format(
+                    schema=json.dumps(schema, indent=2),
+                    document=document_text[:8000]  # context limit
+                )
+            }]
+        )
+
+        try:
+            raw = json.loads(response.content[0].text)
+            extraction = ContractExtraction(**raw)
+            # Business logic validation
+            if extraction.effective_date and extraction.expiration_date:
+                assert extraction.expiration_date > extraction.effective_date, \
+                    "Expiration date must be after effective date"
+            return extraction
+        except (json.JSONDecodeError, ValueError, AssertionError) as e:
+            if attempt == max_retries:
+                raise
+            # Feed error back for self-correction
+            document_text = f"Previous attempt failed: {e}\n\nPlease fix and retry.\n\n{document_text}"
+
+    raise RuntimeError("Extraction failed after retries")
+```
+
+**Production gotcha:** LLMs are great at extraction but will hallucinate field values when a field is genuinely absent. Always include a `confidence` field per extracted item, and route low-confidence extractions to human review rather than auto-accepting them. A confident wrong extraction that flows into downstream systems is worse than no extraction.
+
+### Internal Knowledge Search
+
+**One sentence:** Replace keyword search with semantic + hybrid retrieval so employees can find information by concept, not just by the specific words used in a document.
+
+**Architecture:**
+- Dual index: dense embeddings (semantic) + BM25 sparse index (keyword)
+- At query time: run both retrievals, fuse with Reciprocal Rank Fusion (RRF)
+- Access control: filter results to documents the user is authorized to see, applied at retrieval time (not post-filter)
+- Citations: every result includes the source document, section, and last-updated timestamp
+
+**Access control is not optional.** An enterprise search system that returns HR documents to unauthorized users, or executive strategy documents to a general employee, is worse than no search — it is a compliance violation. Access control must be implemented at the vector DB retrieval layer, not in post-processing. Every major vector database (Pinecone, Weaviate, Qdrant) supports metadata filtering; use it.
+
+**When keyword search still wins:** compliance lookups for exact regulatory citation strings, exact product code lookups, contract clause searches where the user knows the precise language. Hybrid search handles both.
+
+### Code Generation Assistant
+
+**One sentence:** An in-IDE or chat interface that generates, completes, and reviews code in the context of the user's actual codebase.
+
+Two distinct product patterns with different architectural requirements:
+
+| Pattern | Latency requirement | Context | Primary model requirement |
+|---|---|---|---|
+| Autocomplete (Copilot-style) | < 100ms | Immediate file context | Small, fast; speculative decoding |
+| Chat (Cursor-style) | 2–5s acceptable | Full repo + task description | Larger, higher quality; prefix caching |
+
+**Security considerations for enterprise customers:**
+- Every code snippet the model sees is sent to an external API. For proprietary codebases this is an IP and competitive risk.
+- Options: on-prem model deployment, VPC-deployed API, or provider with contractual no-training commitment (Anthropic and OpenAI both offer this with BAAs).
+- Audit log all completions: what was the context, what was generated, which user accepted it.
+- Scan outputs for secrets (API keys, credentials embedded in suggested code) using a regex-based scanner before surfacing to the user.
+
+**Evaluation:** run suggestions on your actual codebase; measure pass@k on unit tests the model doesn't see. A suggestion that passes your linter but fails your tests is not a good suggestion.
+
+### Data Analysis Automation (Text-to-SQL)
+
+**One sentence:** Let analysts ask natural language questions and have the system generate SQL, validate it against the schema, execute it, and present results in a human-readable format.
+
+**Architecture:**
+```
+Natural language question
+  → Context assembly (schema, table descriptions, sample data, previous queries)
+  → LLM generates SQL
+  → SQL validation (syntax check, schema reference check, safety check — no DDL, no DROP)
+  → Execute against read-only replica
+  → LLM formats result as natural language + visualization spec
+  → Human review before dashboard publication
+```
+
+**The safety check is critical:** the generated SQL must be validated before execution. A malicious user or a hallucinating model could generate `DROP TABLE customers` or a query that scans 10TB and costs $500. Mitigations:
+- Execute against a read-only database replica (structural)
+- Parse the SQL AST and reject any DDL or DML statements (only SELECT allowed)
+- Set query timeout and row limit at the database level
+
+```python
+import sqlparse
+from sqlparse.sql import Statement
+from sqlparse.tokens import Keyword, DDL, DML
+
+def is_safe_sql(sql: str) -> tuple[bool, str]:
+    """Returns (is_safe, reason). Only allow SELECT statements."""
+    parsed = sqlparse.parse(sql)
+    if not parsed:
+        return False, "Could not parse SQL"
+
+    stmt = parsed[0]
+    # Check statement type
+    stmt_type = stmt.get_type()
+    if stmt_type != "SELECT":
+        return False, f"Only SELECT statements allowed, got: {stmt_type}"
+
+    # Check for dangerous keywords
+    dangerous = {"DROP", "DELETE", "INSERT", "UPDATE", "CREATE", "ALTER", "TRUNCATE", "EXEC"}
+    for token in stmt.flatten():
+        if token.ttype in (Keyword, DDL, DML) and token.normalized.upper() in dangerous:
+            return False, f"Dangerous keyword detected: {token.normalized}"
+
+    return True, "OK"
+```
 
 ---
 
-## Case Studies: Real Projects
+## Use Case → Technical Solution Mapping Table
 
-### Case Study 1: Marketing Automation Agent (CMO Agent)
+| Customer Ask | Primary Pattern | Key Components | Hardest Problem | Common Pitfall |
+|---|---|---|---|---|
+| "Make our chatbot smarter" | RAG + intent classification | Vector DB, KB ingestion, escalation logic | Knowledge base quality / staleness | Deploying without escalation path |
+| "Process these contracts faster" | LLM extraction + structured output | OCR, Pydantic validation, human review queue | Field presence confidence | Auto-accepting low-confidence extractions |
+| "Employees can't find anything" | Hybrid search (dense + BM25) | Embedding model, BM25 index, RRF fusion | Access control at retrieval layer | Post-filtering instead of pre-filtering ACL |
+| "Help our devs write code faster" | Code generation assistant | Context retrieval, completion model, test runner | Secret scanning, IP exposure | Missing audit logging |
+| "Analysts spend too much time on data" | Text-to-SQL | Schema context, SQL validation, read-only replica | SQL safety validation, hallucinated tables | Executing unvalidated SQL |
+| "Summarize our meeting notes" | Direct generation + structure | Prompt templates, output schema | Faithfulness to actual content | No human review gate |
+| "Generate our weekly reports" | Agents + RAG | Multi-step orchestration, data sources, citations | Consistent formatting, factual accuracy | No citation/audit trail |
+| "Competitive intelligence" | Web research agent | Scraping, summarization, monitoring | Content freshness, reliability | Treating scraped content as authoritative |
 
-**Problem:** Small engineering teams build technically superior products that fail commercially because they have no marketing bandwidth. Hiring a full CMO is out of budget.
+---
 
-**Solution:** A multi-agent marketing system that automates four functions:
+## Scoping: MVP vs. Full Solution
 
-| Function | Agent | Tools |
+**The trap:** building the full solution first. Enterprise AI projects fail when they try to solve everything at once. The MVP's job is to prove that the core technical hypothesis is valid — not to ship a production system.
+
+### MVP Definition Framework
+
+A good AI MVP answers exactly one question: **does this technical approach solve the core problem for the most common case?**
+
+| Dimension | MVP | Full Solution |
 |---|---|---|
-| Competitive intelligence | Research Agent | Web scraping (Firecrawl), price monitoring |
-| Positioning & messaging | Messaging Agent | Copy generation, A/B variant drafting |
-| Launch planning | Launch Agent | Timeline coordination, channel strategy |
-| Analytics synthesis | Analytics Agent | Mixpanel/Amplitude integration |
+| Data coverage | 20-30 representative samples, manually curated | Full corpus, automated ingestion |
+| Use cases | Top 3 intents / query types only | Full taxonomy |
+| Integration | Minimal stub integration (single API) | Full system integration |
+| UI | Minimal interface for evaluation | Production-grade UX |
+| Evaluation | Manual eval on 30 Q&A pairs | Automated eval pipeline |
+| Infrastructure | Local or single-region cloud | Multi-region, HA, DR |
+| Latency | Functional | Optimized to SLA |
+| Auth/ACL | Not implemented | Full RBAC |
 
-**Critical design decision:** Human approval gates on brand voice, pricing decisions, and positioning direction. The agents propose; humans approve. The value is in the pattern-matching work (competitor monitoring, copy generation, launch checklists) — not in strategic judgment calls that require human context.
+**Definition of done for an MVP:** "We can answer the question: should we build the full version?" Not "this is usable in production."
 
-**Framework used:** CrewAI for role-based agent personas; LangGraph for deterministic sequential workflows.
+### Phased Approach
 
-**What it can't do:** strategic pivots, crisis judgment ("do we apologize or stay silent?"), category-redefining creative leaps.
+Frame the roadmap in three phases:
 
-**Lesson for FDEs:** when scoping a marketing automation engagement, diagnose which of the four functions the customer actually needs. Most customers need competitive intelligence and messaging consistency — not a full CMO replacement.
+- **Phase 1 (POC, 2-4 weeks):** Prove the core technical hypothesis. Output: accuracy metrics on representative test set + go/no-go recommendation.
+- **Phase 2 (Pilot, 6-8 weeks):** Deploy to a small group of internal or beta users. Measure real-world usage patterns and failure modes. Output: tuned system + production requirements specification.
+- **Phase 3 (Production, 8-16 weeks):** Full integration, access control, monitoring, SLA. Output: production-grade system with incident response plan.
 
-### Case Study 2: Personalized Music Library Organization (Full-Stack AI Tool)
+Never skip to Phase 3. Every skipped phase creates technical debt that manifests as production failures.
 
-**Problem:** Spotify's genre tags are unreliable, especially for non-Western music. A 2,000-song library is effectively unsearchable.
+---
 
-**Solution:** Full-stack TypeScript app that batches tracks to an LLM for classification across six custom dimensions (genre, mood, language, occasion, era, energy level), presents results in a human-review dashboard, then pushes approved playlists to Spotify.
+## Red Flags to Watch For
 
-**Architecture decisions worth noting:**
+::: {.callout-warning title="Red Flags in Discovery"}
 
-*Batch classification, not per-track:* Sending 25 tracks per LLM request with strict JSON output ("the array must have exactly as many elements as tracks given, in the same order") makes parsing trivial and reduces cost ~25x vs. per-track.
+**No baseline metrics.** "We want to improve support efficiency" — improve from what? Without a baseline, you cannot measure success, and at project end the customer will decide subjectively whether it "worked." Push for existing metrics or agree on a measurement methodology before starting.
 
-*Custom taxonomy enforcement:* Allowed values per dimension get appended to the system prompt. The LLM classifies into your categories, not its own — ensuring every track lands in a user-defined bucket.
+**Unclear ownership.** "The AI will own this process" or "engineering will maintain it after you leave." AI systems require ongoing maintenance — model updates, data pipeline monitoring, evaluation cadence, prompt iteration. If no one is assigned to own this, the system will degrade and become a liability. Get a named owner on the customer side.
 
-*Human-in-the-loop by default:* Nothing pushes to Spotify until the user reviews and approves. The rename-before-push step converts machine taxonomy ("Study") into human-friendly playlist names.
+**No data or "we're going to collect it."** AI systems are only as good as their training/retrieval data. A customer who plans to build the data as part of the AI project has sequenced the work wrong. Data comes first.
 
-*Background processing without a job queue:* 2,000 tracks takes minutes — too long for HTTP. Rather than adding BullMQ infrastructure, the implementation discards the classification promise intentionally and uses database polling for progress. Practical over perfect.
+**"AI should just know everything."** A customer who believes the model has infinite world knowledge and shouldn't need a knowledge base. This leads to hallucination-heavy systems with no grounding. Correct the misconception in the discovery call.
 
-**Cost:** $0.30–$0.50 in LLM API tokens to classify 2,000 songs. Trivial.
+**Success criteria that can't be measured.** "It should feel more intelligent." Not measurable. Not achievable. Push for a specific, measurable definition of success.
 
-**Lesson for FDEs:** the most elegant GenAI solutions often have a simple core pattern (batch → classify → review → act) with the complexity in the integration layer (OAuth, background jobs, UI). Don't over-architect the AI part.
+**Security/compliance treated as an afterthought.** "We'll figure out HIPAA/GDPR later." For regulated industries, compliance requirements determine architecture. They cannot be retrofitted. If the customer isn't ready to discuss compliance requirements, the project isn't ready to start.
+
+**Everyone owns it / no one owns it.** "The AI project" is owned by engineering, product, the data team, and the CMO's office. When everyone owns it, no one does. Identify the single accountable owner.
+:::
+
+---
+
+## How to Say No Gracefully
+
+Sometimes the right answer is not an AI solution. Saying so clearly and early — with an alternative — is more valuable to the customer than building something that won't work.
+
+**Framework for graceful redirection:**
+
+1. **Acknowledge the underlying problem:** "I understand you want to reduce analyst hours spent on data work."
+2. **Name what you observed:** "What I'm seeing is that the real bottleneck is the data pipeline — your analysts are spending most of that time cleaning and normalizing data from three different systems, not analyzing it."
+3. **Propose the simpler solution:** "Before we add AI, I'd recommend investing two weeks in automating the ETL step. That alone would recover 70% of the time."
+4. **Quantify the comparison:** "An AI solution for the analysis step would take 12 weeks and cost $80K. The ETL automation would take 2 weeks and cost $10K. The ETL gives you most of the value now."
+5. **Leave the door open:** "Once the data pipeline is solid, there's a real AI opportunity in the next phase."
+
+Customers remember FDEs who tell them the truth. They rarely trust FDEs who build the wrong thing enthusiastically.
+
+---
+
+## ROI Framing
+
+Customers need to justify AI investments internally. Help them build the business case.
+
+**Time savings model:**
+```
+ROI = (hours_saved_per_week × hourly_rate × 52) - (annual_cost)
+```
+
+Example: Support chatbot deflects 200 tickets/week that would have taken 8 min each.
+- Hours saved: 200 × 8/60 = 26.7 hrs/week
+- At $75/hr blended support cost: 26.7 × $75 × 52 = $104,130/year
+- Annual system cost (infra + maintenance): $30,000
+- Net ROI: $74,130/year, payback in ~4 months
+
+**Error reduction model:**
+```
+ROI = (errors_per_year × cost_per_error × reduction_rate) - annual_cost
+```
+
+Example: Contract extraction errors. 500 contracts/year, 3% error rate, each error costs $5,000 in legal rework.
+- Current cost of errors: 500 × 0.03 × $5,000 = $75,000/year
+- AI reduces error rate by 80%: saves $60,000/year
+- Annual system cost: $25,000
+- Net ROI: $35,000/year
+
+**Framing guidance:**
+- Lead with the metric the customer already tracks (CSAT, resolution time, analyst hours)
+- Show the baseline, the target, and the improvement
+- Be conservative — undersell and overdeliver
+- Separate one-time build cost from ongoing operational cost
+- Include maintenance and monitoring in the annual cost
+
+---
+
+## Full Discovery Call Walkthrough
+
+The following is an annotated example of a good discovery call. Pay attention to the structure: the FDE spends the first 30 minutes understanding the problem, not proposing solutions.
+
+---
+
+**Customer:** Sarah, VP of Operations at a mid-size insurance company (500 employees)
+
+**FDE:** Alex, Field Engineer
+
+---
+
+**Sarah:** "We want to use AI to improve our claims processing. We've seen competitors do it and think there's an opportunity."
+
+**Alex:** "That makes sense — claims processing is one of the areas where AI has shown real results. Before we get into what we could build, I want to make sure I understand the current state. Can you walk me through the claims process today — specifically the steps that feel most manual or time-consuming?"
+
+> **[Annotation: Alex immediately asks about the current workflow instead of proposing a solution. He's collecting the problem data first.]**
+
+**Sarah:** "Sure. When a claim comes in, an adjuster has to review the claim form, pull up the policy document, compare coverage terms, then write a decision letter. It takes about 45 minutes per claim. We process about 200 claims a day."
+
+**Alex:** "Got it. What percentage of claims involve non-standard situations — edge cases that require senior review or escalation?"
+
+**Sarah:** "Maybe 15-20%. The rest are pretty routine."
+
+> **[Annotation: Alex is estimating the feasibility window. 80% routine claims means there's real automation opportunity.]**
+
+**Alex:** "And what does 'routine' look like? Is it a specific set of claim types?"
+
+**Sarah:** "Mostly auto claims under $5,000. They follow a standard pattern — liability is clear, coverage is straightforward."
+
+**Alex:** "What systems do adjusters use today? Is the policy data in one system and the claim form in another?"
+
+**Sarah:** "Yes — we have a legacy policy administration system, a separate claims intake form, and then adjusters manually cross-reference and type the decision letter in Word."
+
+> **[Annotation: Data landscape is emerging. Three systems, manual cross-referencing — this is an integration challenge as much as an AI challenge.]**
+
+**Alex:** "Is there any structured data in the claims forms — like checkboxes, drop-downs — or is it all free-form text?"
+
+**Sarah:** "Mix. The intake form has structured fields, but the description of the incident is free text, and adjusters add free-text notes."
+
+**Alex:** "What does success look like for you in 12 months? If this goes well, what's different?"
+
+**Sarah:** "Ideally we'd reduce average handle time from 45 minutes to under 15 for routine claims. That's $2 million in annual adjuster cost."
+
+> **[Annotation: Specific metric, quantified business value. Alex now has a baseline (45 min), a target (15 min), a scope (routine claims), and a dollar figure ($2M). This is a good definition of success.]**
+
+**Alex:** "Are there any compliance or regulatory considerations I should know about? Insurance claims involve a lot of sensitive data."
+
+**Sarah:** "Yes — we're subject to state insurance regulations, and any automated decision has to be auditable. The state regulator can ask us to explain a claims decision."
+
+> **[Annotation: Critical constraint surfaced. Any AI system must produce auditable, explainable decisions. This rules out certain approaches and requires specific logging and citation architecture.]**
+
+**Alex:** "That's important — we'll want to make sure any AI-assisted decision includes a full audit trail of what data it used and why. Who on your team would maintain this system after we build it?"
+
+**Sarah:** "We have two data engineers. They're not ML specialists."
+
+> **[Annotation: Ownership question answered. The system must be maintainable by non-ML engineers — no complex retraining pipelines, clear documentation, simple monitoring.]**
+
+**Alex:** "Last question: is there anyone in the organization who's skeptical of this project, or has concerns I should know about?"
+
+**Sarah:** "Our Chief Actuary is worried about liability if the AI makes a bad call. And the union representing our adjusters is concerned about job displacement."
+
+> **[Annotation: Two significant stakeholders with concerns. The liability concern will shape the human-in-the-loop design. The union concern is a change management issue that will affect adoption — and may require the AI to be framed as assisting adjusters, not replacing them.]**
+
+**Alex:** "Both of those are legitimate concerns and will shape how we design this. Here's what I'm thinking based on what you've told me..."
+
+> **[Annotation: Only NOW, after 30 minutes of structured listening, does Alex begin proposing a direction.]**
+
+**Alex:** "For the routine claim tier — auto claims under $5,000 — I see a document extraction and assisted-drafting use case. The AI reads the claim form and policy document, extracts the relevant fields, identifies whether coverage terms are met, and drafts a decision letter for the adjuster to review and approve. The adjuster is still making the final decision — they review the draft and sign off. This directly addresses your actuary's concern. The AI is an assistant that saves time, not an autonomous decision-maker."
+
+**Sarah:** "That's actually exactly what we were imagining. How long would a proof of concept take?"
+
+**Alex:** "Two to three weeks to validate the extraction quality on 50 real claim-policy pairs. We'd measure accuracy on field extraction and how often the draft letter matches what the adjuster would have written. If accuracy is above 85% on routine claims, we'd have the data to justify a full build. If it's not, we'd know that before investing further."
+
+> **[Annotation: POC scope is bounded, success criteria are specific, and Alex is setting up a go/no-go gate rather than committing to a full build up front.]**
+
+---
+
+**What made this discovery call effective:**
+- Alex asked about current state before proposing anything
+- He surfaced the compliance constraint early (auditable decisions)
+- He identified the skeptics (actuary, union) and incorporated their concerns into the design
+- He got a specific metric ($2M, 45→15 min) that becomes the success criteria
+- He bounded the first step as a POC with clear go/no-go criteria
+- He framed the solution around the human-in-the-loop pattern, which addressed both the liability concern and the union concern
+
+---
+
+## Cheat Sheet
+
+- Discovery before architecture — always. Diagnose before prescribing.
+- The 5 questions: success metrics, current workflow, data landscape, constraints, stakeholder map.
+- "Make it smarter" → translate to: latency target, accuracy target, cost envelope, latency budget.
+- No baseline metrics = no way to prove the project worked. Get baseline before starting.
+- Unnamed owner = dead project post-launch. Get a named technical owner.
+- Access control at retrieval, not post-filter. Build it in from the start.
+- Human escalation is not optional in customer support — it is the reliability mechanism.
+- Validation loop (schema → business logic → confidence routing) resolves ~95% of extraction failures.
+- LLMs hallucinate when fields are absent — always include a confidence score per extracted field.
+- MVP answers one question: does this approach work? Not: is this production-ready?
+- Three phases: POC (prove hypothesis) → Pilot (real users) → Production (full build). Never skip phases.
+- ROI model: hours_saved × hourly_rate × 52 - annual_cost. Build this with the customer, not for them.
+- Red flags: no baseline, no owner, no data, "AI knows everything," can't-be-measured success.
+- Regulatory constraints determine architecture. Surface them in discovery, not in week 6.
+- Graceful no: acknowledge the problem, name the real bottleneck, propose the simpler solution, quantify the comparison.
+- Text-to-SQL: always validate SQL before execution and execute against a read-only replica.
+- Stakeholder map: economic buyer, technical sponsor, end users, skeptic, champion. Talk to all of them.
+- The champion who doesn't control the budget will not save your project.
 
 ---
 
 ## Interview Questions
 
-::: {.callout-important title="Forward Deployed Engineer"}
+### Entry Level
 
-**Q1. A legal firm wants to use GenAI to answer questions about their contract database. Design the solution.**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-This is a RAG use case with elevated requirements around accuracy, access control, and citation — legal users need to trust the answer and verify the source.
-
-**Architecture:**
-
-*Ingestion pipeline:* extract text from contract PDFs (legal documents often have complex layouts — evaluate Azure Document Intelligence or AWS Textract against the actual document set, not generic benchmarks). Preserve document metadata: contract ID, counterparty, execution date, contract type, and access-control group. Chunk at paragraph boundaries with 10–15% overlap (legal text is dense; sentence-level chunks lose too much context). Embed with a legal-domain model (LegalBERT or a general model fine-tuned on contracts).
-
-*Retrieval:* hybrid search — BM25 handles exact legal citations ("Section 8.2(a)," specific clause references) while dense search handles conceptual queries ("what's our indemnification exposure with Acme?"). Apply document-level ACL filtering before returning results — users should only retrieve contracts they're authorized to see.
-
-*Generation:* instruct the LLM to answer only from retrieved context and cite specific clause locations: "Based on Section 4.1 of the Master Services Agreement with Acme Corp (executed 2023-01-15)..." Explicit grounding instruction: "Do not infer or extrapolate beyond the provided contract text. If the answer is not in the retrieved context, say so."
-
-*Evaluation:* build a test set of 50–100 known query-answer pairs from existing contracts before deploying. Measure faithfulness (is every claim in the answer sourced from retrieved text?) and retrieval recall (are the right clauses retrieved?). Legal hallucination is a liability risk — quality gates are non-negotiable.
-
-*Security:* on-premise or VPC-deployed to prevent contract text from leaving the firm's infrastructure.
-:::
-
-**Q2. A customer wants to replace their internal search tool with an AI-powered alternative. What questions do you ask before writing any code?**
+**Q1. What is a discovery call and why does it happen before technical design?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Before writing code, I need to understand the existing system's failure modes, the data landscape, and what success looks like. My questions:
+A discovery call is a structured conversation to understand the customer's problem — their current workflow, their data, their constraints, and their definition of success — before proposing or designing any solution.
 
-**About the current search:**
-- What does the current tool do well and poorly? (If keyword search is failing for conceptual queries, semantic search helps. If it's failing because the index is stale, the problem is a data pipeline problem, not a semantic search problem.)
-- What does "a good result" look like to users? Can they articulate it? This determines how you'll evaluate the new system.
+It happens first because the customer's stated ask ("we want AI in our product") is almost never the actual requirement. The actual requirement only emerges through questions. A customer who says "make our chatbot smarter" might need better retrieval, a maintained knowledge base, a latency optimization, or simply better prompts — you can't know which without asking.
 
-**About the data:**
-- What document types and formats are in the corpus? (PDFs, Word docs, Confluence pages, Salesforce records — each requires different parsing and has different update patterns.)
-- How many documents and how often do they change? (10,000 static PDFs vs. 1 million records updated hourly have completely different infrastructure requirements.)
-- Is there any access control — documents that only certain users/roles should see? (Mandatory question — access control must be built into retrieval, not bolted on after.)
-
-**About the query distribution:**
-- What are the top 20 queries users actually run? (Exact keyword lookups need BM25; conceptual queries need dense search; most real-world distributions need both.)
-- Do users search for exact strings (product codes, document IDs) or concepts?
-
-**About success criteria:**
-- How will you measure if the new system is better? Do you have historical click-through data from the current system as a baseline?
-- What's the acceptable latency for a search result?
-
-**About organizational constraints:**
-- Where does the data live and can it leave those systems? (Data residency requirements often constrain vector DB choice.)
-- Who will maintain the ingestion pipeline when it breaks?
-
-These questions take 30 minutes in a discovery call and prevent weeks of rework.
+Building before discovering is expensive: you can build the wrong thing correctly and arrive at week 8 of a project only to discover the customer needed something fundamentally different, or that a critical constraint makes the approach infeasible. Thirty minutes of structured questioning at the start prevents weeks of rework.
 :::
 
-**Q3. A software company wants to build a code review copilot. What are the top 3 risks you'd want to mitigate before shipping?**
+**Q2. A customer says "we want AI to process our invoices." What are the first three questions you ask?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-**Risk 1: False confidence in generated suggestions.** Developers will trust a code review copilot — it looks authoritative and is always grammatically confident. If the model suggests a fix that introduces a security vulnerability, breaks an API contract, or silently changes behavior, developers may accept it without deep scrutiny. The mitigation: make uncertainty explicit in the UI ("High confidence," "Verify before applying"), require the model to explain its reasoning rather than just stating a fix, and never have the copilot auto-apply changes without human confirmation. Build an eval that tests suggestions against unit tests the model doesn't see — if suggestions cause test failures at >5%, don't ship.
+1. "What does the current process look like, step by step — and what's the bottleneck?" (Understand the workflow and where the pain is.)
+2. "What fields do you need to extract from the invoices, and what format do they come in — PDFs, images, structured data?" (Understand the data and the technical feasibility.)
+3. "What does success look like — what's the time it takes today vs. the target, and what's the error rate you'd find acceptable?" (Get a baseline and a definition of done.)
 
-**Risk 2: Proprietary code exposure.** Every code snippet the model sees is sent to an API — potentially the entire codebase over time. For a software company with proprietary algorithms, this is an IP and competitive risk. Questions to answer before shipping: which API are you using, where is data processed and stored, does the provider's data usage policy allow training on customer inputs, and does the customer's legal team require a DPA? Mitigation options: on-premise model deployment, API providers with contractual no-training commitments (Anthropic and OpenAI both offer this), or restricting the copilot to non-sensitive file types.
-
-**Risk 3: Degraded code quality from automation bias.** When developers use the copilot, review depth may decrease — if a suggestion passes the copilot, reviewers may assume it's fine. This can mask bugs the model confidently missed. The mitigation is not to disable the copilot but to track: are post-copilot PRs passing unit tests at the same rate? Is production incident rate stable? Instrument these metrics from launch so you can detect degradation before it compounds.
+Without these answers, any architecture you propose is a guess.
 :::
 
-**Q4. Walk me through how you'd de-risk a document Q&A POC in a two-week sprint.**
+**Q3. What is the difference between a POC and a production system?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-A two-week POC has one goal: determine whether this use case is technically viable for this customer's documents and queries — before committing to full build. Risk-reduction is the output, not a polished product.
+A POC (proof of concept) answers one question: does this technical approach work for this problem? It is not a production system. It uses a small representative dataset, skips production concerns like authentication, monitoring, and high availability, and delivers a go/no-go recommendation rather than a shippable product.
 
-**Days 1–2: Scope and data access.** Get 50–100 representative documents from the actual corpus — not a cleaned demo set, the messy real ones. Get 20–30 representative questions from real users (email the people who will use this system, not the project sponsor). Identify access control requirements. Everything else depends on these inputs.
+A production system is designed for reliability, scale, security, and maintainability. It includes access control, monitoring, incident response, and SLA guarantees.
 
-**Days 3–5: Baseline pipeline.** Build the minimal viable RAG pipeline: parse documents → fixed-size chunking (256 tokens, 20% overlap) → embed with all-MiniLM-L6-v2 → store in Chroma (local, no infrastructure setup) → retrieval → generate with GPT-4o or Claude Sonnet. The specific choices don't matter yet — you want a working baseline to measure from.
-
-**Days 6–8: Measure retrieval and generation quality.** For each of the 20–30 questions, manually evaluate: (a) are the retrieved chunks relevant? (b) is the generated answer correct and sourced from the retrieved chunks? Build a simple scorecard. This tells you exactly where the system fails — retrieval quality, parsing quality, or generation quality — and whether the failures are fixable.
-
-**Days 9–11: Address top failure modes.** If retrieval is poor: add BM25 hybrid search, try a better embedding model, fix chunk size. If parsing is dropping content: try a better PDF parser on the failing document types. Don't fix everything — fix the failure modes that affect the most questions.
-
-**Days 12–14: Demo and recommendation.** Demo on real questions. Present: accuracy on the 30-question eval set, the 3–5 remaining failure modes and their root causes, a rough infrastructure estimate for production, and a recommendation: go/no-go with specific conditions. The POC's value is the recommendation, not the demo.
+The reason to do a POC first is risk reduction: you invest 2-3 weeks to validate the core hypothesis before committing to an 8-16 week production build. If the POC fails, you've learned something valuable at low cost. If you skip the POC and go straight to production, a failed hypothesis costs months.
 :::
 
+::: {.callout-note title="Weak vs. Strong Answer — Q1"}
+**Weak:** "You ask about the problem and then design a solution."
+
+**Strong:** "A discovery call is a structured diagnostic — I'm collecting the data I need to make an architectural decision and surface constraints that could block the project. I want to understand the current workflow, what success looks like as a specific measurable metric, what data exists and where it lives, what hard constraints I'm operating within (compliance, latency, budget), and who the stakeholders are including skeptics. Only after I have those answers do I touch a whiteboard."
+:::
+
+**Q4. What does "human escalation path" mean in a customer support AI system and why is it non-negotiable?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The human escalation path is the mechanism by which the AI system routes a customer to a human agent when it cannot handle the request safely or effectively. It includes a system-initiated trigger (confidence below a threshold, topic classifier detects sensitive issue type) and a user-initiated trigger (a visible button the customer can press at any time).
+
+It is non-negotiable because no AI system handles 100% of cases correctly. A system that handles 80% of tickets accurately but fails silently on the other 20% — sending wrong answers or dead ends — is worse than no automation, because it actively harms those 20% of customers. The escalation path is how the system gracefully handles the cases it can't handle. Without it, every failure is a bad customer experience with no recovery.
+:::
+
+**Q5. What's a "red flag" you watch for in a customer discovery conversation?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Several stand out. No baseline metrics — if the customer can't tell you what their current performance looks like, they have no way to measure whether the project succeeded, and at project end the evaluation will be subjective. No named owner — "the team" will maintain the system post-launch — means no one actually will, and the system will degrade. "We'll build the data as part of this project" — the data isn't ready yet — means the AI project is sequenced before the foundational work it depends on. "AI should just know everything" is a misconception about how models work that will lead to a hallucination-heavy system with no grounding strategy.
+
+The moment I spot a red flag, I address it directly in the discovery call. Waiting doesn't make it smaller.
+:::
+
+---
+
+### Mid Level
+
+**Q1. How do you translate "make our chatbot smarter" into a technical requirements specification?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+"Make it smarter" is a complaint, not a requirement. My first job is to diagnose what "not smart enough" actually means — what does it do wrong today, in what specific situations?
+
+I'd start with: "Can you show me the last five tickets where the chatbot gave a bad response?" This is more useful than any abstract description. Looking at actual failure cases usually reveals: retrieval failures (the relevant article wasn't returned), knowledge base gaps (the right article doesn't exist), prompt failures (the model has the right information but doesn't use it well), or latency issues (the user gave up waiting).
+
+Once I have failure modes, I translate them into measurable requirements:
+- Accuracy target: "The chatbot should correctly resolve X% of tier-1 tickets, measured by human review of a 100-ticket sample."
+- Latency requirement: "Response time must be under 2 seconds at P95."
+- Escalation rate target: "No more than 25% of tickets should require human escalation."
+- Knowledge base scope: "Covers the top 50 intent categories, verified by a product SME."
+
+These become the acceptance criteria for the project. If we can't agree on these before starting, we can't evaluate whether the project worked.
+
+**Follow-up: How do you know if the problem is retrieval quality vs. generation quality?**
+
+I run an eval. For 30-50 representative queries: manually evaluate whether the relevant document was retrieved (retrieval quality) and, separately, whether the model used the retrieved document correctly (generation quality). If retrieval is correct but generation is wrong, the problem is prompting. If retrieval is wrong, the problem is the embedding model, chunk size, or index freshness. Treat them as independent failure modes.
+:::
+
+**Q2. A customer wants to automate data analysis for their business analysts. What are the technical risks of a text-to-SQL system and how do you mitigate them?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Text-to-SQL is technically compelling but has three serious risks:
+
+**1. SQL injection / destructive queries.** If the LLM generates `DROP TABLE customers` or a query that causes a table scan costing $500 in cloud data warehouse credits, executing it blindly is catastrophic. Mitigation: execute against a read-only replica (structural constraint), parse the SQL AST and reject any DDL/DML (only SELECT allowed), set query timeout and row limits at the database level.
+
+**2. Hallucinated table/column names.** LLMs will confidently generate SQL referencing tables and columns that don't exist. Mitigation: include the full database schema in the context window, then validate SQL against the schema before execution — check every table reference and column reference against the actual schema.
+
+**3. Semantically wrong but syntactically valid SQL.** The query executes successfully but returns wrong results. A business analyst might present these numbers in a board meeting. Mitigation: include sample rows of the queried tables in the response so the analyst can sanity-check, require the model to explain the query in plain English before returning results, and build in a "does this answer make sense?" review step.
+
+The broader principle: text-to-SQL is a human-in-the-loop tool, not a fully autonomous analysis engine. The model drafts; the analyst reviews and approves.
+
+**Follow-up: How do you handle queries that span multiple tables the analyst doesn't know the relationship between?**
+
+Include foreign key relationships in the schema context and give the model a few example JOIN patterns from the codebase or from manual documentation. If the LLM doesn't have the JOIN structure, it will either guess wrong or refuse. Pre-seeding with documented relationships dramatically reduces this failure mode.
+:::
+
+**Q3. You're scoping a customer's AI project and they say "we want to start with a POC." How do you structure the POC to maximize its usefulness?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A good POC is designed to answer a specific yes/no question, not to build a scaled-down version of everything. Before writing any code, I agree with the customer on:
+
+1. **The question the POC must answer.** "Does RAG retrieval over your knowledge base achieve > 80% accuracy on a representative query set?" Not "does this look impressive in a demo?"
+
+2. **The test set.** Get 30-50 real queries from real users — not from the project sponsor, from people who will actually use the system. Get the expected answers. This becomes the evaluation set.
+
+3. **The data.** Get the messiest 20% of your real data, not a cleaned demo set. POCs that work on clean demo data often fail on real data.
+
+4. **The success threshold.** Agree up front: if the system achieves ≥ X% accuracy on the test set, we build the full version. If it doesn't, we investigate root causes before committing further.
+
+5. **What's explicitly out of scope.** Authentication, monitoring, high availability, production UI — none of these are in a POC. The POC proves the AI hypothesis; everything else is a production concern.
+
+The output of a POC is not a demo. It's a recommendation: go/no-go, with data behind it.
+:::
+
+**Q4. A customer's "AI project" has four different teams claiming ownership. How do you handle this?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Shared ownership means no ownership. Projects with four teams claiming ownership have zero accountability and will stall when decisions need to be made — and in an AI project, decisions come up constantly (which model, what data, how to handle edge cases, when to deploy).
+
+I address this directly in the discovery process: "For this to succeed, we need one named technical owner who is accountable for the system's performance and maintenance after we leave. Who is that person?" If they can't name someone in the meeting, I follow up to get that commitment before scoping the project.
+
+Separately, I work with the sponsor to get a RACI:
+- **Responsible:** who does the technical build and integration work?
+- **Accountable:** who is the single person accountable if this fails?
+- **Consulted:** which teams provide input and have review rights?
+- **Informed:** which teams get updates but don't have veto power?
+
+Projects without a RACI in place are not ready to start. This is a hard truth worth saying directly.
+:::
+
+**Q5. A customer wants a document Q&A system but their documents are 80% scanned PDFs. How does this change your architecture?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Scanned PDFs are images, not text — standard PDF text extraction (pdfplumber, PyMuPDF) won't work. You need an OCR step, and OCR quality is the critical variable in the entire pipeline.
+
+I'd do a 2-day data audit before designing anything: run the scanned PDFs through 2-3 OCR engines (Azure Document Intelligence, AWS Textract, Tesseract) on a representative sample and manually evaluate accuracy. Key factors that vary OCR quality: scan resolution, handwritten vs. printed text, document complexity (tables, multi-column layouts, signatures), language.
+
+If OCR quality is ≥ 95% on the representative sample, proceed with standard RAG. If it's lower — especially for complex layouts like contracts with tables — Azure Document Intelligence's layout model and table extraction is worth the additional cost. If there's significant handwriting, this is a harder problem and may require human review of the OCR output before ingestion.
+
+Also important: OCR errors propagate. A misread clause number in a legal document could cause a retrieval failure on exactly the query that matters most. Build an OCR quality monitoring step into the ingestion pipeline.
+:::
+
+---
+
+### Senior Level
+
+**Q1. A customer comes to you saying "we want to add AI to our entire product." How do you handle this conversation?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+"Add AI to our entire product" is not a project — it is a direction. My job in this conversation is to transform a direction into a scoped, prioritized set of concrete opportunities.
+
+I start by resisting the impulse to respond with possibilities. Instead I ask: "What prompted this? What specifically in your product or business is not working the way you want?" This usually surfaces two or three concrete pain points underneath the broad directive. The AI mandate is often cover for a more specific operational problem.
+
+If I genuinely get "we want AI everywhere," I run a structured opportunity discovery across the product: "Walk me through the core user journeys. For each one, what's the most time-consuming or error-prone step? Where do users get stuck or ask for help most often?" This maps opportunities to user pain.
+
+Then I apply a 2x2 prioritization: value (business impact) vs. feasibility (technical risk, data readiness, integration complexity). The high-value, high-feasibility opportunities become the roadmap. The high-value, high-risk ones become phase 2 after we've built organizational AI maturity.
+
+I'm explicit about what I'm doing: "We're not going to AI-ify your entire product at once. We're going to pick the two or three places where AI creates the most value with the lowest risk, prove that with a POC, and build from there. Starting with a clear win gives you organizational buy-in and lessons learned for the harder problems."
+
+> 🎯 **What great looks like:** Demonstrates the ability to manage strategic scope — not just technical scope. Shows comfort redirecting a broad mandate to a specific, actionable plan without dismissing the customer's ambition. Uses discovery to reveal the real priorities. Understands that "add AI everywhere" is often a board-level mandate that the customer is trying to figure out how to execute, not a coherent project specification.
+:::
+
+**Q2. You're in a discovery call and realize the customer's problem doesn't need AI at all. What do you do?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I say so, directly, and I come with a concrete alternative. This is the most trust-building thing an FDE can do, and it is also the most commercially rational: a project that was the wrong solution always fails, and failed projects don't produce referrals or renewals.
+
+The framework I use:
+
+First, I make sure I actually understand the problem — I ask one more round of questions to confirm my diagnosis. Sometimes "this doesn't need AI" resolves when I understand a constraint I missed.
+
+If I'm confident the underlying problem is not an AI problem, I name it: "I want to be honest with you — what you're describing sounds like a data pipeline problem. Analysts are spending 12 hours a week cleaning data from three systems that aren't integrated. Adding AI on top of messy, manually-integrated data will give you AI-quality outputs on dirty inputs. The right first step is fixing the data foundation."
+
+Then I propose the alternative concretely: "I'd recommend a 3-week ETL project to connect those three systems and automate the data normalization. That would recover 80% of the analyst time you're trying to recover, without the complexity and risk of an AI system. Once the foundation is solid, there's a real AI use case in the next phase."
+
+This conversation is uncomfortable. Customers sometimes push back — they have an AI budget, they have a mandate, they've announced an AI initiative. I hold the position: "I'd rather tell you this now than 12 weeks from now when we've built something that doesn't solve the real problem."
+
+Long term, this conversation is how you build the kind of customer relationship where they call you before making a decision, not after.
+
+> 🎯 **What great looks like:** Demonstrates that the candidate prioritizes customer outcomes over project scope, and that they have the confidence to have an uncomfortable conversation early rather than a catastrophic one late. Shows they understand that AI is a tool, not a mandate — and that the tool should be used when it's the right one. Interviewers are specifically looking for the candidate who doesn't just say "I would tell them" but also describes how — the specific framing that delivers the message without burning the relationship.
+:::
+
+**Q3. Walk me through the discovery process for a healthcare customer that wants to automate prior authorization decisions. What questions do you ask and what are the non-negotiables?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Prior authorization is one of the highest-stakes use cases in healthcare AI — these decisions directly affect patient care and carry significant liability. I approach this discovery with the mindset that there are several questions that could produce "this project is not feasible as scoped" answers, and I want to surface those as early as possible.
+
+**The questions I ask:**
+
+On the clinical decision scope: "What types of prior authorization are we automating — formulary checks, procedure authorizations, out-of-network approvals? Which of these involve clinical judgment vs. pure rule application?" The distinction matters enormously: pure rule-based applications (is this drug on formulary?) are automatable with high confidence; clinical judgment calls (is this procedure medically necessary for this patient?) are FDA-regulated software as a medical device territory.
+
+On data: "What data does a prior auth decision require — member records, clinical notes, formulary data, ICD codes? Are these structured or unstructured? Where do they live?" Clinical notes are often unstructured; structured claims data is easier. The answer determines the extraction complexity.
+
+On regulatory: "Are you prepared for FDA SaMD review if the system makes or influences clinical recommendations? Have you engaged legal and compliance on the HIPAA BAA requirements for any vendor in this system?" If the answer to FDA SaMD is "we don't think that applies to us," that requires a careful conversation.
+
+On liability: "Who is legally responsible for a denied prior auth decision — the health plan, the clinical reviewer, the AI vendor? What's your error rate today on prior auths that are appealed and overturned? What would be acceptable?" In healthcare, appealed and overturned decisions are the measurable failure mode.
+
+**The non-negotiables:**
+
+1. A human clinician reviews and signs off on any prior auth denial before it reaches the patient or provider. The AI assists; the clinician decides. This is both clinically and legally correct.
+2. Full audit trail of every decision: what data was presented to the AI, what the AI recommended, what the clinician decided, and why. The regulator will ask.
+3. A HIPAA BAA with every vendor in the data pipeline.
+4. Legal review of whether the specific decisions in scope constitute FDA-regulated CDS before any architecture is finalized.
+
+If the customer is not willing to commit to a human-in-the-loop model, this project should not proceed. The liability exposure of a fully automated prior auth denial system that makes clinical errors is too high for any vendor or customer to accept.
+:::
+
+**Q4. A customer signed a contract for a 12-week AI project. You're in week 6 and realize the core technical approach doesn't work for their data — retrieval quality is consistently below 50% accuracy. What do you do?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a project recovery situation, and the worst thing I can do is spend the next 6 weeks trying to fix a fundamentally broken approach and deliver something mediocre at week 12.
+
+My first step is to diagnose precisely why retrieval quality is below 50%. Is it the embedding model (wrong semantic space for this domain)? Is it chunking (chunks are too small and lose context, or too large and dilute relevance)? Is it the data quality itself (documents are poorly structured, OCR errors, not actually a corpus the RAG pattern fits)? The diagnosis determines whether this is fixable in the remaining time or not.
+
+If it's fixable — say the problem is chunking strategy or embedding model choice — I communicate transparently to the customer: "We've identified a technical issue that will require replanning the next four weeks. Here's what we found, here's the fix, here's the revised timeline." No hiding, no optimistic projections.
+
+If it's not fixable in the remaining time — the data quality is the problem and fixing it is a 2-month project — I have a harder conversation: "The approach we designed doesn't work with the current state of your data. Here's what we found. I have two options to propose: we scope down to the portion of your document corpus that is in good shape and deliver a narrower but working system; or we spend the remaining time building the data pipeline that makes the full solution feasible in a later phase." I put both options in writing with the tradeoffs.
+
+The thing I won't do is burn the remaining 6 weeks polishing a system that doesn't work and hope the customer doesn't notice at demo day. They always notice, and the relationship damage from a weak delivery is worse than the damage from an early transparent conversation.
 :::

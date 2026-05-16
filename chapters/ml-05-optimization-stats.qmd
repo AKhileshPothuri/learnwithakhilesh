@@ -1,0 +1,982 @@
+---
+title: "Optimization, Training Dynamics & Probability for ML"
+---
+
+::: {.callout-note}
+**Who this chapter is for:** All levels — Entry, Mid, Senior/Staff ML Engineers
+**What you'll be able to answer after reading this:**
+
+- Why Adam outperforms vanilla SGD and when you should still consider SGD
+- How learning rate schedules affect convergence and why LLMs need warmup
+- Bayes theorem, MLE, MAP, and how they connect to everyday loss functions
+- How to run and interpret A/B tests correctly without common peeking mistakes
+- What KL divergence is and why it appears in both VAEs and RLHF
+:::
+
+## Optimization Algorithms
+
+Modern ML models contain billions of parameters. The job of an optimizer is to adjust those parameters so the loss function decreases. Understanding optimizers is not academic — the wrong choice leads to training instability, slow convergence, or poor generalization, all of which translate directly to missed deadlines and wasted GPU budget.
+
+### Gradient Descent Variants
+
+**Batch Gradient Descent** computes the gradient of the loss over the entire training dataset before taking a single update step. The update rule is:
+
+$$\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}(\theta; X_\text{full})$$
+
+The gradient is exact — no noise — which makes the optimization landscape smooth and convergence predictable. The problem is cost: with 1 billion training examples, you must process all of them to take one step. This is computationally infeasible for large datasets and prevents the model from learning anything until the first full pass over data is complete.
+
+**Stochastic Gradient Descent (SGD)** goes to the opposite extreme: one training example at a time. The gradient estimate from a single sample is extremely noisy — it is a very poor approximation of the true gradient — but the sheer frequency of updates compensates. The noise actually helps in one important way: it helps the optimizer escape shallow local minima and saddle points that would trap batch GD. The downside is that noisy updates cause the loss to bounce erratically, making it hard to diagnose whether training is progressing.
+
+**Mini-batch Gradient Descent** is the standard in practice. You compute the gradient over a mini-batch of $B$ examples (typically 32–2048 for deep learning):
+
+$$\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}(\theta; X_\text{batch})$$
+
+This balances the two extremes. The gradient estimate is less noisy than single-sample SGD, parallelizes efficiently across GPU cores (batches of 32–256 fill GPU memory naturally), and still provides frequent updates. When practitioners say "SGD," they almost always mean mini-batch SGD. The batch size becomes a tunable hyperparameter with non-trivial effects on generalization, discussed in the next section.
+
+> ⚠️ **Common Mistake:** "Large batch = better training" is wrong. Large batches reduce gradient noise, which sounds good, but the loss of noise reduces regularization effect. Large-batch training tends to converge to sharp minima that generalize worse. The empirical finding (Keskar et al., 2017) is that models trained with large batches overfit more, even with the same number of gradient steps.
+
+### SGD with Momentum
+
+Plain SGD updates can oscillate across ravines in the loss landscape — stepping back and forth across the valley floor while barely advancing along it. Momentum dampens these oscillations by accumulating a velocity vector in the direction of persistent gradients:
+
+$$v_t = \beta v_{t-1} + \nabla_\theta \mathcal{L}_t$$
+$$\theta \leftarrow \theta - \eta v_t$$
+
+The hyperparameter $\beta$ (typically 0.9) controls how much of the previous velocity is retained. Think of it like a ball rolling down a hill: it builds up speed in consistent directions and resists deflection in directions that keep reversing. In the ravine analogy, the horizontal oscillations cancel out over time (the gradients alternate signs), while the vertical direction toward the minimum accumulates momentum because the gradient consistently points that way. In practice, momentum increases the effective step size along consistent directions while reducing it along oscillating ones — you reach the bottom of the ravine faster with less sideways bouncing.
+
+**Nesterov Accelerated Gradient (NAG)** is a refinement where the gradient is evaluated at a "lookahead" position $\theta - \beta v_{t-1}$ rather than the current position. This provides a corrective effect: you compute the gradient where you are about to be, not where you are now, which reduces overshooting and improves convergence rates on convex problems. PyTorch's SGD optimizer supports both standard momentum and Nesterov momentum via the `nesterov=True` flag.
+
+> 💡 **Senior Tip:** For computer vision (ResNets, ConvNets), SGD + momentum with a carefully tuned learning rate schedule often outperforms Adam in final accuracy, even though Adam converges faster initially. This is documented across ImageNet training results. For NLP and transformer-based models, Adam and AdamW dominate — the adaptive per-parameter learning rates handle the heterogeneous gradient scales across attention layers and embedding tables much better.
+
+### AdaGrad
+
+All the variants above apply the same learning rate $\eta$ to every parameter. This is a problem because different parameters have very different gradient scales. Embedding parameters for rare tokens are updated infrequently and need larger steps; parameters in the final classification layer may receive dense updates and need smaller steps. **AdaGrad** (Adaptive Gradient, Duchi et al. 2011) introduces per-parameter adaptive learning rates:
+
+$$G_t = G_{t-1} + g_t^2$$
+$$\theta \leftarrow \theta - \frac{\eta}{\sqrt{G_t + \epsilon}} g_t$$
+
+$G_t$ accumulates the sum of squared gradients for each parameter from the beginning of training. Parameters that have received large gradients have a large $G_t$, so their effective learning rate shrinks. Parameters that have rarely been updated have a small $G_t$, so their learning rate stays large. The analogy: AdaGrad is like an investor who cuts spending in areas where they've already invested heavily and increases spending in neglected areas.
+
+AdaGrad was a major advance for sparse problems — NLP with large vocabularies and recommendation systems where most embeddings are rarely updated. The critical weakness is the monotonically accumulating $G_t$: it never decreases, so for non-sparse problems, the effective learning rate decays to near zero after enough steps. The model stops learning long before reaching a good solution. For deep neural networks trained on dense data, AdaGrad effectively turns off learning partway through training.
+
+### RMSprop
+
+**RMSprop** (Hinton, 2012 — notably unpublished, introduced in a Coursera lecture) fixes AdaGrad's vanishing learning rate by replacing the full accumulated sum with an exponential moving average:
+
+$$E[g^2]_t = \rho E[g^2]_{t-1} + (1 - \rho) g_t^2$$
+$$\theta \leftarrow \theta - \frac{\eta}{\sqrt{E[g^2]_t + \epsilon}} g_t$$
+
+The decay factor $\rho$ (typically 0.9) means only recent gradients matter for scaling the learning rate. Old gradient history is forgotten exponentially. This prevents the learning rate from decaying to zero on non-sparse problems while retaining the adaptive per-parameter property. RMSprop works well for recurrent networks and non-stationary objectives where gradient magnitudes change throughout training.
+
+> ⚠️ **Common Mistake:** RMSprop and AdaGrad have no bias correction for their running estimates. At the start of training, the moving average is initialized to zero, which biases the estimate downward. Adam explicitly corrects for this initialization bias, which is why Adam tends to be more stable in early training.
+
+### Adam
+
+**Adam** (Adaptive Moment Estimation, Kingma and Ba, 2014) combines momentum (first moment of gradients) with RMSprop (second moment) and adds bias correction:
+
+$$m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t \quad \text{(first moment — like momentum)}$$
+$$v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2 \quad \text{(second moment — like RMSprop)}$$
+$$\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1 - \beta_2^t} \quad \text{(bias correction)}$$
+$$\theta \leftarrow \theta - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t$$
+
+Default hyperparameters: $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-8}$, $\eta = 10^{-3}$. These defaults work remarkably well across a wide range of architectures and tasks, which is the main reason Adam became the default optimizer for deep learning.
+
+The bias correction terms $\frac{1}{1 - \beta_1^t}$ and $\frac{1}{1 - \beta_2^t}$ correct for the zero-initialization of $m_0$ and $v_0$. At step $t=1$, $\hat{m}_1 = g_1$ and $\hat{v}_1 = g_1^2$ — the bias correction makes the first step as if you have a proper estimate. Without correction, early steps are much smaller than they should be.
+
+> 💡 **Senior Tip:** Adam's $\epsilon$ term is more important than it looks. If $\hat{v}_t$ is near zero (sparse gradients), $\epsilon$ prevents division by zero and controls the effective maximum learning rate. For transformers with large embedding tables, setting $\epsilon$ too small (like $10^{-12}$) can cause instability in sparse embedding updates. The standard $10^{-8}$ works for most cases; some LLM practitioners use $10^{-6}$ for additional stability.
+
+### AdamW
+
+**AdamW** (Loshchilov and Hutter, 2019) is Adam with a crucial fix: weight decay is decoupled from the gradient update.
+
+Standard Adam applies L2 regularization by adding $\lambda\theta$ to the gradient: $g_t \leftarrow g_t + \lambda\theta$. This seems equivalent to weight decay, but it is not. Because Adam scales the gradient by $1/\sqrt{\hat{v}_t}$, the effective weight decay becomes $\lambda / \sqrt{\hat{v}_t}$ — different for each parameter. Parameters with large gradients (high $\hat{v}_t$) are regularized less than parameters with small gradients. This breaks the intent of weight decay, which should uniformly shrink all parameters toward zero.
+
+AdamW separates the two:
+
+$$\theta \leftarrow \theta - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t - \eta \lambda \theta$$
+
+The weight decay term $\eta \lambda \theta$ operates independently, uniformly shrinking parameters regardless of their gradient history. This produces better regularization in practice — AdamW generalizes better than Adam on large models, particularly transformers. Almost every modern LLM training recipe uses AdamW. The practical recommendation: use AdamW by default. The only reason to use plain Adam is if you have legacy code or are comparing to a benchmark that used Adam.
+
+> 🎯 **What great looks like:** A senior engineer explains not just that AdamW decouples weight decay, but why it matters: L2 regularization in standard Adam is not truly uniform because the adaptive learning rate scaling pollutes the regularization strength per-parameter. In large models with heterogeneous layer types (embeddings vs. attention projections vs. LayerNorm), this means regularization is systematically applied differently across the network in an uncontrolled way. AdamW restores the intended semantics of weight decay.
+
+### Optimizer Comparison Table
+
+| Optimizer | Adaptive LR | Momentum | Memory Overhead | Best For | Avoid When |
+|---|---|---|---|---|---|
+| Batch GD | No | No | Low | Tiny datasets, convex problems | Large datasets (impractical) |
+| SGD | No | No | Minimal | Baselines, convex problems | Non-stationary, large LR needed |
+| SGD + Momentum | No | Yes | 1× params | Vision (ResNets), when tuning LR carefully | When you need fast iteration |
+| AdaGrad | Yes | No | 1× params | Sparse data, NLP with large vocab | Dense non-sparse problems (LR dies) |
+| RMSprop | Yes | No | 1× params | RNNs, non-stationary objectives | When you want bias correction |
+| Adam | Yes | Yes | 2× params | Most DL, fast prototyping | When weight decay must be clean |
+| AdamW | Yes | Yes | 2× params | Transformers, LLMs, fine-tuning | Rarely — it's the default |
+
+---
+
+### Learning Rate: The Most Important Hyperparameter
+
+The learning rate $\eta$ controls the size of each parameter update. It is simultaneously the most impactful and the most dangerous hyperparameter.
+
+**Too high:** Gradients are large, parameter updates overshoot the minimum, and the loss diverges. In extreme cases the loss goes to `NaN` immediately. In moderate cases, the loss oscillates around the minimum without converging. A common symptom is the loss decreasing for a few steps then jumping back up repeatedly.
+
+**Too low:** Updates are tiny, and training takes an impractically large number of steps. Worse, the optimizer can get stuck in a poor local minimum that a slightly larger step would have escaped. The model appears to converge (loss flattens) but at a suboptimal loss value.
+
+**Learning Rate Schedules** address the fact that the optimal learning rate changes during training. Early in training, parameters are far from optimal and you want large steps. As training progresses, you want smaller, more precise steps to settle into a minimum.
+
+- **Constant LR:** Simple, but rarely optimal.
+- **Step decay:** Multiply LR by a factor (e.g., 0.1) every $k$ epochs. Common in early ImageNet training recipes. Creates sharp drops in the learning curve at each step.
+- **Linear decay:** Reduce LR linearly from initial value to near zero over training. Simple, predictable.
+- **Cosine annealing:** Follows a cosine curve from max to min LR:
+  $$\eta_t = \eta_\min + \frac{1}{2}(\eta_\max - \eta_\min)\left(1 + \cos\frac{t \pi}{T}\right)$$
+  Smooth reduction with a slow start, fast middle, and slow end. This is the dominant schedule for LLM pretraining. Optionally includes restarts (cosine annealing with warm restarts) for exploration.
+- **Cyclic LR (CLR):** Oscillates between a minimum and maximum LR on a cycle. The high-LR phase helps escape saddle points; the low-LR phase allows fine convergence. Useful when you are uncertain about the optimal LR range.
+- **Linear warmup + cosine decay:** The standard recipe for transformers. Discussed below.
+
+> ⚠️ **Common Mistake:** Picking a learning rate without any systematic search. The standard approach is either a learning rate range test (train for a few steps with exponentially increasing LR, plot loss vs. LR, pick the value just before loss starts increasing) or a grid search over one log-scale order of magnitude (e.g., try $10^{-4}$, $3\times10^{-4}$, $10^{-3}$, $3\times10^{-3}$).
+
+### Learning Rate Warmup for Transformers
+
+Warmup means starting with a very small learning rate and linearly increasing it to the target LR over the first $N$ steps (typically 1,000–10,000 steps for large models):
+
+$$\eta_t = \eta_\max \cdot \frac{t}{N_\text{warmup}}, \quad t < N_\text{warmup}$$
+
+Why do transformers need warmup when CNNs often do not? Two reasons:
+
+1. **Adam's moment estimates are cold.** At step 1, $m_0 = v_0 = 0$. The bias correction helps, but with very few gradient samples, the per-parameter learning rate from $1/\sqrt{\hat{v}_t}$ can be poorly estimated. A high LR at step 1 multiplied by a poorly estimated adaptive factor can produce catastrophically large updates.
+
+2. **Attention weights are fragile early on.** In the first few steps of transformer training, attention weights are nearly uniform (softmax over near-zero logits). Large early updates can break the symmetry in catastrophic ways, forcing the model into a poor attractor state that takes thousands of steps to escape. Small initial updates allow the attention patterns to develop more naturally.
+
+The standard recipe for LLMs: linear warmup for 1–5% of total training steps, followed by cosine decay to $\eta_\min \approx 0.1 \times \eta_\max$.
+
+### Batch Size and Training Dynamics
+
+Batch size affects training in ways that go beyond simple speed vs. noise tradeoffs.
+
+**Large batch (1024–8192):**
+- Faster wall-clock training (more parallelism)
+- Lower gradient variance — updates are more consistent
+- Converges to sharp minima that tend to generalize worse (Keskar et al., 2017)
+- May require LR scaling: the **linear scaling rule** (Goyal et al., 2017) states that if you multiply batch size by $k$, multiply LR by $k$ to maintain the same effective update magnitude: $\eta_\text{new} = k \cdot \eta_\text{base}$. This holds empirically up to batch sizes of ~8192.
+
+**Small batch (16–256):**
+- More gradient noise, which acts as implicit regularization
+- Tends to converge to flat minima that generalize better
+- More gradient steps per epoch, more frequent updates
+- Less GPU utilization efficiency
+
+The practical default: batch size 256–1024 for most transformer training. Scale up to 2048–4096 when you need faster training and compensate with LR scaling + warmup. For fine-tuning, smaller batches (16–64) are common and work well because the pre-trained initialization is already good.
+
+### Gradient Clipping
+
+RNNs and LLMs trained on long sequences are prone to **exploding gradients**: the gradient norm can grow exponentially through deep computation graphs or long sequences. A single enormous gradient update can destroy model weights that took thousands of steps to build.
+
+Gradient clipping caps the gradient norm before applying the update:
+
+$$g \leftarrow g \cdot \frac{\min(\text{clip\_value}, \|g\|_2)}{\|g\|_2}$$
+
+If the gradient norm $\|g\|_2$ exceeds `clip_value` (typically 1.0), the entire gradient vector is scaled down proportionally so its norm equals `clip_value`. This preserves the direction of the gradient while capping its magnitude.
+
+**Norm clipping vs. value clipping:**
+- Norm clipping (above) scales the entire gradient vector — the direction is preserved.
+- Value clipping clips each individual gradient component to $[-c, c]$ — the direction changes. Value clipping is almost never used in modern practice because it corrupts the gradient direction.
+
+> 💡 **Senior Tip:** Monitoring the gradient norm over training is a crucial diagnostic. A healthy run has a roughly stable gradient norm (with some variation). Spikes in gradient norm that then stabilize are normal and often indicate the model is learning a new pattern. A gradient norm that grows monotonically toward infinity means you have an instability — reduce LR, increase gradient clipping, or check for numerical issues in your data (Inf/NaN values).
+
+### Weight Initialization
+
+Random initialization is essential. If you initialize all weights to zero, every neuron computes the same output, the same gradient, and updates identically — the network is stuck with full symmetry and never learns different features. Random initialization breaks symmetry.
+
+But the distribution of initial weights matters:
+
+**Xavier / Glorot Initialization** (Glorot and Bengio, 2010): Designed for sigmoid and tanh activations. Initializes weights from a uniform or Gaussian distribution with variance $\text{Var}(w) = \frac{2}{n_\text{in} + n_\text{out}}$, where $n_\text{in}$ and $n_\text{out}$ are the number of input and output units. The goal is to keep the variance of activations and gradients roughly constant across layers:
+
+$$W \sim \mathcal{N}\left(0, \sqrt{\frac{2}{n_\text{in} + n_\text{out}}}\right)$$
+
+**He Initialization** (He et al., 2015): Designed for ReLU activations. Because ReLU zeros out half of inputs on average, you need larger initial weights to maintain activation variance:
+
+$$W \sim \mathcal{N}\left(0, \sqrt{\frac{2}{n_\text{in}}}\right)$$
+
+The factor of 2 in the numerator accounts for the halved variance introduced by ReLU. Using Xavier with ReLU leads to activations that shrink exponentially with depth; using He initialization maintains roughly unit variance through the network.
+
+> ⚠️ **Common Mistake:** Using PyTorch defaults without checking. PyTorch's `nn.Linear` uses Kaiming uniform initialization (a variant of He), which is correct for ReLU. But embedding layers use uniform initialization with a small range by default, which may not be appropriate for all architectures. Always verify that initialization is appropriate for your activation function.
+
+---
+
+```python
+#| label: optimizer-comparison
+#| eval: false
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+
+# -------------------------------------------------------
+# Compare optimizer convergence on a synthetic regression task
+# -------------------------------------------------------
+
+torch.manual_seed(42)
+N, D = 1000, 20
+X = torch.randn(N, D)
+true_w = torch.randn(D)
+y = X @ true_w + 0.1 * torch.randn(N)
+
+def make_model():
+    return nn.Sequential(nn.Linear(D, 64), nn.ReLU(), nn.Linear(64, 1))
+
+def train(optimizer_fn, epochs=100, batch_size=64):
+    model = make_model()
+    opt = optimizer_fn(model.parameters())
+    loss_fn = nn.MSELoss()
+    losses = []
+    for epoch in range(epochs):
+        perm = torch.randperm(N)
+        epoch_loss = 0
+        for i in range(0, N, batch_size):
+            idx = perm[i:i+batch_size]
+            pred = model(X[idx]).squeeze()
+            loss = loss_fn(pred, y[idx])
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            opt.step()
+            epoch_loss += loss.item()
+        losses.append(epoch_loss / (N // batch_size))
+    return losses
+
+configs = {
+    "SGD (lr=0.01)":        lambda p: torch.optim.SGD(p, lr=0.01),
+    "SGD+Momentum":          lambda p: torch.optim.SGD(p, lr=0.01, momentum=0.9),
+    "Adam (lr=1e-3)":        lambda p: torch.optim.Adam(p, lr=1e-3),
+    "AdamW (lr=1e-3)":       lambda p: torch.optim.AdamW(p, lr=1e-3, weight_decay=0.01),
+    "RMSprop (lr=1e-3)":     lambda p: torch.optim.RMSprop(p, lr=1e-3),
+}
+
+plt.figure(figsize=(10, 5))
+for label, opt_fn in configs.items():
+    losses = train(opt_fn)
+    plt.plot(losses, label=label)
+
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.title("Optimizer Convergence Comparison")
+plt.legend()
+plt.yscale("log")
+plt.tight_layout()
+plt.savefig("optimizer_comparison.png", dpi=150)
+```
+
+```python
+#| label: lr-schedule-visualization
+#| eval: false
+import numpy as np
+import matplotlib.pyplot as plt
+
+total_steps = 10_000
+warmup_steps = 500
+lr_max = 3e-4
+lr_min = 3e-5
+
+def linear_warmup_cosine_decay(t):
+    if t < warmup_steps:
+        return lr_max * t / warmup_steps
+    progress = (t - warmup_steps) / (total_steps - warmup_steps)
+    return lr_min + 0.5 * (lr_max - lr_min) * (1 + np.cos(np.pi * progress))
+
+def step_decay(t, drop=0.5, every=2500):
+    return lr_max * (drop ** (t // every))
+
+def constant(t):
+    return lr_max
+
+steps = np.arange(total_steps)
+schedules = {
+    "Linear Warmup + Cosine Decay": [linear_warmup_cosine_decay(t) for t in steps],
+    "Step Decay (0.5 every 2500)":  [step_decay(t) for t in steps],
+    "Constant LR":                  [constant(t) for t in steps],
+}
+
+plt.figure(figsize=(10, 4))
+for label, lrs in schedules.items():
+    plt.plot(steps, lrs, label=label)
+plt.xlabel("Training Step")
+plt.ylabel("Learning Rate")
+plt.title("LR Schedule Comparison")
+plt.legend()
+plt.tight_layout()
+plt.savefig("lr_schedules.png", dpi=150)
+```
+
+---
+
+## Probability & Statistics for ML
+
+Probability is the language ML is written in. Every loss function, every model output, and every evaluation metric has a probabilistic interpretation. Engineers who do not understand probability cannot debug model failures, design principled experiments, or reason about uncertainty — which means they cannot do senior-level ML work.
+
+### Bayes Theorem
+
+Bayes theorem is the foundation of probabilistic reasoning:
+
+$$P(A \mid B) = \frac{P(B \mid A) \cdot P(A)}{P(B)}$$
+
+Read as: "the probability of $A$ given that $B$ occurred equals the probability of $B$ occurring given $A$, times how likely $A$ was in the first place, divided by how likely $B$ is overall."
+
+**Medical test analogy:** A disease affects 1% of the population. A test for the disease is 99% sensitive (detects 99% of true cases) and 99% specific (correctly identifies 99% of healthy people as healthy). You test positive. What is the probability you have the disease?
+
+Most people intuitively answer "99%." The correct answer is approximately **50%**.
+
+- $P(\text{disease}) = 0.01$ (prior — 1% prevalence)
+- $P(+ \mid \text{disease}) = 0.99$ (sensitivity)
+- $P(+ \mid \text{no disease}) = 0.01$ (false positive rate)
+- $P(+) = P(+ \mid \text{disease}) \cdot P(\text{disease}) + P(+ \mid \text{no disease}) \cdot P(\text{no disease}) = 0.99 \times 0.01 + 0.01 \times 0.99 = 0.0198$
+- $P(\text{disease} \mid +) = \frac{0.99 \times 0.01}{0.0198} \approx 0.5$
+
+The intuition is that a rare disease means most positive tests are false positives even with a good test. The prior matters enormously. This is the key lesson: **never ignore the base rate.**
+
+In ML, Bayes theorem appears everywhere. In Naive Bayes classifiers, the posterior probability of a class given features is computed exactly this way. In Bayesian neural networks, the posterior over weights is the prior times the likelihood. In calibration, you want the model's predicted probabilities to match the actual frequencies — Bayes theorem is the conceptual foundation.
+
+### Prior, Likelihood, and Posterior
+
+These three terms define Bayesian reasoning:
+
+- **Prior** $P(\theta)$: What you believe about the parameters before seeing any data. It encodes your assumptions. A Gaussian prior on weights says "I expect weights to be small." A uniform prior says "I have no preference."
+- **Likelihood** $P(D \mid \theta)$: How probable the observed data is given a specific parameter setting. The likelihood function scores how well parameters explain the data.
+- **Posterior** $P(\theta \mid D)$: What you believe after seeing the data. $P(\theta \mid D) \propto P(D \mid \theta) \cdot P(\theta)$. Training is the process of finding parameters that maximize the posterior.
+
+The prior is what distinguishes Bayesian from frequentist approaches. Frequentists only use the likelihood. Bayesians combine likelihood with prior beliefs. In deep learning, we often use point estimates (single parameter values) rather than full distributions, but the probabilistic framing still governs loss function design.
+
+### Maximum Likelihood Estimation (MLE)
+
+**MLE** finds the parameter setting that maximizes the probability of the observed data:
+
+$$\hat{\theta}_\text{MLE} = \arg\max_\theta P(D \mid \theta) = \arg\max_\theta \prod_{i=1}^n P(x_i \mid \theta)$$
+
+Taking the log converts the product to a sum (log of a product is sum of logs), and the maximum is unchanged:
+
+$$\hat{\theta}_\text{MLE} = \arg\max_\theta \sum_{i=1}^n \log P(x_i \mid \theta)$$
+
+**MLE and cross-entropy loss are the same thing.** For a classification model with softmax output, $P(y_i = k \mid x_i, \theta) = \text{softmax}(f_\theta(x_i))_k$. Maximizing the log-likelihood over the training set:
+
+$$\arg\max_\theta \sum_i \log P(y_i \mid x_i, \theta) = \arg\min_\theta -\sum_i \log P(y_i \mid x_i, \theta) = \arg\min_\theta \text{CrossEntropy}$$
+
+Minimizing cross-entropy loss is exactly MLE. This is not a coincidence or a convenience — it is the probabilistic justification for using cross-entropy for classification.
+
+**MLE and MSE:** For regression with Gaussian noise $y = f_\theta(x) + \epsilon$, $\epsilon \sim \mathcal{N}(0, \sigma^2)$, the log-likelihood is:
+
+$$\log P(y \mid x, \theta) \propto -\frac{(y - f_\theta(x))^2}{2\sigma^2}$$
+
+Maximizing this is equivalent to minimizing MSE. MSE is MLE under the assumption of Gaussian noise. If your noise is Laplacian instead, MLE gives you MAE. The choice of loss function encodes an assumption about the noise distribution.
+
+### Maximum A Posteriori (MAP)
+
+**MAP** maximizes the posterior rather than the likelihood:
+
+$$\hat{\theta}_\text{MAP} = \arg\max_\theta P(\theta \mid D) = \arg\max_\theta \left[\log P(D \mid \theta) + \log P(\theta)\right]$$
+
+The extra term $\log P(\theta)$ is the log-prior — it regularizes the solution. A Gaussian prior $P(\theta) \propto \exp(-\lambda\|\theta\|^2_2)$ gives $\log P(\theta) = -\lambda\|\theta\|^2_2$, so MAP with a Gaussian prior is exactly:
+
+$$\hat{\theta}_\text{MAP} = \arg\min_\theta \left[\mathcal{L}_\text{MLE} + \lambda\|\theta\|^2_2\right]$$
+
+**L2 regularization is MAP estimation with a Gaussian prior on weights.** L1 regularization (Lasso) corresponds to a Laplace prior. This unifies regularization with probabilistic inference — regularization is not a trick to prevent overfitting; it is a principled way to incorporate prior beliefs about weight magnitude.
+
+> 💡 **Senior Tip:** Understanding MLE vs. MAP unifies many ideas that otherwise seem separate. Cross-entropy loss → MLE. MSE → MLE with Gaussian noise. L2 regularization → MAP with Gaussian prior. L1 regularization → MAP with Laplace prior. These all fall out of the same probabilistic framework.
+
+### Common Distributions in ML
+
+**Gaussian (Normal):** $X \sim \mathcal{N}(\mu, \sigma^2)$. Appears everywhere due to the Central Limit Theorem. Used for: continuous outputs in regression, weight initialization, noise models, latent variables in VAEs, and assumed everywhere you use MSE loss or L2 regularization.
+
+**Bernoulli:** $X \in \{0, 1\}$, $P(X=1) = p$. The distribution for a single binary outcome. Used for: binary classification (sigmoid output), coin flips, any binary event.
+
+**Categorical:** Generalization of Bernoulli to $k$ outcomes. $P(X=k) = p_k$, $\sum_k p_k = 1$. Used for: multiclass classification (softmax output), token generation in language models (next-token prediction is sampling from a Categorical distribution), discrete actions in RL.
+
+**Poisson:** $P(X=k) = \frac{\lambda^k e^{-\lambda}}{k!}$. Models the number of events in a fixed time period. Used for: click counts, arrival rates, count data in recommendation systems, rare event modeling.
+
+**Beta / Dirichlet:** Distributions over probabilities (values in $[0,1]$ or a simplex). Used for: Bayesian priors on categorical distributions, topic modeling (LDA), uncertainty quantification.
+
+### Expectation, Variance, Covariance, Correlation
+
+$$E[X] = \sum_x x \cdot P(X=x) \quad \text{or} \quad \int x \cdot p(x)\, dx$$
+
+$$\text{Var}(X) = E[(X - E[X])^2] = E[X^2] - (E[X])^2$$
+
+$$\text{Cov}(X, Y) = E[(X - E[X])(Y - E[Y])] = E[XY] - E[X]E[Y]$$
+
+$$\text{Corr}(X, Y) = \frac{\text{Cov}(X, Y)}{\sqrt{\text{Var}(X) \cdot \text{Var}(Y)}} \in [-1, 1]$$
+
+In ML: variance measures how spread out a distribution is. High variance in a model's predictions indicates instability (high variance in the bias-variance decomposition). Covariance appears in PCA (the principal components are the eigenvectors of the covariance matrix of features). Correlation measures linear association; zero correlation does not imply independence (for non-Gaussian distributions).
+
+> ⚠️ **Common Mistake:** Confusing correlation and causation — this is overused advice but genuinely appears in ML contexts. High feature-label correlation does not mean the feature causes the label. A model can learn spurious correlations from training data that don't hold in production. This is a core issue in distribution shift and model fairness.
+
+### Central Limit Theorem
+
+The Central Limit Theorem states: the mean of $n$ independent, identically distributed random variables with finite mean $\mu$ and variance $\sigma^2$ is approximately normally distributed for large $n$:
+
+$$\bar{X}_n = \frac{1}{n}\sum_{i=1}^n X_i \xrightarrow{d} \mathcal{N}\left(\mu, \frac{\sigma^2}{n}\right)$$
+
+Why it matters for ML:
+
+1. **A/B testing:** The test statistic (difference in sample means) is approximately Gaussian even if the underlying metric (e.g., revenue per user) is non-Gaussian — which is why standard z-tests and t-tests work for business metrics.
+2. **Gradient descent:** Mini-batch gradient estimates are sample means of individual gradients. The CLT justifies treating batch gradients as noisy Gaussian estimates of the true gradient.
+3. **Confidence intervals:** Our ability to compute valid confidence intervals for model metrics depends on the CLT approximation.
+
+The CLT requires $n$ to be "large enough" — in practice, $n \geq 30$ works for symmetric distributions, but skewed distributions (common in revenue metrics) may require $n \geq 1000$ or more.
+
+### Hypothesis Testing for ML
+
+Hypothesis testing answers: "Is this difference real, or is it just noise?"
+
+**The framework:**
+1. **Null hypothesis $H_0$:** No effect (e.g., "the two models have the same accuracy," "the two variants have the same conversion rate").
+2. **Alternative hypothesis $H_1$:** There is an effect.
+3. **Test statistic:** A summary of the data (e.g., difference in means, divided by standard error).
+4. **p-value:** The probability of observing a test statistic at least as extreme as the one observed, assuming $H_0$ is true. A small p-value means the observed result is unlikely under $H_0$.
+5. **Significance threshold $\alpha$:** Usually 0.05. If $p < \alpha$, reject $H_0$.
+
+**Type I error (false positive):** Rejecting $H_0$ when it is actually true. Rate = $\alpha$. You conclude there is an effect when there isn't one. In A/B testing: shipping a feature that doesn't actually improve the metric.
+
+**Type II error (false negative):** Failing to reject $H_0$ when it is actually false. Rate = $\beta$. You miss a real effect. In A/B testing: not shipping a feature that would have improved the metric. Power = $1 - \beta$.
+
+**Confidence interval:** If you repeated the experiment many times and computed a 95% CI each time, 95% of the intervals would contain the true parameter. The CI is *not* a statement about the probability that the true parameter lies in a specific interval — after you compute an interval, the true parameter either is or isn't in it.
+
+> ⚠️ **Common Mistake:** Interpreting a 95% CI as "there is a 95% probability the true value lies in this interval." This is a frequentist CI, not a Bayesian credible interval. The correct interpretation is: this procedure produces intervals that cover the true value 95% of the time across repeated experiments.
+
+### A/B Testing for ML
+
+A/B testing in ML contexts — evaluating whether a new model, prompt, or feature improves a business metric — requires several additional considerations beyond classical hypothesis testing.
+
+**Sample size calculation:** Before running the experiment, calculate the required sample size to achieve the desired power ($1 - \beta$) at significance level $\alpha$:
+
+$$n = \frac{(z_{\alpha/2} + z_\beta)^2 \cdot 2\sigma^2}{\delta^2}$$
+
+where $\delta$ is the minimum detectable effect (MDE) — the smallest improvement you care about detecting — and $\sigma^2$ is the variance of the metric. With $\alpha = 0.05$ ($z_{\alpha/2} = 1.96$) and $80\%$ power ($z_\beta = 0.84$):
+
+$$n \approx \frac{(1.96 + 0.84)^2 \cdot 2\sigma^2}{\delta^2} \approx \frac{15.7\sigma^2}{\delta^2}$$
+
+If $\sigma = 100$ and $\delta = 5$ (you want to detect a 5-unit improvement), $n \approx 6,280$ per group.
+
+**Common mistakes in ML A/B tests:**
+
+1. **Peeking / early stopping:** Checking results before the pre-specified sample size is reached and stopping if $p < 0.05$. This dramatically inflates Type I error rate — you can reach $p=0.05$ by chance during a run even when there is no real effect. The correct approach: pre-specify sample size and analysis timing, then analyze once. If you need continuous monitoring, use sequential testing methods (e.g., alpha spending, mSPRT).
+
+2. **Multiple comparisons (p-hacking):** Testing many metrics or many variants and reporting the one that has $p < 0.05$. With 20 independent tests at $\alpha = 0.05$, you expect one false positive by chance. Apply Bonferroni correction ($\alpha' = \alpha / m$ for $m$ tests) or Benjamini-Hochberg correction for the False Discovery Rate.
+
+3. **Ignoring practical significance:** A p-value tells you whether an effect is statistically distinguishable from noise. It does not tell you whether the effect is large enough to matter. A p-value of $10^{-10}$ with $n=10^6$ users might correspond to a 0.001% improvement in click rate — statistically significant, practically irrelevant.
+
+4. **Simpson's Paradox:** An effect that holds in aggregate can reverse in subgroups. Always segment your A/B test results by major user cohorts (device type, region, user age) before concluding.
+
+5. **Network effects / interference:** If users can interact with each other (social networks, marketplaces), the independence assumption breaks. A user in the control group can be influenced by users in the treatment group. Use cluster randomization or switchback designs.
+
+**Statistical significance vs. practical significance:** Use effect size to measure practical importance.
+
+**Cohen's d:** Standardized effect size for difference in means:
+$$d = \frac{\mu_1 - \mu_2}{\sigma_\text{pooled}}$$
+
+Guideline: $d = 0.2$ small, $d = 0.5$ medium, $d = 0.8$ large. A p-value of $10^{-6}$ with $d = 0.05$ means the effect is real but tiny — likely not worth shipping.
+
+```python
+#| label: ab-test
+#| eval: false
+import numpy as np
+from scipy import stats
+
+def run_ab_test(control_data, treatment_data, alpha=0.05):
+    """
+    Run a two-sided t-test for an A/B experiment.
+    Returns test result with effect size and power analysis.
+    """
+    n_c, n_t = len(control_data), len(treatment_data)
+    mean_c, mean_t = np.mean(control_data), np.mean(treatment_data)
+    std_c, std_t = np.std(control_data, ddof=1), np.std(treatment_data, ddof=1)
+
+    # Two-sample Welch's t-test (does not assume equal variances)
+    t_stat, p_value = stats.ttest_ind(control_data, treatment_data, equal_var=False)
+
+    # Effect size (Cohen's d with pooled std)
+    pooled_std = np.sqrt((std_c**2 + std_t**2) / 2)
+    cohens_d = (mean_t - mean_c) / pooled_std
+
+    # 95% confidence interval for the difference in means
+    se_diff = np.sqrt(std_c**2/n_c + std_t**2/n_t)
+    ci_low  = (mean_t - mean_c) - 1.96 * se_diff
+    ci_high = (mean_t - mean_c) + 1.96 * se_diff
+
+    print(f"Control:   mean={mean_c:.4f}, std={std_c:.4f}, n={n_c}")
+    print(f"Treatment: mean={mean_t:.4f}, std={std_t:.4f}, n={n_t}")
+    print(f"Absolute diff:    {mean_t - mean_c:+.4f}")
+    print(f"Relative lift:    {(mean_t - mean_c) / mean_c * 100:+.2f}%")
+    print(f"95% CI:           [{ci_low:.4f}, {ci_high:.4f}]")
+    print(f"t-statistic:      {t_stat:.4f}")
+    print(f"p-value:          {p_value:.6f}")
+    print(f"Cohen's d:        {cohens_d:.4f}")
+    print(f"Significant (α={alpha}): {'YES — reject H₀' if p_value < alpha else 'NO — fail to reject H₀'}")
+
+    return {
+        "p_value": p_value, "cohens_d": cohens_d,
+        "ci": (ci_low, ci_high), "significant": p_value < alpha
+    }
+
+def sample_size_needed(sigma, delta, alpha=0.05, power=0.8):
+    """Compute required sample size per group."""
+    z_alpha = stats.norm.ppf(1 - alpha / 2)   # 1.96 for two-sided alpha=0.05
+    z_beta  = stats.norm.ppf(power)             # 0.84 for 80% power
+    n = 2 * (z_alpha + z_beta)**2 * sigma**2 / delta**2
+    return int(np.ceil(n))
+
+# Example usage
+np.random.seed(0)
+control   = np.random.normal(loc=0.10, scale=0.05, size=2000)   # 10% conversion
+treatment = np.random.normal(loc=0.105, scale=0.05, size=2000)  # 10.5% conversion
+result = run_ab_test(control, treatment)
+
+print(f"\nRequired n for delta=0.005, sigma=0.05: {sample_size_needed(0.05, 0.005)}")
+```
+
+---
+
+## Information Theory for ML
+
+Information theory provides the mathematical language for measuring uncertainty, surprise, and information content. Understanding these concepts is essential because they directly determine the loss functions we use and appear throughout LLM alignment, generative modeling, and representation learning.
+
+### Entropy
+
+**Shannon entropy** measures the average uncertainty in a probability distribution:
+
+$$H(X) = -\sum_{x} p(x) \log_2 p(x) \quad \text{(bits)} \quad \text{or} \quad H(X) = -\sum_{x} p(x) \ln p(x) \quad \text{(nats)}$$
+
+Intuition: entropy is the average number of bits needed to encode a message from the distribution. A fair coin ($p=0.5$) has $H = 1$ bit — maximum uncertainty for a binary variable. A biased coin with $p(H) = 0.99$ has $H \approx 0.08$ bits — very low uncertainty, because you almost always know the outcome before flipping.
+
+Properties:
+- $H(X) \geq 0$ — entropy is always non-negative.
+- $H(X) = 0$ iff $X$ is deterministic (one outcome has probability 1).
+- For a $k$-outcome variable, entropy is maximized when all outcomes are equally likely: $H_\max = \log_2 k$.
+
+In ML: entropy appears in decision tree splitting criteria (information gain = reduction in entropy), in regularization (entropy regularization in RL encourages exploration), and in calibration (a model that outputs uniform probabilities has maximum entropy — maximum uncertainty).
+
+### Cross-Entropy Loss
+
+**Cross-entropy** measures how many bits you need on average to encode samples from distribution $P$ using a code optimized for distribution $Q$:
+
+$$H(P, Q) = -\sum_x p(x) \log q(x)$$
+
+Cross-entropy decomposes as:
+$$H(P, Q) = H(P) + D_\text{KL}(P \| Q)$$
+
+where $H(P)$ is the entropy of the true distribution and $D_\text{KL}$ is the KL divergence (see below).
+
+**Why cross-entropy is the right loss for classification:** In a classification model, $P$ is the true label distribution (a one-hot vector: all probability on the correct class) and $Q = q_\theta$ is the model's predicted distribution (the softmax output). Since $H(P) = 0$ for one-hot labels (no uncertainty in the true labels), minimizing cross-entropy is equivalent to minimizing $D_\text{KL}(P \| q_\theta)$ — making the model's distribution as close as possible to the true distribution. This is a principled, information-theoretically grounded objective.
+
+$$\mathcal{L}_\text{CE} = -\sum_i \sum_k y_{ik} \log \hat{y}_{ik} = -\sum_i \log \hat{y}_{i,\text{true\_class}}$$
+
+For one-hot labels, all the mass is on the correct class, so cross-entropy reduces to the negative log probability the model assigns to the correct class.
+
+### KL Divergence
+
+**KL divergence** (Kullback-Leibler divergence) measures how different distribution $Q$ is from distribution $P$:
+
+$$D_\text{KL}(P \| Q) = \sum_x p(x) \log \frac{p(x)}{q(x)} = E_P\left[\log \frac{P}{Q}\right]$$
+
+Key properties:
+- $D_\text{KL}(P \| Q) \geq 0$ (always non-negative, by Gibbs inequality)
+- $D_\text{KL}(P \| Q) = 0$ iff $P = Q$
+- **Asymmetric:** $D_\text{KL}(P \| Q) \neq D_\text{KL}(Q \| P)$ in general
+
+The asymmetry has a concrete consequence: $D_\text{KL}(P \| Q)$ is called the "forward KL" and is large when $Q$ assigns near-zero probability to regions where $P$ has mass (the model misses modes of $P$). $D_\text{KL}(Q \| P)$ is the "reverse KL" and is large when $Q$ assigns mass to regions where $P$ is near zero (the model hallucinates).
+
+**KL divergence in VAEs:** Variational Autoencoders use KL divergence to regularize the latent space. The ELBO (Evidence Lower Bound) loss is:
+
+$$\mathcal{L}_\text{VAE} = E_{z \sim q_\phi(z|x)}\left[\log p_\theta(x|z)\right] - D_\text{KL}(q_\phi(z|x) \| p(z))$$
+
+The second term penalizes the encoder's posterior $q_\phi(z|x)$ for deviating from the prior $p(z) = \mathcal{N}(0, I)$. This forces the latent space to be compact and well-organized, enabling smooth interpolation and generation.
+
+**KL divergence in RLHF:** In RLHF (Reinforcement Learning from Human Feedback), KL divergence prevents the policy from drifting too far from the reference policy during optimization:
+
+$$\mathcal{R}_\text{total}(\pi) = r(x, y) - \beta \cdot D_\text{KL}(\pi_\theta(y|x) \| \pi_\text{ref}(y|x))$$
+
+The reward model score $r(x, y)$ drives the policy toward high-reward outputs. Without the KL penalty, the policy would exploit the reward model — generating text that maximizes the learned reward but deviates wildly from sensible language (reward hacking). The KL penalty anchors the policy to the pretrained distribution, preventing degenerate outputs.
+
+> 🎯 **What great looks like:** A senior engineer explains that the direction of the KL divergence matters: in RLHF, $D_\text{KL}(\pi_\theta \| \pi_\text{ref})$ is used (not the reverse), which penalizes the new policy for placing mass on sequences the reference policy would never generate. This is the "reverse KL" direction and makes the policy mode-seeking — it tends to produce conservative, high-quality outputs rather than diverse, risk-taking ones.
+
+### Mutual Information
+
+**Mutual information** measures how much knowing one variable reduces uncertainty about another:
+
+$$I(X; Y) = H(X) - H(X \mid Y) = H(Y) - H(Y \mid X) = D_\text{KL}(P_{XY} \| P_X P_Y)$$
+
+$I(X; Y) = 0$ iff $X$ and $Y$ are independent. Unlike correlation, mutual information captures non-linear dependencies.
+
+Applications in ML:
+- **Feature selection:** Select features that have high mutual information with the label — InfoGain and its variants.
+- **Representation learning:** InfoMax principle: learn representations that maximize mutual information with the input (contrastive learning methods like SimCLR can be framed this way).
+- **Information bottleneck:** The theory that deep networks compress input information while preserving information about the label — framed via mutual information.
+
+> 💡 **Senior Tip:** Mutual information is hard to estimate in practice. For high-dimensional variables (like raw images), estimating $I(X; Y)$ directly requires approximations. Methods like MINE (Mutual Information Neural Estimation) use neural networks to estimate MI bounds. This comes up in contrastive representation learning research.
+
+---
+
+## Cheat Sheet
+
+**Optimization rules of thumb:**
+- Default optimizer: AdamW with $\beta_1=0.9$, $\beta_2=0.999$, $\epsilon=10^{-8}$, `weight_decay=0.01`.
+- Default LR for AdamW with transformers: $10^{-4}$ to $3\times10^{-4}$.
+- Gradient clipping: clip norm to 1.0 for LLMs and RNNs. Monitor grad norm throughout training.
+- LR warmup: 1–5% of total steps, linear warmup → cosine decay.
+- Linear LR scaling rule: if batch size goes from $B$ to $kB$, scale LR by $k$ (valid up to ~8192).
+- SGD + momentum often beats Adam for final accuracy on vision tasks; Adam/AdamW dominate for NLP.
+- He initialization for ReLU: $\sigma = \sqrt{2/n_\text{in}}$. Xavier for tanh/sigmoid: $\sigma = \sqrt{2/(n_\text{in}+n_\text{out})}$.
+- Large batch → sharper minima → worse generalization. Small batch → noisy gradients → better regularization.
+- AdaGrad: adaptive LR, good for sparse features, LR dies on dense problems.
+- RMSprop: fixes AdaGrad dying LR with exponential moving average of squared gradients.
+- Adam = RMSprop + momentum + bias correction. AdamW = Adam + decoupled weight decay.
+- Decoupled weight decay in AdamW: weight decay is uniform across parameters, not corrupted by adaptive scaling.
+
+**Statistics formulas:**
+- Bayes: $P(A|B) = P(B|A)P(A)/P(B)$.
+- MLE: $\arg\max_\theta \sum_i \log P(x_i|\theta)$. Equivalent to minimizing cross-entropy.
+- MAP = MLE + log-prior. L2 reg = MAP with Gaussian prior. L1 reg = MAP with Laplace prior.
+- $\text{Var}(X) = E[X^2] - (E[X])^2$.
+- $\text{Corr}(X,Y) = \text{Cov}(X,Y)/\sqrt{\text{Var}(X)\text{Var}(Y)} \in [-1,1]$.
+- CLT: sample mean of iid r.v.s $\to \mathcal{N}(\mu, \sigma^2/n)$ as $n\to\infty$.
+- Sample size per group: $n \approx 2(z_{\alpha/2}+z_\beta)^2\sigma^2/\delta^2$.
+- Cohen's d: $(μ_1-μ_2)/σ_\text{pooled}$. Small=0.2, medium=0.5, large=0.8.
+- Type I error = false positive = $\alpha$. Type II error = false negative = $\beta$. Power = $1-\beta$.
+- p-value: probability of observing result at least this extreme under $H_0$.
+- 95% CI: over repeated experiments, 95% of intervals cover true parameter.
+
+**Information theory identities:**
+- Entropy: $H(X) = -\sum_x p(x)\log p(x)$. Max entropy = uniform distribution.
+- Cross-entropy: $H(P,Q) = H(P) + D_\text{KL}(P\|Q)$.
+- Cross-entropy loss = MLE for classification = minimizing KL from model to true distribution.
+- KL divergence: $D_\text{KL}(P\|Q) = \sum_x p(x)\log(p(x)/q(x)) \geq 0$.
+- KL is not symmetric: $D_\text{KL}(P\|Q) \neq D_\text{KL}(Q\|P)$ in general.
+- Forward KL $D_\text{KL}(P\|Q)$: zero-avoiding (model covers all modes). Reverse KL $D_\text{KL}(Q\|P)$: mode-seeking.
+- Mutual information: $I(X;Y) = H(X) - H(X|Y) = D_\text{KL}(P_{XY}\|P_X P_Y)$.
+- $I(X;Y) = 0$ iff $X$ and $Y$ are independent.
+
+---
+
+## Interview Questions
+
+### 🟢 Entry Level
+
+**Q1. What is the difference between batch gradient descent, SGD, and mini-batch SGD? Which is used in practice?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Batch gradient descent computes the exact gradient over the entire dataset before each parameter update. SGD uses a single training example. Mini-batch SGD uses a small random subset (typically 32–512 examples). In practice, mini-batch SGD is used almost universally.
+
+**Weak answer:** "Mini-batch is a compromise between the other two."
+
+**Strong answer:** Mini-batch gradient descent is used because it achieves the right balance between computational efficiency and gradient quality. GPU hardware is optimized for parallel operations on tensors — a single example underutilizes the hardware while a full dataset doesn't fit in memory. Mini-batches saturate GPU compute while keeping memory usage manageable. The noise from mini-batch estimates also acts as implicit regularization, helping models find flatter minima that generalize better than those found by noiseless batch GD. When practitioners say "SGD" in the context of deep learning, they almost always mean mini-batch SGD.
+:::
+
+**Q2. What is learning rate and why does it matter?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The learning rate $\eta$ scales the gradient update: $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}$. It controls how large each parameter update step is.
+
+If $\eta$ is too large, updates overshoot the minimum, causing the loss to diverge or oscillate. If $\eta$ is too small, training converges very slowly and may get stuck in a poor local minimum. The right learning rate causes the loss to decrease steadily.
+
+Learning rate is often called the most important hyperparameter because it interacts with everything else: architecture, batch size, optimizer, and dataset characteristics all affect what learning rate works. Most practitioners use learning rate schedules — starting with a higher rate and decaying it — because the optimal step size changes as training progresses. For transformers, linear warmup followed by cosine decay is the standard recipe.
+:::
+
+**Q3. What is Adam and why is it preferred over plain SGD for most deep learning?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Adam (Adaptive Moment Estimation) combines two ideas: momentum (tracking a moving average of gradients to smooth updates) and adaptive per-parameter learning rates (scaling updates inversely by a moving average of squared gradients, so rarely-updated parameters get larger steps).
+
+Adam is preferred for most deep learning because: (1) it works well with default hyperparameters, reducing tuning effort; (2) adaptive learning rates handle the heterogeneous gradient scales across different layers naturally (embedding layers have very different gradient characteristics than output projection layers); (3) it converges faster in early training than SGD.
+
+The exception is vision models like ResNets, where carefully-tuned SGD + momentum often achieves better final accuracy than Adam. For transformers and LLMs, AdamW (Adam with decoupled weight decay) is the standard.
+:::
+
+**Q4. What is Bayes theorem? Give an example.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Bayes theorem: $P(A|B) = P(B|A) \cdot P(A) / P(B)$.
+
+Example: A disease affects 1% of people. A test is 99% accurate (both sensitivity and specificity). You test positive. The probability you have the disease is about 50%, not 99%.
+
+Why? Because the prior probability of having the disease (1%) is very low. Out of 10,000 people: ~100 have the disease (99 test positive), and ~9,900 do not (99 test positive as false positives). So out of ~198 positive tests, only ~99 are true positives — about 50%.
+
+The key lesson: the prior matters. Low-prevalence events have high false positive rates even with accurate tests. In ML, this appears whenever you are doing anomaly detection or evaluating rare-class classifiers — always consider the base rate.
+:::
+
+**Q5. What is cross-entropy loss and why is it used for classification?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Cross-entropy loss for multiclass classification: $\mathcal{L} = -\sum_k y_k \log \hat{y}_k$, where $y_k$ is the true label (one-hot) and $\hat{y}_k$ is the model's predicted probability for class $k$. For one-hot labels, this reduces to $-\log \hat{y}_\text{correct}$ — the negative log probability of the correct class.
+
+It is used for classification because: (1) it is the probabilistically correct loss — minimizing cross-entropy is equivalent to maximum likelihood estimation when the model outputs a probability distribution; (2) it is differentiable and works well with softmax outputs; (3) it provides a dense gradient signal even when the model gets the answer right (if the model assigns 0.6 to the correct class, the loss still pushes it higher), unlike accuracy which gives no gradient.
+
+Accuracy is not differentiable and cannot be used as a loss function — you need a smooth surrogate, and cross-entropy is the principled choice.
+:::
+
+**Q6. What is entropy in information theory?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Entropy $H(X) = -\sum_x p(x) \log p(x)$ measures the average uncertainty in a random variable. High entropy = high uncertainty = more information needed to describe outcomes. Low entropy = predictable outcomes.
+
+A fair coin (50/50) has entropy = 1 bit. A biased coin (99/1) has entropy ≈ 0.08 bits — you almost always know the outcome before flipping.
+
+In ML: decision trees split on features that reduce entropy the most (information gain). Language model perplexity is related to entropy — lower perplexity means the model is less surprised by test data. A well-trained classifier should have low entropy on easy examples (confident and correct) and higher entropy on hard or ambiguous ones.
+:::
+
+**Q7. What is p-value and what does it mean?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A p-value is the probability of observing a test statistic at least as extreme as the one computed from the data, assuming the null hypothesis is true. It is not the probability that the null hypothesis is true.
+
+Example: you compare two models. The null hypothesis is "both models have the same accuracy." You compute a test statistic and get $p = 0.03$. This means: if there were actually no difference between models, there would be only a 3% chance of seeing this large a difference by random chance. Since $p < 0.05$, you reject the null hypothesis.
+
+Common mistake: p-value doesn't tell you the effect is large or important — just that it's unlikely to be due to chance. Always pair p-values with effect size (Cohen's d) and confidence intervals.
+:::
+
+---
+
+### 🟡 Mid Level
+
+**Q1. Explain the difference between AdaGrad, RMSprop, and Adam. When would each fail?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+All three use adaptive per-parameter learning rates based on gradient history, but they differ in how they accumulate that history.
+
+AdaGrad accumulates the sum of all squared gradients since training began: $G_t = \sum_{i=1}^t g_i^2$. The effective LR is $\eta/\sqrt{G_t}$. Because $G_t$ only ever increases, the LR monotonically decreases to zero. This works for sparse problems (NLP with large vocabularies, recommendation systems) where rare parameters need persistent large updates. It fails for dense, non-convex deep learning — the LR dies before reaching a good solution.
+
+RMSprop replaces the full sum with an exponential moving average: $E[g^2]_t = \rho E[g^2]_{t-1} + (1-\rho)g_t^2$. Recent gradients matter more than old ones. This prevents the LR from dying on dense problems and works well for non-stationary objectives like RNNs. It has no bias correction and no momentum.
+
+Adam adds momentum (first moment) to RMSprop (second moment), plus bias correction for both. The bias correction addresses the cold-start bias when $m_0=v_0=0$. Adam is more stable in early training and handles the full gradient landscape better.
+
+When each fails:
+- AdaGrad: dense non-convex problems, late-stage training when LR has died.
+- RMSprop: settings where early-training stability matters (bias correction helps Adam here).
+- Adam: when weight decay must be principled (use AdamW); very large batches where less noise hurts; sometimes Adam finds worse local minima than SGD+momentum for vision tasks.
+
+**Follow-up:** "Why does AdamW perform better than Adam for large models?"
+Weight decay in standard Adam is implemented as L2 regularization — it adds $\lambda\theta$ to the gradient. Because Adam scales each parameter's update by $1/\sqrt{\hat{v}}$, the effective weight decay becomes non-uniform across parameters. Parameters with large gradient history get less regularization than parameters with small gradient history. AdamW decouples weight decay: the shrinkage $\eta\lambda\theta$ is applied independently, uniformly shrinking all parameters regardless of their gradient history. This restores the intended semantics of weight decay and improves generalization.
+:::
+
+**Q2. What is the linear scaling rule for batch size, and when does it break down?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The linear scaling rule (Goyal et al., Facebook AI, 2017): when you multiply the batch size by $k$, multiply the learning rate by $k$ to maintain approximately the same training dynamics.
+
+The intuition: with batch size $B$, the gradient estimate has variance $\sigma^2/B$. With batch size $kB$, variance is $\sigma^2/(kB)$ — the gradient is $\sqrt{k}$ times less noisy. To make the effective update size similar, you scale LR by $k$. (A more careful derivation shows the update variance scales as $\eta^2 \cdot \sigma^2/B$, so matching update statistics requires $k$-scaling, not $\sqrt{k}$-scaling.)
+
+Where it breaks down:
+1. Very large batches ($B > 8192$): the underlying optimization landscape changes. Large-batch training tends to converge to sharp minima regardless of LR, giving worse generalization. LR scaling cannot compensate for the lost noise.
+2. Early in training: large LR at the start causes instability. This is why large-batch training always uses LR warmup — start with a small LR and ramp up over the first few hundred steps.
+3. With warmup: the warmup duration should also scale with batch size (larger batch → longer warmup).
+4. Different architectures: the rule was derived for SGD on ResNets. For transformers with Adam, the relationship is more complex.
+:::
+
+**Q3. What is the bias-variance tradeoff and how does it relate to model regularization?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The expected test error can be decomposed as:
+$$E[\text{error}] = \text{Bias}^2 + \text{Variance} + \text{Irreducible Noise}$$
+
+Bias: error from incorrect assumptions in the model. A linear model fitting a nonlinear relationship has high bias — it systematically underfits regardless of how much data you have.
+
+Variance: sensitivity of the model to fluctuations in the training data. A high-degree polynomial fit to noisy data has high variance — small changes in training data produce wildly different models.
+
+The tradeoff: more model complexity reduces bias but increases variance. Regularization adds a penalty that reduces variance at the cost of slightly higher bias.
+
+L2 regularization (weight decay) penalizes large weights, forcing the model toward simpler solutions with smaller parameter values — reduces variance. L1 regularization additionally produces sparse solutions (many weights exactly zero) — reduces variance and enables feature selection. Dropout is a variance reducer that prevents co-adaptation of neurons. Early stopping implicitly regularizes by stopping before the model memorizes noise.
+
+In deep learning, the bias-variance tradeoff is more nuanced: very overparameterized models (like modern LLMs) exhibit double descent — test error first increases with complexity (classical overfitting), then decreases again in the interpolation regime where the model fits training data perfectly but generalizes well. The classical tradeoff breaks down for massively overparameterized models.
+:::
+
+**Q4. Walk me through how to design and analyze an A/B test for a new ML model.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Step 1 — Define the primary metric and minimum detectable effect (MDE). The metric should be a business metric (revenue, retention, task success rate), not just model accuracy. The MDE is the smallest improvement worth shipping — this determines sample size.
+
+Step 2 — Calculate required sample size: $n \approx 2(z_{\alpha/2}+z_\beta)^2\sigma^2/\delta^2$ per group. Use $\alpha=0.05$ and $80\%$ power ($\beta=0.2$) as defaults. Estimate $\sigma$ from historical data.
+
+Step 3 — Randomize assignment. For user-level experiments, hash user ID to control/treatment. For session-level, use session ID. Ensure no leakage between groups.
+
+Step 4 — Run until pre-specified sample size is reached. Do not peek at results and stop early — this inflates Type I error. If you need continuous monitoring, use sequential testing (mSPRT, alpha spending).
+
+Step 5 — Analyze using a two-sample t-test (Welch's, to be safe about unequal variances). Compute p-value, 95% CI, and Cohen's d effect size.
+
+Step 6 — Check for multiple comparisons: if you're testing multiple metrics, apply Bonferroni correction or report the false discovery rate.
+
+Step 7 — Segment results by key cohorts (device, region, user tenure). Look for heterogeneous treatment effects — the average improvement may hide a harm in a subset of users.
+
+Step 8 — Report both statistical significance AND effect size. A p-value of 0.001 with Cohen's d=0.02 means "real but tiny effect." Make the ship decision based on business impact, not p-value alone.
+:::
+
+**Q5. What is KL divergence and how does it appear in VAEs?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+KL divergence $D_\text{KL}(P\|Q) = \sum_x p(x)\log(p(x)/q(x))$ measures the extra bits needed to encode samples from $P$ using a code optimized for $Q$. It is always $\geq 0$, equals 0 iff $P=Q$, and is asymmetric.
+
+In VAEs, the model has:
+- An encoder $q_\phi(z|x)$ that maps input to a distribution over latent codes.
+- A decoder $p_\theta(x|z)$ that maps latent codes back to data.
+
+The training objective (ELBO) is:
+$$\mathcal{L} = E_{z \sim q_\phi(z|x)}[\log p_\theta(x|z)] - D_\text{KL}(q_\phi(z|x) \| p(z))$$
+
+The first term is reconstruction quality — how well the decoder reconstructs $x$ from the encoded $z$. The second term penalizes the encoder's posterior for deviating from the prior $p(z) = \mathcal{N}(0, I)$.
+
+The KL term forces the latent space to be organized: all inputs must map to latent codes near the standard Gaussian, ensuring the latent space is smooth and interpolatable. Without this term, the encoder would collapse each input to a delta function (a point, not a distribution), making generation impossible. With it, you can sample $z \sim \mathcal{N}(0, I)$ at test time and decode it to generate new data.
+
+The reparameterization trick is what makes this differentiable: instead of sampling $z \sim q_\phi(z|x)$ (not differentiable), you write $z = \mu_\phi(x) + \epsilon \cdot \sigma_\phi(x)$ where $\epsilon \sim \mathcal{N}(0, I)$, making the gradient flow through $\mu_\phi$ and $\sigma_\phi$.
+:::
+
+**Q6. What is gradient clipping and when is it necessary?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Gradient clipping scales down the gradient vector if its norm exceeds a threshold: $g \leftarrow g \cdot c / \|g\|$ when $\|g\| > c$. This prevents any single update from being too large.
+
+It is necessary for: RNNs (BPTT through many steps causes gradients to explode exponentially), transformers and LLMs (long attention windows and deep stacks), and any problem with high-variance gradients (sparse data, very imbalanced datasets).
+
+The clipping threshold is typically 1.0 for LLMs (GPT-2, GPT-3, Llama all use `max_norm=1.0`). You can also use 0.5 for aggressive clipping or 5.0 for light clipping — it depends on the gradient scale of the specific architecture.
+
+Monitoring gradient norm during training is a critical diagnostic. If gradient norm is consistently near or above the clip threshold, your LR may be too high or your architecture may need changes. If gradient norm suddenly spikes then returns to normal, that is often fine — the model discovered a new pattern. If gradient norm grows monotonically, you have a stability problem.
+
+Norm clipping preserves gradient direction and is preferred over value clipping, which corrupts the direction and is almost never used.
+:::
+
+---
+
+### 🔴 Senior Level
+
+**Q1. You're training a large model and the loss diverges after epoch 3. Walk me through your debugging process.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a systematic debugging problem. I would work through it in layers from most to least likely cause.
+
+**First, check data integrity.** Look for NaN/Inf values in the training data or labels. A single batch with extreme outliers can explode gradients. Check gradient norm — if it spikes to infinity at a specific step, that step likely had a bad batch. Use `torch.isnan(loss)` and `torch.isinf(loss)` in the training loop to catch this early.
+
+**Second, check learning rate.** A loss that is stable for 2-3 epochs then diverges often means the LR is too high for the current phase of training. The loss landscape changes as training progresses — the same LR that works early can cause instability later. Reduce LR by 2-5× and see if the pattern changes. If you are not using gradient clipping, add it (clip norm to 1.0).
+
+**Third, check gradient clipping configuration.** Verify `max_norm` is set appropriately for your architecture. Plot gradient norm over training — a spike at epoch 3 that clipping would have stopped is diagnostic.
+
+**Fourth, check weight updates.** Plot weight norms over training. If they are growing monotonically, weight decay may be insufficient or absent. Confirm AdamW is used with appropriate `weight_decay` (0.01–0.1 for large models).
+
+**Fifth, check for numerical instability in the architecture.** Layer normalization is critical for transformer stability — missing or misplaced LayerNorm can cause activation scales to explode. Attention logits that are too large (pre-softmax scores >> 10) can cause softmax to saturate and produce NaN gradients. Check the scale of your attention weights: `attn_weights = q @ k.T / sqrt(d_k)` — the division must be present.
+
+**Sixth, check data augmentation and preprocessing.** If preprocessing is done on-the-fly and there is a bug, epoch 3 might be the first time a specific data path is exercised. Validate batch statistics (mean, std of inputs) at the problematic step.
+
+**Seventh, rule out hardware issues.** On multi-GPU training, gradient communication issues can introduce NaN values. Check that all GPUs are in sync.
+
+The goal is to narrow from "epoch 3 divergence" to a specific batch, then a specific data sample or parameter, then a specific code path.
+:::
+
+> 🎯 **What great looks like:** A senior engineer does not just say "reduce the learning rate." They describe a hypothesis-driven investigation that checks data, gradient flow, weight norms, and architecture-specific numerical stability issues — in a logical order from most to least likely cause. They also describe the monitoring and instrumentation they would add to catch this class of problem earlier in future runs.
+
+**Q2. You ran an A/B test and got p=0.04. Your PM wants to ship. What do you say?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+"p=0.04 is evidence but not a complete answer. Before recommending ship or no-ship, I need to look at several other things."
+
+**Effect size:** What is Cohen's d and the absolute effect size? A p-value of 0.04 with Cohen's d=0.03 means the effect is real but tiny — 1% lift on a metric that needs 5% lift to justify the engineering cost is not a ship. I would not ship based on p=0.04 alone without knowing the practical magnitude.
+
+**Sample size and pre-registration:** Was this experiment pre-planned with a fixed sample size, or did we check the results and stop when p crossed 0.05? If we peeked, the p-value is not valid — early stopping with optional stopping inflates Type I error. With continuous peeking, $p=0.04$ corresponds to a true error rate closer to 20-30%.
+
+**Multiple comparisons:** How many metrics did we test? If we tested 20 metrics and this is the only one with $p < 0.05$, we should expect 1 false positive by chance. Apply Bonferroni correction — with 20 metrics, the threshold is $0.05/20 = 0.0025$.
+
+**Segment analysis:** Did we check the treatment effect across user segments? A positive average effect can mask harm to a subset. Check device type, region, user tenure.
+
+**Confidence interval:** What is the 95% CI? If it is [0.001%, 4.9%] uplift, the effect could be trivially small. If it is [2%, 4.9%], we are more confident in a meaningful effect.
+
+**My recommendation to the PM:** "The p-value is below 0.05, which is a positive signal. But we need to also look at effect size — is the improvement large enough to matter in practice? And I want to confirm we didn't peek at the data before it finished running. If both of those check out, I would say ship. If the effect size is small or the test was stopped early, I would want to either extend the experiment or acknowledge we may be shipping a coin-flip."
+:::
+
+> 🎯 **What great looks like:** A senior engineer treats p=0.04 as one data point, not a binary ship signal. They raise effect size, pre-registration / peeking, multiple comparisons, and segment analysis — and frame the response to the PM in terms of business risk, not statistics jargon.
+
+**Q3. Why does AdamW perform better than Adam for large language models?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The root cause is that Adam implements weight decay incorrectly.
+
+Standard Adam adds L2 regularization by modifying the gradient: $g_t \leftarrow g_t + \lambda\theta$. This means weight decay is applied through the same adaptive scaling mechanism as the gradient. The parameter update becomes:
+
+$$\Delta\theta = \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon}(\hat{m}_t + \lambda\theta)$$
+
+The adaptive factor $1/\sqrt{\hat{v}_t}$ applies to both the gradient term and the weight decay term. Parameters with large gradient history (large $\hat{v}_t$) receive less effective weight decay than parameters with small gradient history (small $\hat{v}_t$). This means regularization strength is heterogeneous across parameters — not by design, but as a side effect of the adaptive mechanism.
+
+In large transformer models, different parameter groups have very different gradient scales: embedding tables receive sparse, infrequent updates (small $\hat{v}$, high effective LR, high effective weight decay), while dense projection matrices in attention receive dense, consistent updates (large $\hat{v}$, lower effective LR, lower effective weight decay). Under standard Adam, the embedding parameters get more weight decay than intended and the projection matrices get less — the regularization pattern is systematically skewed.
+
+AdamW separates the concerns: the gradient update is adaptive, but weight decay is applied uniformly as a multiplicative shrinkage:
+
+$$\theta \leftarrow \theta(1 - \eta\lambda) - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon}\hat{m}_t$$
+
+Now all parameters receive the same proportional weight decay regardless of their gradient history. Empirically, this results in better generalization at the scales relevant for LLMs — and it is the theoretically correct semantics for weight decay.
+
+Practical note: for LLMs, it is also standard to exclude certain parameters from weight decay: LayerNorm weights, biases, and embedding tables are typically excluded because shrinking them disrupts the learned normalization and introduces unwanted inductive bias.
+:::
+
+**Q4. Back-of-envelope: if you train with batch size 256 vs 32, how does your learning rate need to change?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Going from batch size 32 to 256 is an 8× increase ($k=8$). By the linear scaling rule, multiply LR by $k$:
+
+$$\eta_\text{new} = 8 \times \eta_\text{base}$$
+
+If I was training with $\eta = 3 \times 10^{-4}$ at batch size 32, I should start with $\eta = 2.4 \times 10^{-3}$ at batch size 256.
+
+**Why this works:** At batch size 32, each step uses an estimate of the gradient with variance $\sigma^2/32$. At batch size 256, the variance is $\sigma^2/256$ — 8× lower. The gradient is much more accurate. To take advantage of this without taking overly conservative steps, we increase LR proportionally. Alternatively: in SGD, one epoch at batch size 32 makes $N/32$ steps; at batch size 256 it makes $N/256$ steps — 8× fewer. To cover the same effective distance in parameter space per epoch, each step should be 8× larger.
+
+**Caveat: this breaks down at large batches.** Empirically, the linear rule holds up to roughly batch size 8192. Beyond that, even with the LR adjustment, large-batch training tends to converge to sharp minima with worse generalization. This is a training dynamics effect unrelated to step size — large batches reduce the implicit regularization from gradient noise.
+
+**Warmup:** At large batch size with large LR, I would also extend the warmup period proportionally. Adam's moment estimates are cold at initialization; a very large initial LR amplifies the poorly-calibrated early updates.
+:::
+
+**Q5. How does KL divergence appear in both VAEs and RLHF, and why is it used in both?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+KL divergence plays a regularization role in both settings, but the distributions being compared are different and the directions matter.
+
+**In VAEs:** The ELBO objective is:
+
+$$\mathcal{L} = E[\log p_\theta(x|z)] - D_\text{KL}(q_\phi(z|x) \| p(z))$$
+
+We penalize $D_\text{KL}(q_\phi(z|x) \| p(z))$ — the KL from the encoder's posterior to the prior $\mathcal{N}(0,I)$. This forces the encoder to produce latent codes that collectively resemble a standard Gaussian, making the latent space smooth and continuously interpolatable. Without this term, the encoder collapses to point estimates (delta functions), and sampling from the latent space produces garbage. The KL term is what makes VAEs generative rather than just autoencoders.
+
+**In RLHF:** The reward function during PPO fine-tuning is augmented with:
+
+$$R(x,y) = r_\theta(x,y) - \beta \cdot D_\text{KL}(\pi_\text{LM}(y|x) \| \pi_\text{ref}(y|x))$$
+
+We penalize $D_\text{KL}(\pi_\text{LM} \| \pi_\text{ref})$ — the KL from the current policy to the reference (pretrained) policy. This prevents reward hacking: without the KL constraint, the policy would optimize the reward model single-mindedly and produce degenerate text that scores high on the learned reward but is nothing like real language. The KL term anchors the policy to sensible language generation.
+
+**Why KL in both cases:** In both, you have a distribution you are optimizing (encoder in VAE, policy in RLHF) and a "reference" distribution you want to stay close to (the prior in VAE, the pretrained policy in RLHF). KL divergence is the natural measure of distributional distance for this purpose — it is tractable to compute (or estimate) and has the right properties (non-negative, zero iff equal).
+
+**The direction matters:** In RLHF, $D_\text{KL}(\pi_\text{LM} \| \pi_\text{ref})$ is the reverse KL, which is mode-seeking — the new policy concentrates on high-probability regions of the reference policy. This is desirable: you want the new policy to produce text that the reference policy would have generated, not arbitrary text. Using the forward KL $D_\text{KL}(\pi_\text{ref} \| \pi_\text{LM})$ would instead penalize the new policy for having any "holes" — regions the reference covers that the new policy does not — which would be overly conservative and prevent the policy from improving.
+:::
+
+**Q6. How would you choose between Adam and SGD for a new computer vision project?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+For a new computer vision project in 2024-2025, my default is AdamW for fine-tuning and as a starting point, with consideration of SGD + momentum + cosine schedule for longer training runs where final accuracy matters more than time-to-convergence.
+
+The empirical record for image classification (ImageNet, CIFAR) shows that SGD + momentum with a well-tuned LR schedule (cosine or 1-cycle) achieves better top-1 accuracy than Adam, given enough training time. The intuition is that SGD's consistent gradient noise helps find flatter minima that generalize better. Adam converges faster in early training but plateaus at a slightly worse solution.
+
+However, the "SGD beats Adam for vision" finding is most reliable on standard architectures (ResNet, ConvNet) trained from scratch. For:
+- **Fine-tuning a ViT or pretrained backbone:** AdamW is the better default. The pretrained features are already good; you need stable, adaptive updates, not aggressive SGD.
+- **Training with very heterogeneous data:** AdamW handles variable gradient scales better.
+- **Limited compute budget:** AdamW converges faster, so if you can only train for 50 epochs, AdamW will be ahead.
+- **Novel architectures where you don't know gradient scales:** AdamW is safer.
+
+My actual process: start with AdamW + cosine schedule, evaluate at a few checkpoints. If results are good, ship. If compute budget allows further exploration, try SGD + momentum with 1-cycle or cosine schedule for potentially 0.5-1% better final accuracy. For production models at scale, that accuracy improvement can be worth the longer training run.
+:::
+
+**Q7. What is the double descent phenomenon and how does it challenge classical bias-variance intuition?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Classical bias-variance decomposition predicts a U-shaped test error curve: as model complexity increases, test error first decreases (bias reduction dominates) then increases (variance dominates from overfitting). The "sweet spot" is in the middle at the bias-variance tradeoff point.
+
+Double descent (Belkin et al., 2019) shows this is not the full picture. For modern overparameterized models, test error follows a double-U shape:
+
+1. **Under-parameterized regime** (classical): as capacity increases, test error decreases (better bias) then increases (overfitting / variance).
+2. **Interpolation threshold:** Near the point where model capacity is just enough to fit training data exactly, test error peaks sharply.
+3. **Over-parameterized regime:** As capacity increases further beyond the interpolation threshold, test error decreases again — sometimes to lower levels than the classical minimum.
+
+The mechanism in the over-parameterized regime: when there are many more parameters than training examples, there are infinitely many solutions that fit the training data. Gradient descent with small initialization finds the minimum-norm solution (the simplest interpolator). This "implicit bias" of gradient descent toward flat, low-norm solutions functions as a regularizer — the flat minima generalize well despite fitting training data perfectly.
+
+Why it matters practically:
+- Large language models operate deep in the overparameterized regime. Scaling up parameters after saturation of training data continues to improve performance — this is double descent at scale.
+- It explains why LLMs can fit training data nearly perfectly and still generalize.
+- It challenges the use of "the model is overfitting, reduce capacity" as a default response to poor test performance — for large models, increasing capacity might actually help.
+
+The classical bias-variance tradeoff remains a useful mental model for small-scale ML with limited data. For modern large-scale deep learning, it is an incomplete picture.
+:::

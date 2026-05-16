@@ -1,4 +1,8 @@
-# Prompt Optimization & DSPy {#sec-30}
+---
+title: "Automated Prompt Optimization"
+---
+
+# Automated Prompt Optimization {#sec-30}
 
 ::: {.callout-note}
 **Who this chapter is for:** Mid Level → FDE
@@ -8,226 +12,745 @@
 - How DSPy represents LLM programs as composable modules and optimizes them systematically
 - How BootstrapFewShot and MIPROv2 work as optimization algorithms
 - How OPRO and APE approach prompt optimization differently from DSPy
-- When to use manual prompting, DSPy optimization, or fine-tuning
+- When to use manual prompting, DSPy optimization, or fine-tuning — and why the eval is the hard part
+- Cost trade-offs of automated optimization vs. manual iteration
 :::
 
 ## Why Manual Prompting Fails at Scale
 
-Prompt engineering is effective for individual tasks at development time. A skilled engineer can craft a prompt that produces excellent outputs on the examples they test against. The problem is what happens next: the prompt gets deployed, the input distribution shifts slightly, and performance degrades in ways that are hard to predict. This is **prompt brittleness** — small changes in how users phrase queries, or small changes in upstream data formats, cause disproportionate drops in output quality. The prompt that worked for your 50-example development set may fail on the long tail of production inputs.
+Prompt engineering works well for individual tasks at development time. A skilled engineer can craft a prompt that produces excellent outputs on the examples they test against. The problem is what happens next: the prompt gets deployed, the input distribution shifts slightly, and performance degrades in ways that are hard to predict. This is **prompt brittleness** — small changes in how users phrase queries, or small changes in upstream data formats, cause disproportionate drops in output quality.
 
-The deeper problem is that prompt engineering is expert-dependent and non-transferable knowledge. The engineer who crafted the prompt understands what it responds to, what edge cases trigger failures, and why specific wording was chosen. This knowledge is rarely documented in the prompt itself or elsewhere. When that engineer moves to a different project or leaves the team, the prompt becomes a black box that the team is afraid to change because no one fully understands its logic. Prompts accumulate as fragile artifacts with no test coverage.
+The deeper problem is that prompt engineering is expert-dependent and non-transferable knowledge. The engineer who crafted the prompt understands what it responds to, what edge cases trigger failures, and why specific wording was chosen. This knowledge is rarely documented. When that engineer moves on, the prompt becomes a black box that the team is afraid to change because no one fully understands its logic. Prompts accumulate as fragile artifacts with no test coverage.
 
-Manual prompting also fails to leverage available labeled data. Many teams have evaluation sets — input/output pairs where the correct answer is known. Manual prompting ignores this data; the engineer guesses what prompt would produce the correct outputs rather than searching the prompt space systematically. This is equivalent to tuning hyperparameters by hand when you have a validation set — it works up to a point, but it's not efficient, and it doesn't scale as the number of pipeline components increases.
+Manual prompting also fails to leverage available labeled data. Many teams have evaluation sets — input/output pairs where the correct answer is known. Manual prompting ignores this data; the engineer guesses what prompt would produce the correct outputs rather than searching the prompt space systematically. This is equivalent to tuning hyperparameters by hand when you have a validation set — it works up to a point, but it does not scale as the number of pipeline components increases.
 
-The underlying framing is: **prompts are hyperparameters**. In machine learning, you don't tune hyperparameters manually when you have evaluation data and compute — you run a search. Prompt optimization applies the same logic to prompts: define a metric, run a search over prompt space, and find prompts that optimize the metric on your evaluation data. This is the problem DSPy and related frameworks solve.
+The underlying framing is: **prompts are hyperparameters**. In machine learning, you do not tune hyperparameters manually when you have evaluation data and compute — you run a search. Prompt optimization applies the same logic to prompts: define a metric, run a search over prompt space, and find prompts that optimize the metric on your evaluation data.
+
+::: {.callout-warning}
+**Common misconception:** "I can prompt-engineer my way to production quality if I just iterate enough."
+
+This fails for multi-step pipelines. When you have 5 chained LLM calls, improving step 1's prompt in isolation may worsen end-to-end quality because you are sub-optimizing. The search space grows combinatorially. Manual engineering on complex pipelines is not just slow — it is structurally inadequate.
+:::
+
+**The manual prompting lifecycle (and where it breaks):**
+
+| Phase | What Works | What Breaks |
+|---|---|---|
+| Prototype | Fast iteration, intuition | Prompts are untested outside dev examples |
+| Launch | Careful edge case hardening | Test set too small, not representative |
+| Maintenance | Targeted fixes | No regression coverage, changes risky |
+| Scale | — | Distribution shift is invisible; maintenance cost compounds |
+
+---
 
 ## DSPy: Declarative Self-improving Language Programs
 
-DSPy (Declarative Self-improving Language Programs), developed at Stanford, reframes LLM applications as programs composed of typed modules — not as collections of hand-written prompt strings. The key insight is that if you separate the program structure (what the pipeline does) from the prompt implementation (how it does it), you can automate the implementation step.
+DSPy (Declarative Self-improving Language Programs), developed at Stanford, reframes LLM applications as programs composed of typed modules — not as collections of hand-written prompt strings. The core insight: if you separate the program structure (what the pipeline does) from the prompt implementation (how it does it), you can automate the implementation step.
 
-A **Signature** in DSPy is a typed declaration of a module's inputs and outputs. Rather than writing "Given a question, answer it concisely. Question: {question}", you write: `class AnswerQuestion(dspy.Signature): question: str -> answer: str`. The fields have types and optional docstrings that provide semantic guidance. DSPy's optimizer uses these signatures to generate or discover appropriate prompt implementations — you describe the *interface*, not the *instructions*.
+**Plain-English definition:** DSPy is a framework where you describe the *interface* of each LLM step (what goes in, what comes out), and an optimizer automatically discovers the best prompt instructions and examples to make each step work well. You write structure; DSPy writes prompts.
 
-A **Module** is a composable unit that wraps a signature with behavior. The core modules are: `dspy.Predict` (basic completion — generates the output field from the input fields), `dspy.ChainOfThought` (adds a `reasoning` field before the final answer, implementing CoT without writing the CoT instructions), `dspy.ReAct` (implements the ReAct loop with a given set of tools), and `dspy.ProgramOfThought` (generates and executes code as an intermediate step). Modules can be composed: a RAG module might chain a `RetrieveDocuments` module with a `GenerateAnswer` module. The entire composed pipeline is a DSPy program.
+**Analogy:** Think of writing a SQL query vs. building a hand-coded query execution plan. You declare what you want (SELECT, FROM, WHERE) and the query optimizer figures out the efficient execution. DSPy is the query optimizer for LLM pipelines — you declare the computation, DSPy figures out the prompts.
 
-The **Teleprompter** (renamed to Optimizer in later versions) is the component that optimizes the program. It takes: (1) the program to optimize, (2) a training set of input/output examples, (3) a metric function that scores program outputs, and (4) configuration for the optimization algorithm. The optimizer runs the program on training examples, evaluates the metric, and modifies the program — by updating prompts, adding few-shot demonstrations, or adjusting module parameters — to improve the metric. The optimization loop is: run program → score outputs → update program → repeat.
+### Signatures
 
-**BootstrapFewShot** is DSPy's simplest optimizer. It works by running the program on training examples and collecting the traces of successful runs — input, intermediate reasoning steps, and final output for examples where the metric was satisfied. These successful traces become few-shot demonstrations that are prepended to the module prompts for future runs. The key insight is that demonstrations are *bootstrapped* from your own program's successful runs, not hand-written. If no training examples are initially solved, the optimizer can use a more powerful teacher model to generate demonstrations for the student model.
+A **Signature** in DSPy is a typed declaration of a module's inputs and outputs. Rather than writing `"Given a question, answer it concisely. Question: {question}"`, you write:
 
-**MIPROv2 (Multi-prompt Instruction Proposal Optimizer v2)** is the state-of-the-art DSPy optimizer. It treats instruction text and demonstration selection as hyperparameters and uses Bayesian optimization (specifically Tree-structured Parzen Estimators) to search over them. The search space: for each module, consider multiple candidate instruction texts and multiple candidate demonstration sets. MIPROv2 proposes candidates, evaluates them on the training set, models the relationship between candidate parameters and metric scores, and uses the model to suggest the next candidates to evaluate. This is more efficient than random search over the exponentially large prompt space. MIPROv2 typically requires 20-100 program evaluations to converge, depending on program complexity.
+```python
+import dspy
 
-## Prompt Optimization Techniques Beyond DSPy
+class AnswerQuestion(dspy.Signature):
+    """Answer the question accurately and concisely."""
+    question: str = dspy.InputField(desc="The user's question")
+    answer: str = dspy.OutputField(desc="A concise, accurate answer")
+```
 
-**APE (Automatic Prompt Engineer)** uses an LLM to generate candidate prompt instructions, then evaluates each candidate on a held-out set and selects the best performer. The generation step: provide the LLM with a few input/output examples and ask it to infer the instruction that would have produced these outputs. This generates a diverse set of candidate instructions. The evaluation step: run each candidate on a larger evaluation set and score by the task metric. APE is simple, model-agnostic, and does not require a differentiable pipeline — but it is expensive (requires evaluating many candidates), does not handle multi-step pipelines, and its candidate generation quality is limited by what the LLM can infer from examples alone.
+The field names, types, descriptions, and class docstring collectively define the semantic contract. DSPy uses this information to construct the actual prompt at runtime — the developer never writes the prompt string directly.
 
-**OPRO (Optimization by PROmpting)** casts prompt optimization as a meta-optimization problem. The optimizer is an LLM given a meta-prompt containing: the task description, previous prompt attempts and their evaluation scores, and an instruction to generate a better prompt. The LLM, acting as an optimizer, reads this history of (prompt, score) pairs and generates a new prompt predicted to score higher. This is iterated: each new prompt is evaluated, added to the history, and the meta-LLM generates the next candidate. OPRO works well for single-module optimization and has shown strong results on arithmetic and symbolic reasoning benchmarks. Its limitation is the context window — as the history of attempts grows, it consumes more tokens, and very large histories may degrade optimization quality.
-
-**Automatic Chain-of-Thought** addresses the few-shot demonstration curation problem. Manual CoT prompting requires hand-writing reasoning chains for each demonstration example. Auto-CoT uses an LLM to generate reasoning chains automatically: cluster the training examples by question type, sample one example per cluster, and generate a chain-of-thought demonstration for each sampled example using zero-shot CoT ("Let's think step by step"). These auto-generated demonstrations replace hand-written ones with comparable or better performance, at the cost of the generation step.
-
-**Meta-prompting** uses a powerful model (the meta-model) to generate task-specific prompts for a target model. Given a description of the task and optionally a few examples, the meta-model generates a comprehensive prompt including instructions, output format, and examples. The meta-model acts as a prompt engineer, leveraging its knowledge of effective prompting patterns across tasks. This is how many instruction-following models are bootstrapped with system prompts in production deployments — a human writes a high-level description, the meta-model generates the detailed prompt.
-
-## Evaluating Prompt Quality
-
-Prompt evaluation requires the same rigor as model evaluation. The temptation is to test against the examples used during development — this leads to overfitting and false confidence. A robust evaluation process treats prompts as code and applies software engineering discipline.
-
-**A/B testing for prompts** runs two prompt variants simultaneously on real traffic (or on a representative held-out set) and compares performance on the task metric. Statistical significance is critical: with a binary metric (correct/incorrect), you need roughly 400 samples per variant to detect a 5 percentage point difference at 95% confidence (using a two-proportion Z-test). Smaller effect sizes require more samples. Teams that draw conclusions from 50-example comparisons routinely ship regressions.
-
-**Regression test suites** apply the same principle as unit tests in software engineering. Build a curated test set covering: representative cases (drawn from production distribution), known edge cases (examples where previous prompts failed), boundary conditions, and adversarial inputs. Every prompt change is evaluated against this suite in CI/CD before deployment. A prompt change that improves average accuracy but fails 3 specific edge cases may not be an improvement — the test suite surfaces these hidden regressions.
-
-**Metric selection** is the hardest part of prompt evaluation. For tasks with clear ground truth (classification, extraction, arithmetic), the metric is straightforward. For open-ended generation, you need LLM-as-judge, human raters, or task-specific metrics (RAGAS for RAG, ROUGE for summarization). The metric must correlate with what users actually care about — a team that optimizes ROUGE for a summarization task may produce higher ROUGE scores while users report the summaries are worse (ROUGE over-weights lexical overlap and misses semantic quality). Validate your metric against human judgments before using it to optimize prompts.
-
-**The overfitting danger** in prompt optimization is real: if you optimize a prompt against a 50-example training set and evaluate on the same set, you will find a prompt that scores 100% — and likely performs poorly on unseen data. Use a strict train/eval split: optimize on training examples, report metrics on a held-out eval set that the optimizer never sees. Monitor post-deployment performance to detect distribution shift between your eval set and production.
-
-## When to Use What
-
-The decision between manual prompting, systematic optimization, and fine-tuning maps to the maturity and scale of the application.
-
-**Manual prompting** is the right starting point. It is fast — you can iterate and test a new prompt variant in minutes. It builds understanding of the task and where the model succeeds and fails. It requires no infrastructure: no training pipeline, no optimization framework, no labeled dataset. Use manual prompting when exploring a new task, when you have fewer than 50 labeled examples, or when you need a working prototype in hours. Expect manual prompts to work well in development and degrade somewhat in production.
-
-**DSPy or other optimization frameworks** become valuable when: you have a metric (you know what "correct" looks like), you have labeled data (at least 50-200 examples for BootstrapFewShot, 200+ for MIPROv2), your pipeline has multiple steps (each step's prompt affects downstream quality), and you need production robustness. DSPy optimization consistently outperforms manual prompting on complex multi-step pipelines because it simultaneously optimizes all components jointly, not one at a time. The investment is: setting up the DSPy program structure (days), collecting labeled data (ongoing), and running optimization (hours of compute per optimization run).
-
-**Fine-tuning** makes sense when you have hit the ceiling of prompt optimization — when the base model lacks the task-specific behavior or knowledge to do well regardless of the prompt. Common fine-tuning trigger points: the model needs to learn a specific output format or style (fine-tuning is more reliable than prompting for format compliance), domain-specific knowledge that wasn't in pretraining data, consistent persona maintenance, or latency/cost requirements that necessitate a smaller model. The hierarchy is not rigid: for high-stakes or high-volume applications, prompt optimization and fine-tuning are complementary — optimize prompts first, then fine-tune if the quality ceiling is still insufficient.
-
-## Interview Questions
-
-::: {.callout-tip title="Entry Level"}
-**Q1. What is the main limitation of manual prompt engineering at scale?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Manual prompt engineering has several compounding limitations that make it unsuitable as the primary quality improvement strategy at scale.
-
-The most fundamental problem is brittleness: prompts that work well on the examples tested during development tend to fail on the long tail of production inputs. The engineer optimizes for visible examples; the prompt is not robust to distribution shift. Every time the upstream data format changes, the user population shifts, or the query distribution evolves, the prompt may need revision.
-
-The second limitation is non-transferability. A well-crafted prompt embeds the engineer's implicit understanding of the task, the model's quirks, and the specific failure modes observed during development. This knowledge rarely gets documented. When the engineer leaves or moves to another project, the prompt becomes a black box that teammates are afraid to modify.
-
-The third limitation is that manual prompting ignores available data. Most teams running LLM pipelines in production accumulate labeled examples — inputs with known correct outputs. Manual prompting uses none of this data systematically. The engineer guesses rather than searches the prompt space against the evaluation set.
-
-For a single, stable, well-understood task, manual prompting is entirely reasonable. The limitation appears in pipelines with multiple steps, applications with diverse input distributions, and teams that need to maintain and improve prompts over time without the original engineer's involvement.
-:::
-:::
-
-::: {.callout-tip title="Entry Level"}
-**Q2. What is DSPy and what problem does it solve?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-DSPy (Declarative Self-improving Language Programs) is a framework that treats LLM applications as programs composed of typed, reusable modules — and automatically optimizes the prompts within those modules against a metric.
-
-The problem it solves is the manual prompt engineering bottleneck. In traditional LLM application development, the developer writes the prompt as a string, tests it manually, edits it, tests again, and repeats. This is slow, doesn't scale to multi-step pipelines, and produces brittle prompts with no systematic test coverage.
-
-DSPy replaces hand-written prompts with a higher-level abstraction: Signatures (typed input/output declarations), Modules (composable components like Predict and ChainOfThought), and Optimizers (algorithms that search for the best prompts given a metric and training data). The developer writes the program structure — what the pipeline does — and DSPy's optimizer discovers how to implement each step as a prompt.
-
-The practical benefit: instead of manually writing "Answer the following question step by step, then provide the final answer," the developer writes a `ChainOfThought` module with a typed signature. The optimizer will discover effective instructions and few-shot demonstrations from labeled data, often outperforming hand-written prompts on complex tasks. DSPy is especially valuable for multi-step pipelines where each step's prompt quality affects downstream components and joint optimization is needed.
-:::
-:::
-
-::: {.callout-tip title="Entry Level"}
-**Q3. What is the difference between prompt engineering and prompt optimization?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Prompt engineering is the craft of manually writing effective prompts through intuition, iteration, and domain expertise. The engineer reads model outputs, identifies failure patterns, and revises the prompt text. It produces results quickly and works well for well-understood tasks, but the process doesn't scale — it's fundamentally a human loop that requires expert attention.
-
-Prompt optimization is systematic, data-driven search over the space of possible prompts. Given a metric that quantifies output quality and a dataset of labeled examples, an optimization algorithm automatically discovers prompt variants that score well on the metric. The process is algorithmic, not artisanal.
-
-The relationship between them: prompt engineering is always the starting point. You need a working prompt to understand the task before you can define a metric and run optimization. Prompt optimization takes over once you have data and a metric, systematically improving beyond what manual iteration can achieve. Optimization also produces more robust prompts because they're evaluated against many examples, not just the handful the engineer happened to test.
-
-An analogy from ML: prompt engineering is like manually tuning a neural network's learning rate by trying a few values. Prompt optimization is like running a hyperparameter search with cross-validation. Both start from the same place, but optimization is more systematic, more data-driven, and more scalable.
-:::
-:::
-
-::: {.callout-warning title="Mid Level"}
-**Q1. Explain DSPy's Signature and Module abstractions — how does DSPy represent an LLM pipeline?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-DSPy represents LLM pipelines as programs built from composable typed components. The two core abstractions are Signatures and Modules.
-
-**Signatures** declare the interface of a computation step: what goes in, what comes out, and optionally what it means. A Signature is a Python class with annotated fields:
+For a RAG pipeline, the signature captures the retrieval context:
 
 ```python
 class GenerateAnswer(dspy.Signature):
-    """Answer questions given context."""
-    context: str = dspy.InputField(desc="relevant passages")
+    """Answer questions given relevant context passages."""
+    context: list[str] = dspy.InputField(desc="Relevant passages retrieved from the knowledge base")
     question: str = dspy.InputField()
-    answer: str = dspy.OutputField(desc="1-2 sentence answer")
+    answer: str = dspy.OutputField(desc="A factually grounded 1-2 sentence answer")
+    confidence: str = dspy.OutputField(desc="high, medium, or low confidence level")
 ```
 
-The field names, types, descriptions, and class docstring collectively define the semantic contract. DSPy uses this information to construct the actual prompt at runtime — the developer never writes the prompt string.
+::: {.callout-tip}
+**When to use:** Signatures are the right abstraction whenever you want to describe a computation in terms of its inputs and outputs without committing to a specific prompt. This makes the program optimizable and self-documenting.
 
-**Modules** wrap a Signature with a computational behavior. `dspy.Predict(GenerateAnswer)` is the simplest module: it constructs a prompt from the Signature and calls the LLM once. `dspy.ChainOfThought(GenerateAnswer)` extends this by adding a `reasoning` output field before the final answer, automatically implementing CoT. `dspy.ReAct(GenerateAnswer, tools=[...])` implements the full ReAct loop using the tools provided.
+**When not to use:** For one-off exploratory prompting where you do not have evaluation data and do not plan to optimize, a raw prompt string is faster.
+:::
 
-**Composing modules into programs:**
+### Modules
+
+A **Module** wraps a Signature with computational behavior. Core built-in modules:
+
+| Module | Behavior | Use Case |
+|---|---|---|
+| `dspy.Predict` | Single LLM call, direct output | Classification, extraction, simple Q&A |
+| `dspy.ChainOfThought` | Adds `reasoning` field before output | Complex reasoning, multi-step problems |
+| `dspy.ReAct` | Tool-calling loop with reasoning | Agents that use tools/APIs |
+| `dspy.ProgramOfThought` | Generates + executes code | Math, data analysis, algorithmic tasks |
+| `dspy.Retrieve` | Vector retrieval step | RAG pipelines |
+
+Modules compose into full programs:
 
 ```python
 class RAGPipeline(dspy.Module):
-    def __init__(self):
-        self.retrieve = dspy.Retrieve(k=3)
+    def __init__(self, num_passages: int = 3):
+        super().__init__()
+        self.retrieve = dspy.Retrieve(k=num_passages)
         self.generate = dspy.ChainOfThought(GenerateAnswer)
 
-    def forward(self, question):
-        passages = self.retrieve(question)
-        return self.generate(context=passages, question=question)
+    def forward(self, question: str) -> dspy.Prediction:
+        passages = self.retrieve(question).passages
+        prediction = self.generate(context=passages, question=question)
+        return prediction
 ```
 
-This program is now a first-class object that can be passed to an optimizer. The optimizer can adjust the instructions in `GenerateAnswer`, the number of retrieved passages, or the few-shot demonstrations prepended to either module's prompt — all without the developer manually editing any prompt string.
+This program is now a first-class object that can be passed to an optimizer. The optimizer can adjust instructions in `GenerateAnswer`, the number of retrieved passages, or the few-shot demonstrations — all without manually editing any prompt string.
+
+### Setting Up DSPy
+
+```python
+import dspy
+
+# Configure the language model
+lm = dspy.LM("openai/gpt-4o-mini", api_key="YOUR_KEY")
+dspy.configure(lm=lm)
+
+# Or for Anthropic
+lm = dspy.LM("anthropic/claude-3-5-haiku-20241022", api_key="YOUR_KEY")
+dspy.configure(lm=lm)
+
+# Test the basic module
+rag = RAGPipeline()
+result = rag(question="What is the capital of France?")
+print(result.answer)
+print(result.reasoning)  # ChainOfThought exposes reasoning
+```
+
+### Optimizers (Teleprompters)
+
+The **Optimizer** (formerly called Teleprompter) takes: (1) the program, (2) a training set of input/output examples, (3) a metric function, and (4) configuration. It runs the program on training examples, evaluates the metric, and modifies the program — by updating prompts, adding few-shot demonstrations — to improve the metric.
+
+---
+
+## BootstrapFewShot: DSPy's Core Optimizer
+
+**Plain-English:** BootstrapFewShot runs your program on training examples, collects the traces of runs where the answer was correct, and uses those successful traces as few-shot demonstrations in future prompts. It bootstraps examples from your own program's correct runs.
+
+**How it works step-by-step:**
+
+**Step 1 — Generate candidate traces:** Run the compiled DSPy program on each training example. For each example, DSPy captures the full execution trace: inputs to every module, intermediate reasoning steps, and final output.
+
+**Step 2 — Filter by metric:** Apply the user-provided metric to each trace. Only traces where the metric is satisfied are kept. Unsuccessful trajectories are discarded.
+
+**Step 3 — Augment module prompts:** For each module, prepend the collected successful traces as few-shot demonstrations. The next time the module runs, it has concrete examples of good inputs and outputs.
+
+**Step 4 — Teacher-student bootstrapping (optional):** If the base program solves too few training examples, use a more powerful teacher model to generate demonstrations for a smaller student model. Teacher generates traces; student uses them at inference.
+
+```python
+from dspy.teleprompt import BootstrapFewShot
+
+# Define a metric function
+def validate_answer(example, prediction, trace=None):
+    return example.answer.lower() == prediction.answer.lower()
+
+# Compile with BootstrapFewShot
+teleprompter = BootstrapFewShot(
+    metric=validate_answer,
+    max_bootstrapped_demos=4,  # Max few-shot demos per module
+    max_labeled_demos=16,      # Max labeled examples to use
+    teacher_settings=dict(lm=dspy.LM("openai/gpt-4o"))  # Optional teacher
+)
+
+# Requires training data: list of dspy.Example objects
+trainset = [
+    dspy.Example(question="What is 2+2?", answer="4"),
+    dspy.Example(question="Who wrote Hamlet?", answer="Shakespeare"),
+    # ... more examples
+]
+
+optimized_rag = teleprompter.compile(RAGPipeline(), trainset=trainset)
+```
+
+**What BootstrapFewShot does NOT do:** It does not optimize instruction text — the instructions remain whatever the Signature docstrings define. For instruction optimization, MIPROv2 is needed.
+
+---
+
+## MIPROv2: Bayesian Prompt Optimization
+
+**Plain-English:** MIPROv2 treats both the instruction text and the selection of few-shot demonstrations as hyperparameters, uses Bayesian optimization to efficiently search over this combined space, and finds the combination that maximizes your metric.
+
+MIPROv2 (Multi-prompt Instruction Proposal Optimizer v2) is DSPy's state-of-the-art optimizer. It differs from BootstrapFewShot in two key ways:
+
+1. It also optimizes the **instruction text**, not just demonstration selection
+2. It uses **Bayesian optimization** (Tree-structured Parzen Estimators) to search efficiently rather than exhaustively
+
+The search space: for each module, consider multiple candidate instruction texts (generated by a proposer LLM that reads the task and training data) and multiple candidate demonstration sets (selected from bootstrapped traces). MIPROv2 models the relationship between (instructions, demos) choices and metric scores, then intelligently selects the next combination to evaluate.
+
+```python
+from dspy.teleprompt import MIPROv2
+
+teleprompter = MIPROv2(
+    metric=validate_answer,
+    auto="medium",  # "light" / "medium" / "heavy" — controls optimization budget
+    num_threads=8,
+)
+
+# Needs more data than BootstrapFewShot — ideally 200+ examples
+optimized_rag = teleprompter.compile(
+    RAGPipeline(),
+    trainset=trainset,
+    valset=valset,   # Separate validation set for eval during optimization
+    requires_permission_to_run=False
+)
+
+# Inspect what MIPROv2 found
+optimized_rag.inspect_history(n=1)
+```
+
+**Typical results:** On complex multi-step pipelines, MIPROv2 achieves 10-30% relative improvement over manual prompts. On simpler single-step tasks, gains are smaller (5-15%) but still consistent.
+
+| Optimizer | Optimizes Instructions | Optimizes Demos | Data Needed | LLM Calls | Best For |
+|---|---|---|---|---|---|
+| BootstrapFewShot | No | Yes | 50-100 | Low | Quick wins, limited data |
+| MIPROv2 (light) | Yes | Yes | 100-200 | Medium | Multi-step, moderate budget |
+| MIPROv2 (heavy) | Yes | Yes | 200+ | High | Production-quality optimization |
+
+---
+
+## APE: Automatic Prompt Engineer
+
+**Plain-English:** APE uses an LLM to generate many candidate prompt instructions from a few examples, then evaluates each candidate on a held-out set and selects the best performer.
+
+**How it works:**
+
+1. **Generate candidates:** Provide the LLM with input/output examples. Ask it to infer the instruction that would have produced these outputs. Generate 20-50 candidate instructions this way.
+2. **Evaluate candidates:** Run each candidate instruction on a larger evaluation set. Score each by the task metric.
+3. **Select the best:** Deploy the instruction with the highest score.
+
+**Strengths:** Simple to implement, model-agnostic, no specialized framework needed, no differentiable pipeline required.
+
+**Weaknesses:** Expensive (evaluating 50 candidates × N examples = 50N LLM calls), does not handle multi-step pipelines, cannot optimize few-shot demonstrations, candidate quality is limited by what the LLM can infer from examples.
+
+```python
+# APE-style implementation (simplified)
+def generate_prompt_candidates(examples: list[dict], n_candidates: int = 20) -> list[str]:
+    examples_str = "\n".join(
+        f"Input: {ex['input']}\nOutput: {ex['output']}" for ex in examples[:5]
+    )
+    meta_prompt = f"""
+    Here are some input/output examples for a task:
+    {examples_str}
+
+    Generate {n_candidates} different instruction prompts that could have produced these outputs.
+    Return one instruction per line.
+    """
+    response = call_llm(meta_prompt)
+    return response.strip().split("\n")
+
+def evaluate_candidates(candidates: list[str], eval_set: list[dict], metric_fn) -> str:
+    best_score, best_candidate = 0, candidates[0]
+    for candidate in candidates:
+        scores = [metric_fn(run_with_prompt(candidate, ex)) for ex in eval_set]
+        avg_score = sum(scores) / len(scores)
+        if avg_score > best_score:
+            best_score, best_candidate = avg_score, candidate
+    return best_candidate
+```
+
+---
+
+## OPRO: Optimization by PROmpting
+
+**Plain-English:** OPRO treats the LLM itself as an optimizer. The LLM gets a history of previous prompt attempts with their scores and is asked to generate a better prompt. This repeats until performance plateaus.
+
+**How it works:**
+
+1. Start with an initial prompt (or even an empty instruction)
+2. Evaluate the prompt on the training set, record the score
+3. Build a meta-prompt containing: task description + (prompt, score) history + "generate a better prompt"
+4. Feed meta-prompt to the optimizer LLM; get a new candidate
+5. Evaluate the new candidate, add to history, repeat
+
+```python
+def opro_optimize(task_description: str, train_examples: list[dict],
+                  metric_fn, n_iterations: int = 20) -> str:
+    history = []  # List of (prompt, score) tuples
+    current_prompt = "Answer the following question:"  # Initial prompt
+
+    for iteration in range(n_iterations):
+        # Evaluate current prompt
+        scores = [metric_fn(run_with_prompt(current_prompt, ex)) for ex in train_examples]
+        score = sum(scores) / len(scores)
+        history.append((current_prompt, score))
+
+        # Build meta-prompt
+        history_str = "\n".join(
+            f"Prompt: {p}\nScore: {s:.3f}" for p, s in sorted(history, key=lambda x: x[1])[-10:]
+        )
+        meta_prompt = f"""
+        Task: {task_description}
+
+        Previous prompt attempts (sorted by score, higher is better):
+        {history_str}
+
+        Generate a new prompt that will score higher than the best attempt so far.
+        Return only the prompt text.
+        """
+        current_prompt = call_llm(meta_prompt).strip()
+        print(f"Iteration {iteration+1}: score={score:.3f}, prompt='{current_prompt[:60]}...'")
+
+    # Return the highest-scoring prompt
+    return max(history, key=lambda x: x[1])[0]
+```
+
+**OPRO vs MIPROv2 comparison:**
+
+| Dimension | OPRO | MIPROv2 |
+|---|---|---|
+| Requires DSPy? | No | Yes |
+| Handles multi-step pipelines? | No | Yes |
+| Optimizes instructions? | Yes | Yes |
+| Optimizes demonstrations? | No | Yes |
+| Search algorithm | LLM-as-optimizer | Bayesian optimization (TPE) |
+| Context window scaling | Poor (history grows) | Good |
+| Best for | Single-step, quick setup | Multi-step production pipelines |
+
+::: {.callout-warning}
+**OPRO limitation:** The (prompt, score) history in the meta-prompt grows with each iteration. After 50+ iterations, you are consuming thousands of tokens per optimization step, degrading both quality (the LLM struggles to reason over long histories) and cost. Use OPRO for small iteration budgets (20-30 iterations). For longer runs, the Bayesian approach in MIPROv2 is more efficient.
+:::
+
+---
+
+## Gradient-Based Prompt Optimization (Soft Prompts)
+
+When you have white-box model access (weights available, not just API), gradient-based methods can optimize continuous prompt representations directly.
+
+**Prefix Tuning:** Instead of inserting text tokens, prepend learnable continuous vectors to the key/value cache at each transformer layer. These vectors are trained with backpropagation to maximize the task objective. The model weights are frozen; only the prefix vectors are updated. This is 100-1000x parameter efficient compared to full fine-tuning.
+
+**Prompt Tuning:** Simpler variant — prepend learnable embedding vectors to the input layer only (not all layers). Works surprisingly well at scale; at 10B+ parameter models, prompt tuning matches fine-tuning quality.
+
+**Hard prompt optimization via Autoprompt/GCG:** Use gradient information to search for discrete token sequences that maximize task performance or minimize loss. Greedy Coordinate Gradient (GCG) was originally developed for adversarial attacks but the same technique can optimize task prompts. Computationally expensive and the found prompts are often human-unreadable (token strings that look like gibberish but work well).
+
+**When gradient-based methods make sense:**
+- You have full model access (self-hosted, fine-tuning setup)
+- You need to push performance beyond what discrete prompt search can achieve
+- You are working with smaller models where a few hundred extra parameters matter
+
+**When they do not make sense:**
+- API-only access (most production deployments)
+- You want human-readable prompts you can review and edit
+- You need prompt portability across model versions
+
+---
+
+## The Eval is the Hard Part
+
+Every automated prompt optimization method requires a metric. This is a deceptively difficult constraint.
+
+**The metric must correlate with what users actually care about.** Teams that optimize ROUGE for summarization tasks often produce higher ROUGE scores while users report summaries are worse (ROUGE over-weights lexical overlap and misses semantic quality). Optimizing the wrong metric produces perfectly optimized prompts for the wrong objective.
+
+**Metric types by task:**
+
+| Task Type | Metric Options | Risk |
+|---|---|---|
+| Classification | Accuracy, F1, precision/recall | Usually reliable if classes are well-defined |
+| Extraction | Exact match, token F1, field-level accuracy | Moderate — edge cases in formatting |
+| Summarization | ROUGE, BERTScore, LLM-as-judge | High — metrics poorly correlated with quality |
+| RAG | RAGAS (faithfulness, relevance, recall) | Moderate — component metrics approximate |
+| Open-ended generation | LLM-as-judge, human raters | High — LLM judges can be inconsistent |
+
+**The overfitting danger is real.** If you optimize a prompt against a 50-example training set and evaluate on the same set, you will find a prompt that scores near 100% — and likely performs poorly on unseen data. Use a strict train/eval split: optimize on training examples, report metrics on a held-out eval set the optimizer never sees.
+
+**Statistical significance matters.** With a binary metric (correct/incorrect), you need approximately 400 samples per variant to detect a 5 percentage point difference at 95% confidence (two-proportion Z-test). Smaller effect sizes require more samples. Teams that draw conclusions from 50-example comparisons routinely ship regressions.
+
+```python
+from scipy import stats
+
+def check_significance(baseline_scores: list[float], new_scores: list[float]) -> dict:
+    """
+    Test whether improvement in prompt scores is statistically significant.
+    Returns p-value and whether result is significant at alpha=0.05.
+    """
+    assert len(baseline_scores) == len(new_scores), "Need equal sample sizes"
+    n = len(baseline_scores)
+
+    # For binary metrics (0/1 scores), use proportions z-test
+    p_baseline = sum(baseline_scores) / n
+    p_new = sum(new_scores) / n
+
+    # Pooled proportion
+    p_pool = (sum(baseline_scores) + sum(new_scores)) / (2 * n)
+    se = (p_pool * (1 - p_pool) * (1/n + 1/n)) ** 0.5
+
+    if se == 0:
+        return {"significant": False, "reason": "no variance"}
+
+    z_stat = (p_new - p_baseline) / se
+    p_value = 1 - stats.norm.cdf(abs(z_stat))  # One-tailed
+
+    return {
+        "baseline_acc": p_baseline,
+        "new_acc": p_new,
+        "improvement": p_new - p_baseline,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "samples_needed_for_5pt": 400  # Rule of thumb
+    }
+
+# Usage
+result = check_significance(
+    baseline_scores=[1, 0, 1, 1, 0, ...],  # 0/1 accuracy per example
+    new_scores=[1, 1, 1, 1, 0, ...]
+)
+print(f"Improvement: {result['improvement']:.3f}, p={result['p_value']:.4f}, significant={result['significant']}")
+```
+
+---
+
+## Cost Considerations
+
+Automated prompt optimization is not free. Before choosing an approach, estimate the compute cost.
+
+**MIPROv2 cost estimation:**
+
+```python
+def estimate_miprov2_cost(
+    n_training_examples: int,
+    n_candidates_per_module: int = 10,
+    n_modules: int = 3,
+    n_optimization_trials: int = 30,
+    avg_tokens_per_call: int = 500,
+    cost_per_1k_tokens: float = 0.002  # GPT-4o-mini pricing
+) -> dict:
+    """Rough MIPROv2 cost estimate."""
+
+    # Candidate instruction generation (proposer model)
+    proposal_calls = n_modules * n_candidates_per_module
+    proposal_cost = proposal_calls * (avg_tokens_per_call / 1000) * cost_per_1k_tokens
+
+    # Bayesian optimization trials (each trial runs full pipeline on all training examples)
+    trial_calls = n_optimization_trials * n_training_examples * n_modules
+    trial_cost = trial_calls * (avg_tokens_per_call / 1000) * cost_per_1k_tokens
+
+    total_cost = proposal_cost + trial_cost
+
+    return {
+        "proposal_cost": f"${proposal_cost:.2f}",
+        "trial_cost": f"${trial_cost:.2f}",
+        "total_cost": f"${total_cost:.2f}",
+        "total_llm_calls": proposal_calls + trial_calls
+    }
+
+# Example: 200 examples, 3-module pipeline
+est = estimate_miprov2_cost(n_training_examples=200)
+print(est)
+# Typical output: $5-50 for a medium-sized optimization run
+```
+
+**Cost rule of thumb:** A MIPROv2 optimization run typically costs $5-100 depending on model choice and dataset size. This is cheap relative to engineering time but not negligible at scale. Use cheaper models (GPT-4o-mini, Claude Haiku) during optimization; deploy with the target model.
+
+---
+
+## When to Use What
+
+| Situation | Recommendation | Why |
+|---|---|---|
+| New task, no data | Manual prompting | Need to understand the task first |
+| < 50 examples, single step | APE or OPRO | Low overhead, no framework needed |
+| 50-200 examples, single step | BootstrapFewShot | Easiest DSPy optimizer |
+| 200+ examples, multi-step pipeline | MIPROv2 | Joint optimization across steps |
+| Need interpretable prompts, no model access | APE / OPRO | Works with API access only |
+| Have model access, need maximum quality | Prefix tuning + prompt opt | Gradient-based is most powerful |
+| Manual prompts after optimization ceiling | Fine-tuning | Base model lacks needed behavior |
+
+**The hierarchy is not rigid.** For high-stakes, high-volume applications, prompt optimization and fine-tuning are complementary: optimize prompts first to understand the quality ceiling, then fine-tune if that ceiling is insufficient. Fine-tuning on top of well-optimized prompts often outperforms either approach alone.
+
+::: {.callout-tip}
+**Production decision heuristic:**
+
+1. Start with manual prompting (days)
+2. Add a regression test suite before touching anything else (days)
+3. If multi-step pipeline with data: migrate to DSPy, run BootstrapFewShot (week)
+4. If still below quality bar: run MIPROv2 (week + compute budget)
+5. If still below quality bar: fine-tune (weeks + data collection)
+
+Each step requires the previous one. You cannot run MIPROv2 without a metric. You cannot fine-tune efficiently without understanding the failure modes that prompting revealed.
+:::
+
+---
+
+## CHEAT SHEET
+
+- **Prompt brittleness**: prompts over-fit to dev examples; fail on production distribution shift
+- **Prompts are hyperparameters**: optimize against a metric and eval set, do not hand-tune when data exists
+- **DSPy core abstractions**: Signature (typed I/O contract), Module (computation unit), Optimizer (finds prompts)
+- **dspy.Predict**: single LLM call; **dspy.ChainOfThought**: adds reasoning field; **dspy.ReAct**: tool-calling loop
+- **BootstrapFewShot**: collects traces from successful runs, uses them as few-shot demos; simple, works with 50+ examples
+- **MIPROv2**: Bayesian optimization over instructions + demos; needs 200+ examples; best for multi-step pipelines
+- **APE**: LLM generates candidate instructions → evaluate each → pick best; simple, no framework, expensive
+- **OPRO**: LLM reads (prompt, score) history, generates improved prompt; limited by context window growth
+- **Prefix tuning**: learnable continuous vectors prepended to all layers; requires model weights; not API-compatible
+- **Eval is the hard part**: wrong metric = optimizing for the wrong thing; validate metric against human judgments first
+- **Statistical significance**: need ~400 samples to detect 5 percentage point improvement at 95% confidence
+- **MIPROv2 auto="medium"**: typical cost $5-50; use cheap models during optimization, deploy with target model
+- **Teacher-student bootstrapping**: powerful teacher generates demos; smaller student uses them; cuts demo quality problem
+- **Overfitting**: always use separate train/eval sets; optimizer should never see the eval set
+- **Multi-step pipeline bottleneck**: instrument each step independently before running joint optimization
+- **DSPy migration**: refactor existing pipeline to DSPy modules first (no behavior change), then optimize
+- **When to fine-tune**: after hitting the prompt optimization ceiling; or when consistent format/persona is required
+- **Prompt version control**: every production prompt in git + regression test suite + CI evaluation before deploy
+
+---
+
+## Interview Questions
+
+### Entry Level
+
+::: {.callout-tip title="Entry Level — Q1"}
+**What is the main limitation of manual prompt engineering at scale?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Manual prompt engineering has several compounding limitations.
+
+**Brittleness:** Prompts that work well on development examples tend to fail on the long tail of production inputs. The engineer optimizes for visible examples; the prompt is not robust to distribution shift. Every time the upstream data format changes or the user population evolves, the prompt may need revision.
+
+**Non-transferability:** A well-crafted prompt embeds the engineer's implicit understanding of the task, the model's quirks, and failure modes observed during development. This knowledge rarely gets documented. When the engineer leaves, the prompt becomes a black box.
+
+**Ignores available data:** Most teams running LLM pipelines accumulate labeled examples — inputs with known correct outputs. Manual prompting uses none of this data systematically. The engineer guesses rather than searching the prompt space against the evaluation set.
+
+**Does not scale to multi-step pipelines:** When a pipeline has 5 chained LLM calls, optimizing step 1 in isolation may worsen end-to-end quality because you are sub-optimizing a component, not the system. Manual engineering cannot coordinate across components.
+
+Manual prompting is the right starting point for every task. The limitations appear when you need production robustness, multi-step pipelines, and ongoing maintenance without the original engineer.
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q2. Walk through how BootstrapFewShot works in DSPy.**
+::: {.callout-tip title="Entry Level — Q2"}
+**What is DSPy and what problem does it solve?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+DSPy (Declarative Self-improving Language Programs) is a framework that treats LLM applications as programs composed of typed, reusable modules and automatically optimizes the prompts within those modules against a metric.
+
+**The problem:** In traditional LLM development, the developer writes the prompt as a string, tests manually, edits, tests again. This is slow, does not scale to multi-step pipelines, and produces brittle prompts with no systematic test coverage.
+
+**What DSPy provides:**
+- **Signatures**: typed input/output declarations that describe what a step does without hardcoding how
+- **Modules**: composable components like `Predict` (single call) and `ChainOfThought` (adds reasoning)
+- **Optimizers**: algorithms that discover effective instructions and few-shot demonstrations from labeled data
+
+The developer writes the program structure; DSPy's optimizer discovers the implementation. The practical benefit: instead of manually writing "Answer the following question step by step...", you write a `ChainOfThought` module with a typed signature. The optimizer will discover effective instructions and demonstrations, often outperforming hand-written prompts on complex tasks.
+
+DSPy is especially valuable for multi-step pipelines where each step's prompt quality affects downstream components and joint optimization is needed.
+:::
+:::
+
+::: {.callout-tip title="Entry Level — Q3"}
+**What is the difference between prompt engineering and prompt optimization?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Prompt engineering** is the craft of manually writing effective prompts through intuition, iteration, and domain expertise. The engineer reads model outputs, identifies failure patterns, and revises the prompt text. It works well for well-understood tasks and requires no infrastructure.
+
+**Prompt optimization** is systematic, data-driven search over the space of possible prompts. Given a metric that quantifies output quality and a dataset of labeled examples, an optimization algorithm automatically discovers prompt variants that score well on the metric.
+
+**The relationship:** Prompt engineering is always the starting point. You need a working prompt to understand the task, define a metric, and build an evaluation set. Prompt optimization takes over once you have data and a metric, systematically improving beyond what manual iteration can achieve.
+
+**Analogy from ML:** Prompt engineering is like manually tuning a neural network's learning rate by trying a few values. Prompt optimization is like running a hyperparameter search with cross-validation. Both start from the same place, but optimization is more systematic, more data-driven, and more scalable.
+
+The key insight: prompt optimization does not replace prompt engineering. You cannot optimize without first understanding the task well enough to define a metric. The two approaches are sequential, not alternatives.
+:::
+:::
+
+::: {.callout-tip title="Entry Level — Q4"}
+**What is APE (Automatic Prompt Engineer) and when would you use it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+APE uses an LLM to generate candidate prompt instructions from a few examples, evaluates each candidate on a held-out set, and selects the best performer.
+
+**The process:** (1) Give the LLM 5-10 input/output examples and ask it to infer the instruction that produced these outputs. Collect 20-50 candidate instructions. (2) Run each candidate on a larger evaluation set. (3) Select the instruction with the highest score.
+
+**When to use APE:**
+- Single-step task (one LLM call, not a pipeline)
+- You have a clear metric and 50-200 labeled examples
+- You want improvement without adopting the full DSPy framework
+- API-only model access (APE works with any model you can call)
+
+**When not to use:**
+- Multi-step pipelines (APE cannot coordinate across components)
+- Very expensive models (evaluating 50 candidates × 200 examples = 10,000 LLM calls)
+- When you need to also optimize few-shot demonstrations, not just instructions
+
+APE is the simplest automated optimization approach — no framework, just a generation-evaluation loop. Its main weakness is cost: it requires many model calls to evaluate candidates.
+:::
+:::
+
+---
+
+### Mid Level
+
+::: {.callout-warning title="Mid Level — Q1"}
+**Walk through how BootstrapFewShot works in DSPy. What does it optimize and what are its limitations?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 BootstrapFewShot is DSPy's simplest and most commonly used optimizer. It discovers effective few-shot demonstrations by running the program on training examples and collecting successful execution traces.
 
-**Step 1 — Generate candidate traces:** Run the compiled DSPy program on each training example. For each example, DSPy captures the full execution trace: the inputs to every module, the intermediate outputs (including reasoning chains for ChainOfThought modules), and the final output. Each trace is a candidate demonstration.
+**Step 1 — Generate candidate traces:** Run the compiled DSPy program on each training example. DSPy captures the full execution trace: inputs to every module, intermediate reasoning (for ChainOfThought modules), and the final output.
 
-**Step 2 — Filter by metric:** Apply the user-provided metric function to each trace. Only traces where the metric is satisfied (e.g., the final answer is correct) are kept. This filtering ensures that only successful trajectories become demonstrations — the optimizer is "bootstrapping" examples from the program's own correct runs.
+**Step 2 — Filter by metric:** Apply the user-provided metric. Only traces where the metric is satisfied (e.g., the final answer is correct) are kept. Unsuccessful trajectories are discarded. This filtering ensures only successful trajectories become demonstrations.
 
-**Step 3 — Augment module prompts:** For each module in the program, prepend the collected successful traces to the module's prompt as few-shot demonstrations. The next time the module runs, it has concrete examples of what good inputs and outputs look like.
+**Step 3 — Augment module prompts:** For each module in the program, prepend the collected successful traces as few-shot demonstrations. Future runs have concrete examples of good input/output pairs.
 
-**Step 4 — Teacher-student bootstrapping (optional):** If the base program solves too few training examples (insufficient demonstrations), BootstrapFewShot can use a more powerful teacher model (e.g., GPT-4o as teacher, Claude Haiku as student) to generate demonstrations. The teacher runs the program on training examples, generating high-quality traces that the student model then uses as demonstrations.
+**Step 4 — Teacher-student (optional):** If the base program solves too few training examples (not enough successful traces), use a more powerful teacher model to generate demonstrations for a smaller student model.
 
-**What BootstrapFewShot does not do:** It does not optimize instruction text — the instructions remain whatever the Signature docstrings define. For instruction optimization, MIPROv2 is needed. BootstrapFewShot only optimizes the few-shot demonstration selection. Despite this limitation, it often produces substantial improvements because few-shot demonstrations are highly influential on LLM behavior.
+**What BootstrapFewShot optimizes:** Only the few-shot demonstration selection. The instruction text remains whatever the Signature docstrings define.
+
+**Limitations:**
+- Does not optimize instruction text — for instruction optimization, MIPROv2 is needed
+- Requires the program to solve at least some training examples without optimization (cold-start problem)
+- Demo selection is heuristic, not Bayesian — less efficient than MIPROv2 on large search spaces
+- Optimizes each module somewhat independently; joint optimization of the full pipeline is weaker than MIPROv2
+
+Despite these limitations, BootstrapFewShot often produces substantial improvements because few-shot demonstrations are highly influential on LLM behavior. It is the right first optimizer to try before investing in MIPROv2.
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q3. Compare OPRO vs. DSPy's MIPROv2 as prompt optimization approaches.**
+::: {.callout-warning title="Mid Level — Q2"}
+**Compare OPRO vs. DSPy's MIPROv2 as prompt optimization approaches.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 OPRO and MIPROv2 both treat prompt optimization as a search problem but differ substantially in search strategy, scalability, and scope.
 
-**OPRO (Optimization by PROmpting)** uses an LLM as the optimizer. The meta-prompt contains: task description, pairs of (prompt, evaluation score) from previous iterations, and an instruction to generate a better prompt. The LLM generates a new candidate prompt, which is evaluated on the training set and added to the history. This repeats for many iterations. OPRO leverages the LLM's ability to reason about language and infer from the score history what makes a prompt effective.
+**OPRO (Optimization by PROmpting)** uses an LLM as the optimizer. The meta-prompt contains: task description, pairs of (prompt, evaluation score) from previous iterations, and an instruction to generate a better prompt. The LLM generates a new candidate, which is evaluated and added to the history.
 
-Strengths: simple to implement (just a prompt + evaluation loop), no specialized framework needed, works on any single-step task. Weaknesses: limited by the LLM's context window (history of attempts grows large), does not handle multi-step pipelines, does not optimize few-shot demonstrations (only instruction text), and is expensive because each iteration requires evaluating many examples with the LLM.
+*OPRO strengths:* Simple to implement (just a prompt + eval loop), no framework needed, works on any single-step task.
+*OPRO weaknesses:* Limited by context window as history grows large; does not handle multi-step pipelines; does not optimize few-shot demonstrations; expensive per iteration.
 
-**MIPROv2** uses Bayesian optimization (Tree-structured Parzen Estimators). The optimization space includes both instruction text candidates (generated by a proposer LLM that reads the task) and few-shot demonstration sets (selected from bootstrapped traces). MIPROv2 builds a probabilistic model of how parameter choices relate to metric scores and uses this model to efficiently select the next candidates to evaluate, focusing on the most promising regions of the search space.
+**MIPROv2** uses Bayesian optimization (Tree-structured Parzen Estimators). The search space includes both instruction text candidates (generated by a proposer LLM) and few-shot demonstration sets. MIPROv2 builds a probabilistic model of how parameter choices relate to metric scores and selects the next candidates to evaluate intelligently.
 
-Strengths: significantly more sample-efficient than random search; jointly optimizes instructions and demonstrations; natively handles multi-module pipelines (optimizing all modules simultaneously); integrates with the full DSPy program abstraction. Weaknesses: requires the DSPy framework; harder to apply to pipelines not written in DSPy; needs more labeled data than BootstrapFewShot.
+*MIPROv2 strengths:* More sample-efficient than random or LLM-guided search; jointly optimizes instructions and demonstrations; handles multi-module pipelines natively; reproducible results.
+*MIPROv2 weaknesses:* Requires DSPy framework; needs more labeled data; harder to apply to pipelines not written in DSPy.
 
-**Bottom line:** Use OPRO for quick single-module optimization without framework overhead. Use MIPROv2 within DSPy programs when you have a multi-step pipeline, labeled data, and need production-quality robustness.
+**Bottom line:** Use OPRO for quick single-module optimization without framework overhead. Use MIPROv2 within DSPy programs when you have a multi-step pipeline, labeled data, and need production-quality robustness. For the same quality bar, MIPROv2 will get there with fewer LLM evaluation calls because Bayesian optimization beats LLM-as-optimizer on sample efficiency.
 :::
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q1. A customer has a production RAG pipeline with 5 chained LLM calls. They want to improve end-to-end quality but don't know which step is the bottleneck. How would DSPy help?**
+::: {.callout-warning title="Mid Level — Q3"}
+**How do you define a good metric for prompt optimization? What happens if your metric is wrong?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-This is a classic joint optimization problem that manual prompt engineering handles poorly but DSPy handles well.
+A good metric must satisfy three properties: (1) it must correlate with what users actually care about, (2) it must be computable automatically (or cheaply via LLM-as-judge), and (3) it must not be gameable — a prompt should not be able to score well by exploiting metric weaknesses while producing bad outputs.
 
-**The diagnostic first — before DSPy:**
-Instrument each of the 5 LLM call steps independently. For a sample of production queries, log the input and output of each step and score each step's output against a per-step quality metric. Step 1 might be a query reformulation step (score: does the rewritten query retrieve better documents?); Step 3 might be a grounding step (score: is the generated summary faithful to the retrieved chunks?). This step-level decomposition identifies where quality is degrading — you don't want to spend DSPy optimization budget on steps that already perform well.
+**The correlation problem:** ROUGE for summarization is the canonical bad metric. Prompts can be optimized to maximize lexical overlap with reference summaries while producing coherent but unhelpful text. Users report quality is worse; ROUGE says it is better. Before deploying a metric for optimization, validate it: take 50 examples, score them with your metric and with human raters, compute rank correlation. If Spearman's ρ is below 0.6, the metric is unreliable for optimization.
 
-**Migrating to DSPy:**
-Represent the existing pipeline as a DSPy program. Each LLM call becomes a DSPy module with a typed Signature. The 5 steps map to 5 `dspy.ChainOfThought` or `dspy.Predict` modules chained in a `forward()` method. This migration should not change behavior — it is a structural refactor that makes the pipeline optimizable.
+**LLM-as-judge:** For open-ended generation, LLM judges (e.g., GPT-4o evaluating outputs on a 1-5 scale) often correlate better with human judgment than automated metrics. Risks: the judge model may favor certain writing styles that correlate with its own training, evaluation criteria must be explicit in the judge prompt, and judge consistency degrades on long outputs.
 
-**Building the training set:**
-Collect 200+ labeled examples where the end-to-end output quality is known (from human raters or existing eval data). DSPy optimizers work at the end-to-end level — you specify the final output metric, and the optimizer propagates improvement credit to intermediate steps through the bootstrapping process.
+**What happens with a wrong metric:** The optimizer finds a prompt that scores well on the metric but does not actually perform better — or performs worse — on the real task. This is Goodhart's Law applied to prompts: when a measure becomes a target, it ceases to be a good measure. You will ship confident about a "better" prompt that users will hate.
 
-**Running MIPROv2:**
-Run MIPROv2 on the DSPy program. The optimizer evaluates the full pipeline, collects successful traces, and optimizes instructions and demonstrations for all 5 modules jointly. This joint optimization is the key advantage over manual per-step tuning: optimizing Step 1 in isolation may not improve end-to-end quality if the bottleneck is Step 3; MIPROv2 finds the combination of module-level improvements that maximizes the final metric.
-
-**What to expect:** On complex multi-step pipelines, MIPROv2 typically achieves 10-30% relative improvement over baseline manual prompts. More importantly, the optimization is reproducible — if the model version changes, re-run the optimizer rather than guessing which prompts to update.
+**Best practice:** Define your metric → validate against human judgments on 50 examples → run optimization → evaluate on held-out set → A/B test with a small production sample before full rollout. Metric validation is not optional.
 :::
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q2. A customer is spending significant engineering time on prompt maintenance. What framework would you recommend and why?**
+::: {.callout-warning title="Mid Level — Q4"}
+**When is DSPy overkill? What situations call for simpler approaches?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-High prompt maintenance cost is a systems problem, not just a prompting problem. The fix requires treating prompts as code with test coverage, version control, and systematic optimization — not as ad hoc strings maintained by individual engineers.
+DSPy is overkill in several common situations.
+
+**Single-step tasks with clear prompts:** If your application is one LLM call and the task is well-understood, the overhead of defining Signatures, Modules, and a training pipeline may take longer than manually iterating on the prompt. For simple tasks like classification, entity extraction, or short-form Q&A, a well-crafted prompt with a few examples often matches DSPy-optimized performance.
+
+**Insufficient labeled data:** DSPy optimizers need labeled examples to work. BootstrapFewShot needs 50+; MIPROv2 needs 200+. If you have fewer examples than this, the optimization signal is too noisy to be reliable. Manual prompting + eval set building is a better use of time.
+
+**Rapidly changing tasks:** If the task definition or desired output format changes frequently (e.g., during early-stage product exploration), investing in DSPy infrastructure is premature. Optimize when the task is stable enough that the optimization result will be used for weeks, not days.
+
+**API-only, no framework appetite:** If the team is not comfortable with Python frameworks and wants to maintain prompts as plain strings in a config file, DSPy's learning curve may not be justified. APE or OPRO can be implemented in 50-100 lines of plain Python without a framework dependency.
+
+**Rule of thumb:** If your LLM application is 1-2 steps, your task has been stable for a month, and you have 200+ labeled examples, DSPy is worth adopting. Below those thresholds, simpler optimization approaches or manual prompting are more practical.
+:::
+:::
+
+---
+
+### Forward Deployed Engineer
+
+::: {.callout-important title="FDE — Q1"}
+**You need to improve a customer support prompt. Walk through how you'd use DSPy vs. manual optimization. What drives the decision?**
+
+> **What great looks like:** The candidate frames this as a structured decision, not a preference. They ask about pipeline complexity, data availability, and quality requirements before recommending anything. The DSPy path includes data pipeline setup and metric validation, not just "run MIPROv2." The manual optimization path includes systematic testing, not just editing strings.
+
+> **Common mistake:** Jumping to "use DSPy" without asking about data availability or pipeline structure. Or the reverse: recommending manual prompting without acknowledging its limitations for multi-step pipelines.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The decision depends on three questions before recommending anything: (1) How many LLM steps are in the current pipeline? (2) How many labeled examples exist? (3) What is the quality metric?
+
+**If: single-step pipeline, under 100 labeled examples, quality metric is unclear:**
+Start with manual optimization, but make it systematic. The sequence: (a) Build a 50-example regression test suite from production data — mix of representative cases, known edge cases, and adversarial inputs. (b) Iterate on the prompt in a structured way: one hypothesis per change, test against the full suite, do not commit changes that improve the average by failing 3 specific cases. (c) A/B test any candidate that improves the test suite on a 200-example production sample before full rollout. This is still "manual" but it has the discipline of optimization.
+
+**If: multi-step pipeline (e.g., intent classification → policy lookup → response generation), 200+ labeled examples, metric is defined:**
+Migrate to DSPy. The migration path: (a) Refactor each LLM step into a DSPy Module with a typed Signature. This is a structural refactor — no behavior change, just wrapping existing prompts. (b) Validate the DSPy program produces the same results as the original. (c) Build or reuse the labeled dataset; confirm the metric correlates with human judgment. (d) Run BootstrapFewShot first (cheap, fast, often 10-15% gain). (e) If BootstrapFewShot results are insufficient, run MIPROv2 (heavier compute, typically 10-30% further gain).
+
+**What I would not do:** Jump to DSPy for a single-step pipeline with 30 labeled examples. The overhead is not justified; the optimization signal is too noisy. Do not run optimization without validating the metric first — an optimized prompt against a bad metric is worse than the baseline.
+
+**In both cases, the shared requirements are:** version control for prompts, regression test suite, statistical significance testing before declaring improvement, and monitoring after deployment for distribution shift.
+:::
+:::
+
+::: {.callout-important title="FDE — Q2"}
+**A customer is spending significant engineering time on prompt maintenance. What framework would you recommend and why?**
+
+> **What great looks like:** Diagnoses the root cause (no evaluation framework) before recommending tooling. Distinguishes between single-step and multi-step scenarios. Explains why eval infrastructure must come first — optimization without it is "maintenance theater."
+
+> **Common mistake:** Recommending DSPy as the solution to maintenance cost without first establishing why the maintenance is expensive. If the problem is no test coverage, DSPy alone does not fix it.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+High prompt maintenance cost is a systems problem, not a prompting problem. The fix requires treating prompts as code with test coverage, version control, and systematic optimization — not as ad hoc strings maintained by individual engineers.
+
+**Root cause diagnosis:** Before recommending any framework, I ask: "When a prompt breaks, how do you know?" If the answer is "a user complained" or "we noticed in production," the root cause is no regression testing. If the answer is "our test suite caught it," the root cause is that fixing prompts is too manual.
 
 **Immediate intervention — treat prompts as code:**
-Every prompt in production should be: (1) version controlled in the same repository as application code, (2) associated with a regression test suite of at least 30-50 examples, (3) evaluated in CI/CD on every change before deployment. This alone eliminates most of the fire-drill maintenance — engineers stop making prompt changes based on intuition and instead make changes based on measured test pass rates. Tooling: any eval framework (deepeval, promptfoo, RAGAS) for the test harness; standard git for version control.
+Every production prompt should be: (1) version controlled in the same repository as application code, (2) associated with a regression test suite of at least 50 examples, (3) evaluated in CI/CD on every change before deployment. This alone eliminates most fire-drill maintenance — engineers stop making prompt changes based on intuition and instead make changes based on measured test pass rates. Tooling: any eval framework (deepeval, promptfoo, RAGAS) for the test harness; standard git for version control. This should be done before adopting any optimization framework.
 
-**Medium-term intervention — DSPy for multi-step pipelines:**
-If the customer has multi-step pipelines and has accumulated labeled data (or can generate it from production logs with user feedback signals), migrate those pipelines to DSPy. The value of DSPy for maintenance is not just optimization — it's that the program structure becomes explicit (Signatures document intent), and optimization is automated (re-run the optimizer when the model version changes or performance degrades, rather than manually re-engineering prompts).
+**Medium-term — DSPy for multi-step pipelines:**
+If the customer has multi-step pipelines and accumulated labeled data, migrate to DSPy. The maintenance benefit is not just optimization quality — it is that the program structure becomes explicit (Signatures document intent), and re-optimization is automated (run the optimizer when the model version changes or performance degrades, rather than manually re-engineering prompts). Model version upgrades go from "two weeks of manual prompt re-engineering" to "run MIPROv2 overnight."
 
 **For single-step pipelines — OPRO or APE:**
-If the pipelines are mostly single LLM calls, DSPy may be more infrastructure than needed. Implement OPRO or APE as a periodic optimization job: run it on a sample of recent production data, evaluate candidates against the test suite, and deploy the best-scoring prompt. This gives automated prompt improvement without requiring the full DSPy framework.
+If the pipelines are mostly single LLM calls, DSPy may be more infrastructure than needed. Implement OPRO or APE as a periodic optimization job: run it on a sample of recent production data, evaluate candidates against the test suite, deploy the best-scoring prompt.
 
-**Framework recommendation summary:**
-- Complex multi-step pipelines + labeled data → DSPy with MIPROv2
-- Single-step pipelines + labeled data → OPRO or APE
-- Any pipeline + no labeled data → build the eval set first; prompt engineering without evaluation is maintenance theater
+**What I would tell the customer directly:** The root cause of high prompt maintenance cost is always the same — no evaluation framework. Fix that first. Optimization frameworks amplify the value of evaluation data. Without an eval, running DSPy or OPRO produces expensive results you cannot trust.
+:::
+:::
 
-The root cause of high prompt maintenance cost is always the same: no evaluation framework. Fix that first. Optimization frameworks amplify the value of evaluation data — without it, they have nothing to optimize against.
+::: {.callout-important title="FDE — Q3"}
+**A customer ran MIPROv2 and got 25% improvement on their eval set, but production quality didn't change. What happened?**
+
+> **What great looks like:** Immediately identifies eval-production distribution mismatch as the likely cause. Walks through systematic debugging: check train/eval overlap, check production distribution coverage, check metric validity. Recommends instrumentation changes, not just re-running optimization.
+
+> **Common mistake:** Suggesting "run more optimization iterations" or "try a different optimizer." The problem is not the optimizer.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is classic eval-production distribution mismatch. The optimizer found a prompt that scores well on the eval set but the eval set does not represent production inputs.
+
+**Most likely causes, in order of probability:**
+
+1. **Eval set is too small or unrepresentative.** If the eval set is 50 examples drawn from early product testing, it does not cover the diversity of real user queries. The optimized prompt overfits to the eval set's characteristics.
+
+2. **Train and eval overlap.** Some teams build eval sets by sampling from the same source as training data. If examples appear in both, the optimizer has seen the "eval" set — it is effectively training data.
+
+3. **Metric does not correlate with user experience.** The metric improved, but the metric does not measure what users care about. For example, optimizing answer-accuracy on a classification task when users actually care about tone and completeness.
+
+4. **Production distribution shifted since the eval set was built.** User behavior in production may have evolved since the eval set was labeled, making the eval unrepresentative of current traffic.
+
+**How to diagnose:**
+
+(a) Pull 100 recent production examples. Have a human rate the optimized prompt's outputs. If human ratings match the eval improvement, the issue is deployment/serving, not the prompt. If human ratings show no improvement, the eval set is not representative.
+
+(b) Compare the production query distribution to the eval set: embedding similarity between production queries and eval queries. If clusters of production queries have no close neighbors in the eval set, those clusters are unrepresented.
+
+(c) Re-run evaluation on the production sample with the same metric. If the metric shows no improvement on production examples but did on eval, the distribution mismatch is confirmed.
+
+**Fix:** Rebuild the eval set from recent production data. Use active sampling to ensure coverage of all production query clusters. Validate the metric on the new eval set against human ratings before re-running optimization.
 :::
 :::

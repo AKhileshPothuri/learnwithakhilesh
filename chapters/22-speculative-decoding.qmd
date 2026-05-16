@@ -13,157 +13,532 @@
 
 ## The Inference Bottleneck
 
-LLM decode is memory-bandwidth bound, not compute bound. During the prefill phase, the model processes many tokens in parallel: large matrix-matrix multiplications fill GPU tensor cores at high utilization (typically 60–80% of peak FLOPS). During the decode phase, the model generates one token at a time: each step requires loading the entire set of model weights from HBM into the tensor cores, performing one matrix-vector multiplication (query vector × each weight matrix), and discarding the results. The weight matrices are large — a 7B model has ~14GB of weights at FP16 — and they must be read from HBM on every single decode step. The actual arithmetic (matrix-vector multiply) is tiny compared to the data movement. GPU tensor cores sit largely idle waiting for data: utilization during decode is typically 5–15% of peak FLOPS. Throughput is constrained by HBM bandwidth (~2 TB/s on A100), not compute.
+**Plain-English definition:** LLM token generation is throttled not by how fast your GPU computes, but by how fast it can read the model's weights from memory — and speculative decoding tricks the GPU into generating multiple tokens per memory-read cycle.
+
+During the prefill phase, the model processes many tokens in parallel: large matrix-matrix multiplications fill GPU tensor cores at high utilization (typically 60–80% of peak FLOPS). During the decode phase, the model generates one token at a time. Each step requires loading the entire set of model weights from HBM into the tensor cores, performing one matrix-vector multiplication (query vector × each weight matrix), and discarding the results. The weight matrices are large — a 7B model has ~14GB of weights at FP16 — and they must be read from HBM on every single decode step. The actual arithmetic (matrix-vector multiply) is tiny compared to the data movement. GPU tensor cores sit largely idle waiting for data: utilization during decode is typically 5–15% of peak FLOPS. Throughput is constrained by HBM bandwidth (~2 TB/s on A100), not compute.
+
+**Analogy:** Imagine a chef (GPU) who can chop 100 vegetables per second, but the refrigerator (HBM) can only hand one vegetable at a time, once per second. The chef is idle 99% of the time waiting for the next ingredient. Speculative decoding is like pre-staging several vegetables on the counter — the chef still opens the fridge the same number of times, but each time they grab a handful instead of one item, dramatically increasing throughput.
 
 The consequence is that generating tokens faster requires reading weights fewer times or reading the same weights while generating more tokens per read. Since weights cannot be removed, the only option is to generate more tokens per weight-read cycle. On a single A100, a 7B model decode processes approximately one token per HBM weight-read pass. If you could generate 3 tokens per pass, you would achieve 3× speedup without any arithmetic improvement — the GPU does 3× more useful work per memory access. This is the opportunity speculative decoding exploits: a large target model verifies k candidate tokens with a single forward pass (equivalent to one weight-read cycle), whereas generating k tokens sequentially would require k forward passes (k weight-read cycles).
 
 The large model in isolation cannot generate k tokens in one forward pass because each token's generation requires the previous token as input — sequential dependency. But the verification of k pre-proposed tokens is different from their generation: if someone hands you k tokens and asks "does this sequence match your distribution?", you can process all k positions in parallel via a standard causal forward pass. The target model computes logits for all k proposed positions simultaneously, because the proposals are already determined. Verification is parallelizable even though generation is not. Speculative decoding exploits this asymmetry: use a fast draft model to propose, then verify all proposals in one parallel target model pass.
 
-The memory bandwidth constraint means that speedup from speculative decoding scales with the acceptance rate and the ratio of draft model cost to target model cost. If the draft model proposes k=5 tokens and all 5 are accepted, you achieve ~5× speedup because the target model did one pass instead of five, and the draft model's cost (running on the same GPU) is much lower. If only 2 of 5 are accepted, you achieve ~2× speedup. If acceptance rate drops below 1/k, speculative decoding can actually hurt throughput (the overhead of running the draft model exceeds the verification savings). Tuning k based on observed acceptance rate is important for production deployments.
+::: {.callout-warning}
+**Common Misconception:** "Speculative decoding improves quality by using a smarter model to guide generation."
+
+It does the opposite — it uses a *weaker* model for proposals. The correctness guarantee comes from the rejection sampling procedure, which filters out any token the large model wouldn't have chosen. Quality is mathematically identical to running the target model alone.
+:::
+
+### Speedup Arithmetic
+
+The memory bandwidth constraint means that speedup from speculative decoding scales with the acceptance rate and the ratio of draft model cost to target model cost. If the draft model proposes k=5 tokens and all 5 are accepted, you achieve ~5× speedup because the target model did one pass instead of five, and the draft model's cost (running on the same GPU) is much lower. If only 2 of 5 are accepted, you achieve ~2× speedup. If acceptance rate drops below 1/k, speculative decoding can actually hurt throughput (the overhead of running the draft model exceeds the verification savings).
+
+Speedup formula:
+
+$$\text{Speedup} = \frac{E[\text{accepted tokens per step}]}{1 + r} = \frac{(1 - \alpha^{k+1}) / (1 - \alpha)}{1 + r}$$
+
+Where α is per-token acceptance rate, k is draft length, and r is draft cost as a fraction of one target forward pass.
+
+| Acceptance Rate (α) | Draft Length (k) | Draft Cost (r) | Expected Tokens/Step | Speedup |
+|---|---|---|---|---|
+| 0.90 | 5 | 0.10 | 4.6 | ~4.2× |
+| 0.80 | 5 | 0.10 | 3.4 | ~3.1× |
+| 0.70 | 5 | 0.10 | 2.9 | ~2.6× |
+| 0.60 | 5 | 0.10 | 2.3 | ~2.1× |
+| 0.50 | 5 | 0.15 | 1.9 | ~1.7× |
+| 0.40 | 5 | 0.15 | 1.5 | ~1.3× |
+
+: Speculative decoding speedup by acceptance rate {.striped}
+
+Real-world speedups: code generation (α ≈ 0.85) → 2.5–3×; conversational chat at moderate temp (α ≈ 0.70) → 1.8–2.2×; creative writing at temp > 0.8 (α ≈ 0.55) → 1.2–1.5×.
 
 ## Draft-Verify Paradigm
 
-The draft model is a smaller, faster model from the same model family or a purpose-built lightweight model. In one speculative step: (1) the draft model generates k tokens autoregressively at high speed — its small size means each token generation is fast even though sequential; (2) the target (large) model runs a single forward pass over the k draft tokens, producing logits for each of the k+1 positions (the k proposals plus the position after); (3) an acceptance/rejection sampling procedure determines how many tokens to accept and produces a corrected token if needed.
+**Plain-English definition:** A small model writes a draft; the large model red-pens it in one pass — accepting good tokens and correcting bad ones.
 
-The acceptance sampling procedure is the mathematical heart of speculative decoding. For each proposed token x_i at position i, let q(x_i) be the draft model's probability for that token and p(x_i) be the target model's probability. Accept x_i with probability min(1, p(x_i)/q(x_i)). If the token is rejected, resample from the residual distribution: max(0, p(·) − q(·)) normalized. This procedure has two critical properties. First, all accepted tokens follow the target distribution: the combined probability of accepting token x via the min(1, p/q) gate and the residual correction ensures the marginal distribution over accepted tokens equals p(x). Second, every step produces at least one token: even if all k proposals are rejected, the corrected sample from the residual distribution provides one token, ensuring no step is wasted. The net result is that the output distribution is provably identical to sampling from the target model directly — no approximation, no quality tradeoff.
+In one speculative step: (1) the draft model generates k tokens autoregressively at high speed — its small size means each token generation is fast even though sequential; (2) the target (large) model runs a single forward pass over the k draft tokens, producing logits for each of the k+1 positions (the k proposals plus the position after); (3) an acceptance/rejection sampling procedure determines how many tokens to accept and produces a corrected token if needed.
 
-Why does min(1, p(x)/q(x)) produce the correct distribution? If p(x) > q(x), the draft model underestimates this token's probability in the target; accept with probability >1 → accept always. If p(x) < q(x), the draft model overestimates; accept with probability p(x)/q(x) < 1. The expected acceptance rate for a token x is min(1, p(x)/q(x)), and the unconditional acceptance probability across all tokens is Σ_x q(x) min(1, p(x)/q(x)) = 1 − TV(p,q)/2, where TV(p,q) is the total variation distance between draft and target distributions. When the draft distribution closely matches the target, TV is small and acceptance rate is high. This is why draft model quality directly determines speedup: a poor draft model with high TV distance will have low acceptance rate and provide little benefit.
+### The Rejection Sampling Proof
 
-Speedup analysis makes the arithmetic concrete. Assume k draft proposals, acceptance rate α per token (probability of accepting a given proposal), and cost ratio r = (cost of draft k-step generation) / (cost of one target forward pass). The expected number of accepted tokens per speculative step is (1 − α^{k+1}) / (1 − α) — a geometric series representing the expected length of the accepted prefix. If α = 0.8 and k = 5, expected tokens per step ≈ 3.4. The speedup relative to target-only decoding is (expected tokens per step) / (1 + r). For r = 0.2 (draft overhead is 20% of one target pass), speedup = 3.4 / 1.2 ≈ 2.8×. For α = 0.6 with k = 5, expected tokens ≈ 2.2, speedup = 2.2/1.2 ≈ 1.8×. For α < 0.5 with this cost ratio, speculative decoding breaks even or slightly hurts performance. Real-world speedups on code generation (high predictability, α ≈ 0.85) are typically 2.5–3×; on creative writing (low predictability, α ≈ 0.55–0.65) are 1.2–1.5×.
+The acceptance sampling procedure is the mathematical heart of speculative decoding. For each proposed token $x_i$ at position $i$, let $q(x_i)$ be the draft model's probability for that token and $p(x_i)$ be the target model's probability:
+
+- **Accept** $x_i$ with probability $\min(1,\ p(x_i)/q(x_i))$
+- **If rejected**, resample from the residual distribution: $r(x) = \max(0,\ p(x) - q(x))\ /\ Z$ where $Z$ is the normalizing constant
+
+**Why this is provably correct:** The probability of outputting token $x$ through the acceptance path is $q(x) \cdot \min(1, p(x)/q(x)) = \min(q(x), p(x))$. The residual path adds $\max(0, p(x) - q(x))$ in proportion — topping up the deficit. The sum simplifies to exactly $p(x)$. The output distribution is identical to sampling from the target model alone. No approximation, no quality tradeoff.
+
+**Key property:** Every speculative step produces at least one token. Even if all k proposals are rejected, the corrected sample from the residual provides one output token — ensuring zero wasted steps.
+
+The overall acceptance probability is $1 - \text{TV}(p, q)/2$, where TV is total variation distance between draft and target distributions. This is why draft model quality directly determines speedup: a poor draft increases TV distance, tanks acceptance rate, and provides little benefit.
+
+::: {.callout-tip}
+**Interview soundbite:** "Speculative decoding never changes the output distribution — a bad draft model just reduces speedup to near zero. The correctness guarantee is unconditional."
+:::
+
+### Draft Model Selection
+
+**When to use / When NOT to use a given draft model:**
+
+| Criterion | Good Choice | Bad Choice |
+|---|---|---|
+| Same tokenizer | Same vocabulary, works directly | Different vocab → impossible |
+| Model family | Same pretraining lineage | Totally different architecture |
+| Size ratio | 5–15× smaller than target | > 20× smaller often has too-high TV |
+| Domain alignment | Same fine-tuning domain | Draft fine-tuned on different data |
+
+**Canonical pairings:**
+- Llama-3-8B draft → Llama-3-70B target (same family, 8.75× size ratio)
+- Llama-3.2-3B draft → Llama-3.1-70B target (smaller draft, lower overhead, slightly lower α)
+- Code-specialized 7B draft → Code-specialized 70B target (highest α for code tasks, ~0.85–0.92)
+
+**The tokenizer requirement is non-negotiable.** Draft and target must share the exact same tokenizer vocabulary. If they produce different token IDs for the same text, the verification step is undefined. This rules out cross-family speculation (e.g., Mistral draft for Llama target) without a token-alignment shim.
+
+```python
+# HuggingFace assisted_generation — canonical speculative decoding setup
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+
+# Load target model (large)
+target_model = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Meta-Llama-3-70B-Instruct",
+    torch_dtype=torch.float16,
+    device_map="auto",
+)
+
+# Load draft model (small, SAME tokenizer family)
+draft_model = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Meta-Llama-3-8B-Instruct",
+    torch_dtype=torch.float16,
+    device_map="cuda:0",  # co-locate on same GPU if memory permits
+)
+
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-70B-Instruct")
+
+prompt = "Write a Python function that implements binary search:"
+inputs = tokenizer(prompt, return_tensors="pt").to(target_model.device)
+
+# assisted_generation handles the full draft-verify loop
+outputs = target_model.generate(
+    **inputs,
+    assistant_model=draft_model,      # draft model reference
+    max_new_tokens=512,
+    do_sample=True,
+    temperature=0.7,
+    # num_assistant_tokens controls k (draft proposals per step)
+    # defaults to 5; tune based on observed acceptance rate
+    num_assistant_tokens=5,
+    num_assistant_tokens_schedule="heuristic",  # auto-adjusts k dynamically
+)
+
+generated = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+print(generated)
+```
+
+```python
+# Measuring acceptance rate in production with vLLM
+# vLLM exposes speculative decoding metrics via Prometheus
+# Key metrics to track:
+#   vllm:spec_decode_draft_acceptance_rate   (per-step α)
+#   vllm:spec_decode_efficiency              (accepted tokens / total tokens proposed)
+#   vllm:num_spec_tokens                     (effective k per step)
+
+from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model="meta-llama/Meta-Llama-3-70B-Instruct",
+    speculative_model="meta-llama/Meta-Llama-3-8B-Instruct",
+    num_speculative_tokens=5,
+    speculative_draft_tensor_parallel_size=1,
+    # Disable speculation when batch size exceeds threshold
+    speculative_disable_by_batch_size=8,
+)
+
+sampling_params = SamplingParams(temperature=0.7, max_tokens=512)
+outputs = llm.generate(["Write a binary search in Python:"], sampling_params)
+```
 
 ## Variants
 
-Self-speculative decoding avoids the need for a separate draft model by using early layers of the target model itself as the draft. In layer-skip speculation, the target model runs a partial forward pass using only the first L of N layers, produces draft token proposals from this truncated computation, then runs the full N-layer pass to verify. The draft and verification share a common prefix of computation: the first L layers run once, and the remaining N-L layers run for verification. This eliminates the separate model management overhead and ensures the draft distribution is closely related to the target (it's the same model with fewer layers), typically giving higher acceptance rates than a separate smaller model. The tradeoff: the partial forward pass for drafting is not as fast as a truly separate small model because you still pay for the L-layer computation on the draft path.
+### Self-Speculative Decoding (Layer Skipping)
 
-Medusa (Cai et al., 2024) attaches multiple draft heads directly to the target model's output representations. Rather than a separate model, Medusa adds k "Medusa heads" — small FFN layers — each trained to predict a different future position (head 1 predicts position t+1, head 2 predicts t+2, etc.). All heads run in parallel on the same last-layer hidden state, producing k proposals simultaneously in a single forward pass of the target model. Medusa eliminates the sequential draft model step entirely: proposals are generated as a byproduct of the target model's own forward pass at zero additional memory-bandwidth cost. The verification step is the same rejection sampling procedure. Medusa heads are typically trained while keeping the base model frozen, requiring only the additional head parameters (very few) to be trained. The acceptance rate is lower than EAGLE for the same k because Medusa uses a fixed shared representation (the last token's hidden state) rather than a representation tailored to each future position, but the zero-overhead drafting makes it net positive across a wide range of α values.
+**Plain-English definition:** Instead of a separate draft model, use only the first half of the target model's layers to draft, then the full model to verify — one model, two modes.
 
-EAGLE (Extrapolation Algorithm for Greater Language-model Efficiency, Li et al., 2024) uses the target model's internal features more effectively than Medusa. EAGLE trains a lightweight autoregressive draft model that operates on the target model's layer activations (not just output logits), producing draft proposals that are conditioned on the full context represented in the target's internal representation. The draft model is small (about 1/12 the size of the target) but has access to richer information than a standalone small model. EAGLE acceptance rates are typically 80–90% on code tasks and 70–80% on chat tasks, substantially higher than comparable standalone draft models or Medusa. The cost is a more complex training procedure (the draft model is trained to predict the target's activation trajectory) and the need to forward-pass the target model once per speculation cycle to generate the activation features that EAGLE conditions on. EAGLE-2 further improves by dynamically adjusting the draft tree structure based on observed acceptance patterns.
+Self-speculative decoding avoids the need for a separate draft model by using early layers of the target model itself as the draft. The target model runs a partial forward pass using only the first L of N layers, produces draft token proposals from this truncated computation, then runs the full N-layer pass to verify. The draft and verification share a common prefix of computation: the first L layers run once, and the remaining N-L layers run for verification.
 
-Lookahead decoding (Fu et al., 2023) takes a different approach based on Jacobi iterations. Standard Jacobi decoding for solving fixed-point equations: initialize a sequence of k tokens randomly, then update all positions in parallel using the current estimates. In an LLM, starting from a guess of k future tokens, run the target model in parallel across all k positions to produce revised predictions, replace the guesses with the revised predictions, and repeat. Lookahead decoding maintains a pool of n-gram candidates from previous Jacobi iterations, uses these as proposals for future steps, and verifies them in parallel. Unlike draft-verify, lookahead requires no separate model — it exploits the LLM's parallel verification capability with internally-generated candidate sequences. The speedup (typically 1.5–2.5×) is lower than EAGLE or dedicated draft models but universal (no model-specific tuning needed).
+**Advantage:** No separate model management, no tokenizer compatibility issues, and the draft distribution is closely related to the target (same weights, just fewer layers), typically giving higher acceptance rates than a standalone smaller model.
 
-REST (Retrieval-based Speculative Decoding) replaces the neural draft model with a retrieval system. Given the current generation context, REST retrieves similar text sequences from a large datastore (derived from the training corpus or a domain corpus) and uses them as draft proposals. If the current generation is likely to continue with a common phrase or code pattern, retrieval finds that exact phrase and proposes it for verification. REST is most effective in domains with repetitive or formulaic text (legal boilerplate, code templates, financial reports), where retrieval hit rates are high. It requires no training, no separate model, just a document datastore and a fast retrieval system. The limitation is quality diversity — when the model should generate novel content, retrieval finds poor matches and acceptance rates collapse.
+**Limitation:** The partial forward pass for drafting is not free — you still pay for L layers on the draft path. The speedup is lower than using a genuinely smaller separate model because you cannot amortize the first-L-layers cost.
+
+### Medusa
+
+**Plain-English definition:** Attach k extra output heads to the existing model — each head guesses a different future token position in parallel, at essentially zero extra cost.
+
+Medusa (Cai et al., 2024) attaches multiple draft heads directly to the target model's output representations. Rather than a separate model, Medusa adds k "Medusa heads" — small FFN layers — each trained to predict a different future position (head 1 predicts position t+1, head 2 predicts t+2, etc.). All heads run in parallel on the same last-layer hidden state, producing k proposals simultaneously in a single forward pass of the target model.
+
+**Zero-overhead drafting:** Proposals are generated as a byproduct of the target model's own forward pass. No additional memory-bandwidth cost for drafting.
+
+**Weakness:** All heads condition on the same fixed representation (the last token's hidden state), which cannot capture conditional dependencies between draft tokens. Head 2's optimal prediction depends on what head 1 predicts, but all Medusa heads see the same t-position state regardless. Acceptance rates: 70–80% on code, 60–70% on chat for k=3-5 heads.
+
+Medusa heads are trained while keeping the base model frozen, requiring only the additional head parameters to be trained — a very lightweight fine-tuning procedure.
+
+### EAGLE
+
+**Plain-English definition:** Train a tiny model to mimic the target model's internal thought process (not just its outputs), then use it to draft tokens that the large model is very likely to accept.
+
+EAGLE (Extrapolation Algorithm for Greater Language-model Efficiency, Li et al., 2024) trains a lightweight autoregressive draft model that operates on the target model's penultimate-layer activations rather than just output logits. The draft model (~1/12 the size of the target) autoregressively predicts future (activation, token) pairs, giving it richer context than a standalone small model.
+
+**Why higher acceptance rates?** The draft model is trained to predict in the target model's feature space. When EAGLE proposes token x, its probability assignment q(x) is calibrated to the target model's own internal belief — the TV distance between EAGLE and target is lower than between a standalone smaller model and the target. Typical acceptance rates: 80–90% on code, 75–85% on chat.
+
+**Tradeoff:** More complex training (draft model must be trained to extrapolate the target's activation trajectory); requires extracting and passing the target's penultimate-layer features at inference time.
+
+**EAGLE-2** dynamically adjusts the draft tree structure based on observed confidence at each branch, concentrating speculation on high-confidence paths and pruning unlikely branches early.
+
+### Lookahead Decoding
+
+**Plain-English definition:** Generate draft tokens by running the model on a "guess sequence" in parallel, then verify which guesses were correct — no separate model needed.
+
+Lookahead decoding (Fu et al., 2023) uses Jacobi iterations. Starting from a guess of k future tokens, run the target model in parallel across all k positions to produce revised predictions, replace the guesses with the revised predictions, and repeat until convergence. Lookahead maintains a pool of n-gram candidates from previous Jacobi iterations as proposals for future steps. Speedup is typically 1.5–2.5×, lower than EAGLE or dedicated draft models, but universal — no model-specific tuning or training required.
+
+### REST (Retrieval-Based Speculative Decoding)
+
+**Plain-English definition:** Look up the current generation context in a database, find similar previously-seen text, and propose its continuation as the draft — pure retrieval, no neural draft model.
+
+REST retrieves similar text sequences from a large datastore (training corpus or domain corpus) and uses them as draft proposals. Most effective in domains with repetitive or formulaic text: legal boilerplate, code templates, financial reports. Requires no training — just a document datastore and fast retrieval system. Collapses when the model generates novel content and retrieval finds poor matches.
+
+### Variant Comparison Table
+
+| Variant | Draft Source | Acceptance Rate (code) | Acceptance Rate (chat) | Overhead | Best Use |
+|---|---|---|---|---|---|
+| Separate draft model | Small standalone LM | 75–85% | 65–75% | Low | General purpose |
+| EAGLE | Target's activations + tiny model | 85–92% | 75–85% | Medium | Max latency reduction |
+| Medusa | Extra heads on target | 70–80% | 60–70% | ~Zero | High-throughput batched |
+| Layer-skip self-spec | Target's early layers | 72–82% | 65–75% | Medium | No second model available |
+| Lookahead | Jacobi iterations on target | 65–75% | 55–65% | Low | No model-specific tuning |
+| REST | Retrieved n-grams | 80–95% (formulaic) | 40–60% | Very low | Repetitive domain text |
+
+: Speculative decoding variant comparison {.striped}
 
 ## Practical Considerations
 
-Speedup varies dramatically with use case, and setting accurate expectations is critical for production decisions. Code generation is the highest-acceptance use case: code is structurally predictable, function bodies follow patterns, and a well-chosen draft model (e.g., a code-specialized 7B model as draft for a 70B target) achieves 85–90% token acceptance, producing 2.5–3.5× speedup. Structured data extraction (JSON formatting, table generation) similarly benefits from high predictability. Conversational chat at moderate temperature is a middling case: acceptance rates of 65–75% produce 1.5–2× speedup. Creative writing and open-ended generation at temperature > 0.7 have the lowest acceptance rates (50–65%), where speculative decoding provides 1.1–1.5× at best — often not worth the operational complexity.
+### Use Case Suitability
 
-Temperature affects acceptance rate directly through its effect on the sharpness of the token probability distribution. At temperature=0 (greedy), the target and draft distributions are both point masses — either the draft picks the same token as the target (accept) or not (reject). At temperature=0.0, acceptance is purely deterministic and acceptance rates are highest. As temperature increases, both distributions become more diffuse, and the ratio p(x)/q(x) becomes harder to approximate well — edge tokens that the draft assigns low probability but the target assigns moderate probability become more likely, increasing rejection rates. For production deployments where temperature is a user-configurable parameter, this means speculative decoding speedup is dynamic: users who set temperature=0.0 get maximal speedup; users at temperature=1.0 get minimal speedup. Serving systems should account for this in throughput planning.
+**When to use speculative decoding:**
+- Code generation: structural predictability, α ≈ 0.85–0.92, speedup 2.5–3.5×
+- Structured data extraction: JSON formatting, table generation, α ≈ 0.80–0.88
+- Long outputs with predictable patterns: technical documentation, formulaic writing
+- Single-user or low-concurrency scenarios where per-request latency is the KPI
 
-Batch serving complexity is the most significant practical obstacle to speculative decoding in production. In single-stream inference (one user, one request), speculative decoding works exactly as described. In batched serving, all sequences in a batch must be processed together. When running speculative decoding on a batch, you generate k draft tokens for every sequence in the batch, then verify them all in one target model pass. The problem: different sequences may have very different acceptance patterns. If sequence A accepts all 5 proposals but sequence B accepts only 1, you cannot advance sequence A by 5 steps without advancing sequence B by at least as many — the batch must progress together. In practice, you advance by the minimum accepted length across the batch. With large batches, this minimum tends toward 1, eliminating most of the speculative speedup. Speculative decoding's benefit collapses as batch size increases: it is most effective at batch size 1 (single-user latency optimization) and progressively less effective at larger batch sizes (throughput optimization).
+**When NOT to use speculative decoding:**
+- High-creativity tasks at temperature > 0.8: α drops to 0.50–0.60, speedup ~1.2×, barely worth overhead
+- High-load serving at large batch sizes (> 8–16 concurrent sequences): speedup collapses to near 1×
+- Very short outputs (< 20 tokens): draft-verify setup overhead eats the gain
+- Cross-architecture draft/target pairs without a shared tokenizer
 
-The interaction with continuous batching (the standard for production LLM serving in vLLM, TGI, and TensorRT-LLM) is nuanced. Continuous batching adds new requests mid-batch and removes completed ones, maintaining high GPU utilization. Standard speculative decoding assumes a fixed batch where you draft k tokens for all sequences together. Continuous batching changes the batch composition between steps, complicating the draft-verify synchronization. vLLM 0.5+ supports speculative decoding with continuous batching by running speculation only when batch occupancy is low (early in a sequence's lifetime when the batch has few entries) and falling back to non-speculative decoding at high batch occupancy. This hybrid strategy captures speculative speedup at low latency (single-user or small-batch scenarios) while preserving throughput at high load. For customers running vLLM in production, enabling speculative decoding with vLLM's built-in draft model support is the practical path — it handles the continuous batching interaction automatically.
+::: {.callout-warning}
+**Production Gotcha:** Temperature is a runtime parameter, but it directly controls acceptance rate. A customer who defaults to temperature=1.0 on a system you benchmarked at temperature=0.3 may see speculative decoding actively degrade their throughput. Always measure acceptance rate at the temperatures your workload actually uses.
+:::
+
+### Temperature and Acceptance Rate
+
+Temperature affects acceptance rate through its effect on distribution sharpness. At temperature=0 (greedy), both draft and target produce point masses — either they agree (accept) or they don't (reject). As temperature increases, both distributions become more diffuse, and the ratio p(x)/q(x) becomes more volatile — edge tokens that the draft under-assigns become more likely to need correction, increasing rejection rate.
+
+Practical implication: speculative decoding speedup is not a fixed property of your model pair. It is a function of the temperature distribution your workload uses. Serving systems should account for this in throughput planning, or dynamically enable/disable speculation based on per-request temperature.
+
+### Batch Serving Complexity
+
+Speculative decoding's benefit collapses as batch size increases. In batched serving, when you verify k draft tokens for a batch of B sequences, the effective accepted token count per step equals the **minimum** accepted length across all sequences in the batch — not the average. If sequence A accepts 5 tokens but sequence B accepts only 1, the batch advances by 1 step for sequence B, and sequence A gets no-op padding for the remaining 4 positions.
+
+With large batches, this minimum tends toward 1:
+
+$$P(\text{all B sequences accept ≥ k tokens}) \approx \alpha^{kB}$$
+
+For α=0.80, k=5, B=16: P ≈ 0.80^80 ≈ 0.000001. In practice, the effective token gain collapses to near 1, while the draft model overhead remains constant. Speculative decoding can actively hurt throughput by adding draft compute without gaining extra tokens per step.
+
+**Break-even point:** At batch sizes above roughly 8–16 (depending on acceptance rate and draft cost), speculative decoding provides marginal or negative benefit. vLLM's `--speculative-disable-by-batch-size` flag exists precisely for this reason.
+
+### Continuous Batching Interaction
+
+vLLM (version 0.5+) supports speculative decoding with continuous batching via "batch expansion": for each speculative step, the draft model generates k tokens for all active sequences, the batch is expanded to include all (sequence, draft_token_position) pairs, the target model runs one forward pass over the expanded batch, and rejection sampling determines accepted lengths per sequence. Sequences that accept different numbers of tokens are handled by padding.
+
+**Recommended production configuration:**
+
+```python
+# vLLM config for production speculative decoding
+# (conceptual — set via CLI flags or API config)
+
+vllm_config = {
+    "model": "meta-llama/Meta-Llama-3-70B-Instruct",
+    "speculative_model": "meta-llama/Meta-Llama-3-8B-Instruct",
+    "num_speculative_tokens": 5,         # k; tune based on observed α
+    # Disable speculation when batch occupancy exceeds threshold
+    # Captures latency gains at low load without hurting throughput at high load
+    "speculative_disable_by_batch_size": 8,
+    # For single-GPU: ensure draft + target weights fit
+    # 70B FP16 = 140GB, 8B FP16 = 16GB → needs 2× A100 80GB
+    # Use INT4 quantized draft (8B INT4 ≈ 4GB) to save headroom
+}
+```
+
+::: {.callout-tip}
+**Production Pattern:** Use a tiered strategy: speculation enabled at low batch occupancy (≤ 8 concurrent users, targeting P50 latency SLA), disabled at high occupancy (> 8 concurrent users, targeting throughput SLA). This captures speculative speedup during off-peak hours while preserving throughput during peak load. Monitor acceptance rate per hour-of-day — it shifts with user behavior patterns.
+:::
+
+## Cheat Sheet
+
+- Decode is **memory-bandwidth bound**: the GPU reads weights from HBM on every step and does trivial compute — utilization 5–15% during decode
+- Core idea: small draft model generates k tokens sequentially; large target verifies all k **in one parallel forward pass**
+- Verification is parallelizable because the k proposed tokens are already known (not sequential)
+- **Rejection sampling guarantee**: output distribution is provably identical to running the target model alone — no quality tradeoff
+- Accept token x with probability min(1, p(x)/q(x)); if rejected, resample from the residual distribution max(0, p-q)/Z
+- Speedup formula: `(1 - α^{k+1}) / (1 - α)` expected tokens per step; divide by `(1 + r)` for draft overhead
+- α = 0.80, k = 5, r = 0.10 → ~3× speedup; α = 0.50 → barely breaks even
+- **Draft model must share the exact same tokenizer vocabulary** — non-negotiable
+- Best pairings: same model family (Llama-3-8B draft → Llama-3-70B target), same fine-tuning domain
+- **Medusa**: k extra FFN heads on target, zero overhead, lower α; best for high-throughput batched workloads
+- **EAGLE**: tiny model operating on target's internal activations, highest α (85–92% code), more setup complexity
+- **Lookahead decoding**: Jacobi-iteration-based, no model-specific training, universal but lower speedup (1.5–2.5×)
+- **REST**: retrieval-based drafting, excellent for formulaic/repetitive domains, collapses on novel content
+- Speedup collapses at batch size > 8–16: minimum-accepted-length across batch dominates
+- Temperature inversely affects acceptance rate: higher temperature → more diffuse distributions → lower α
+- vLLM: use `--speculative-disable-by-batch-size` for tiered strategy
+- HuggingFace: `model.generate(assistant_model=draft_model, num_assistant_tokens=5)`
+- Creative writing at high temperature: α ≈ 0.50–0.60, speedup ~1.2–1.5× — often not worth the operational complexity
+- Always **measure acceptance rate per task type and temperature** before deploying; re-measure after any fine-tuning of target
+- Compute-bound workloads (prefill, high-batch throughput): speculative decoding provides zero benefit
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+### Entry Level
+
 **Q1. What is speculative decoding and why does it speed up LLM inference?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 Speculative decoding is an inference optimization where a small, fast draft model generates several candidate tokens, and the large target model verifies all of them in a single parallel forward pass. If the proposals match what the target model would have generated, multiple tokens are accepted at the cost of one target model step — instead of needing k target model steps to generate k tokens, you need only one.
 
-The speedup comes from the nature of LLM decode: it is memory-bandwidth bound, not compute bound. The large model's weights must be loaded from GPU memory on every forward pass, and that data movement is slow relative to the actual arithmetic. By verifying multiple proposed tokens in one forward pass (all proposals are processed in parallel via causal attention), you extract more tokens per weight-load cycle. If a target model normally generates 1 token per second and you verify 4 tokens in one pass with 90% acceptance, you effectively generate 3.6 tokens per second — a 3.6× speedup from the same hardware, with the same model, producing the same distribution of outputs.
-:::
+The speedup comes from the nature of LLM decode: it is memory-bandwidth bound, not compute bound. The large model's weights must be loaded from GPU memory on every forward pass, and that data movement is slow relative to the actual arithmetic. By verifying multiple proposed tokens in one forward pass (all proposals are processed in parallel via causal attention), you extract more tokens per weight-load cycle.
+
+If a target model normally generates 1 token per second and you verify 4 tokens in one pass with 80% acceptance, you effectively generate ~3.4 tokens per step — a substantial speedup from the same hardware, with the same model, producing the same distribution of outputs.
 :::
 
-::: {.callout-tip title="Entry Level"}
 **Q2. Why can you verify k tokens in parallel even though generation is sequential?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Generation is sequential because each token depends on all previous tokens — you cannot generate token t+1 without knowing what token t was. If token t is unknown, you cannot compute the next-token distribution. This sequential dependency is what makes autoregressive generation slow.
+Generation is sequential because each token depends on all previous tokens — you cannot generate token t+1 without knowing what token t was. This sequential dependency is what makes autoregressive generation slow.
 
-Verification is parallel because the k proposed tokens are already known — they were provided by the draft model. Given a fixed sequence of k candidate tokens, the transformer can process all k positions simultaneously using causal attention (each position attends only to previous positions, but since all positions are pre-populated, the attention over all k positions can be computed as a single batched operation). The target model runs a normal forward pass over the prompt + k draft tokens, producing one logit vector per draft token position in parallel. This is identical to how the model processes a prompt during the prefill phase — all positions computed in one pass because all inputs are available.
+Verification is parallel because the k proposed tokens are already known — they were provided by the draft model. Given a fixed sequence of k candidate tokens, the transformer processes all k positions simultaneously using causal attention. The target model runs a normal forward pass over the prompt + k draft tokens, producing one logit vector per draft position in parallel. This is identical to how the model processes a prompt during prefill — all positions computed in one pass because all inputs are available.
 
-In other words: generating requires deciding what comes next (sequential); verifying asks whether a given continuation is plausible (parallelizable over all positions in the continuation simultaneously). Speculative decoding outsources the decision to the fast draft model and uses the large model only for parallel verification.
+Generating requires deciding what comes next (sequential); verifying asks whether a given continuation is plausible (parallelizable over all positions simultaneously). Speculative decoding outsources the decision to the fast draft model and uses the large model only for parallel verification.
 :::
-:::
 
-::: {.callout-tip title="Entry Level"}
-**Q3. What is the theoretical speedup limit of speculative decoding?**
+**Q3. What is the acceptance rate and what affects it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The theoretical maximum speedup is k+1 (when all k draft proposals are always accepted plus one additional token from the target). With k=5 proposals and 100% acceptance, you get 6 tokens per speculative step vs. 1 token per non-speculative step — a 6× speedup ceiling. In practice, acceptance rate is never 100%, and the draft model has some cost, so real-world speedups are always lower than this ceiling.
+The acceptance rate α is the per-token probability that a draft model's proposed token passes the rejection sampling filter. Formally, for proposed token x with draft probability q(x) and target probability p(x), acceptance probability is min(1, p(x)/q(x)).
 
-The tighter practical bound is determined by the acceptance rate α and draft cost ratio r. Expected tokens per step follows a geometric distribution: E[accepted tokens] = (1 − α^{k+1}) / (1 − α). At α=0.8, k=5: E[tokens] ≈ 3.4. Speedup = 3.4 / (1 + r) where r is draft cost as fraction of target cost. For a 7B draft / 70B target with r ≈ 0.15: speedup ≈ 3.4/1.15 ≈ 3×. Higher k extends the ceiling but with diminishing returns — the marginal benefit of accepting the 10th token (probability α^10) is much lower than accepting the 2nd token. Optimal k in practice is typically 3–8 depending on acceptance rate and hardware.
-:::
+**Weak answer:** "It's how often the small model guesses right."
+
+**Strong answer:** It's determined by the total variation distance TV(p, q) between draft and target distributions: acceptance rate ≈ 1 - TV/2. Factors that drive α:
+
+- **Draft-target alignment**: Same-family pairs (Llama-3-8B vs 70B) achieve 75–85%; unrelated pairs may see 50–65%
+- **Task predictability**: Code and structured output → α ≈ 0.85–0.92; creative writing at high temperature → α ≈ 0.50–0.65
+- **Temperature**: Higher temperature spreads both distributions, increasing TV distance, decreasing α
+- **Tokenizer alignment**: Draft and target must share the same vocabulary — mismatched tokenizers make α undefined
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q4. Explain the rejection sampling step in speculative decoding and why it guarantees the output distribution matches the target model.**
+**Q4. What happens to quality when speculative decoding rejects tokens?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The rejection sampling procedure ensures that regardless of which draft tokens are accepted or rejected, the marginal distribution of the output tokens equals the target model's distribution p(·).
+Quality is completely unchanged — mathematically guaranteed. When a draft token is rejected, the procedure samples from the residual distribution max(0, p(x) - q(x)) / Z, which combined with the acceptance path produces exactly the target model's distribution p(x) for every token.
 
-For each proposed token x at position i with draft probability q(x) and target probability p(x): accept with probability min(1, p(x)/q(x)). If rejected, resample from the residual distribution r(x) = max(0, p(x) − q(x)) / Z, where Z is the normalizing constant.
-
-Proof of correctness: the probability of outputting token x through the acceptance path is q(x) × min(1, p(x)/q(x)) = min(q(x), p(x)). The probability of the rejection path triggering is 1 − Σ_x min(q(x), p(x)) = 1 − (1 − TV(p,q)/2), and conditional on rejection, the resample distribution is r(x). So the total probability of outputting x is:
-
-min(q(x), p(x)) + [1 − Σ_x' min(q(x'), p(x'))] × max(0, p(x) − q(x)) / Z
-
-When you expand max(0, p(x) − q(x)) / Z with the correct normalizer, this simplifies to exactly p(x) for all x. The residual distribution is designed to "top up" the deficit between min(q(x), p(x)) and p(x), making the marginal output distribution exactly p.
-
-The practical consequence: you can use any draft model — even a bad one — and the output distribution remains exactly the target model's distribution. A bad draft model simply has a low acceptance rate (high TV distance), reducing speedup to near zero, but never producing outputs outside the target distribution.
-:::
+This is the key insight: speculative decoding is not an approximation. A bad draft model does not produce lower-quality outputs; it just has a lower acceptance rate (more rejections), which reduces speedup toward zero but never produces outputs outside the target model's distribution. The quality guarantee is unconditional.
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q5. Compare Medusa vs. EAGLE speculative decoding — what does each optimize?**
+**Q5. What is the theoretical maximum speedup of speculative decoding?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Medusa and EAGLE both avoid a separate draft model but take different approaches to generating proposals, optimizing different aspects of the draft quality vs. overhead tradeoff.
+**Weak answer:** "k+1 times, where k is the draft length."
 
-Medusa attaches k lightweight FFN "heads" to the target model's last transformer layer output. Head i is trained to predict the token at position t+i using only the final hidden state at position t. All heads run in parallel on the current hidden state at zero additional memory-bandwidth cost — they are a byproduct of the target model's forward pass. The weakness: all heads condition on the same fixed representation (last layer hidden state of position t), which cannot capture the conditional dependencies between the draft tokens themselves (head 2's optimal prediction depends on what head 1 predicts, but Medusa uses fixed conditioning). Acceptance rates: 70–80% on code, 60–70% on chat for k=3-5 heads. Key advantage: zero additional memory bandwidth required for drafting; all draft computation is fused into the target model's pass.
+**Strong answer:** The theoretical ceiling is k+1 (100% acceptance on all k proposals plus one bonus token), but this is never achievable in practice. The practical bound is:
 
-EAGLE trains a separate autoregressive draft model that operates on the target model's penultimate-layer feature vectors. The draft model autoregressively predicts future (feature, token) pairs conditioned on the target's own intermediate representations. This gives EAGLE access to richer context than Medusa (the target's internal features encode more information than just the output logits) and allows autoregressive conditioning (each draft step conditions on previous drafts, not just the same fixed state). Acceptance rates: 80–90% on code, 75–85% on chat. Key tradeoff: EAGLE requires a separate lightweight model (one transformer layer, ~1/12 target size), adding a small overhead per speculative step, and requires extracting and passing the target's penultimate layer activations.
+Speedup = [(1 - α^{k+1}) / (1 - α)] / (1 + r)
 
-Net recommendation: EAGLE for latency-critical single-user scenarios where the overhead of running EAGLE's small model is acceptable and high acceptance rate is paramount. Medusa for throughput-oriented scenarios where the zero-overhead drafting compensates for the lower acceptance rate at high batch sizes.
+For α=0.90, k=5, r=0.10: speedup ≈ 4.2×. For α=0.60, k=5: speedup ≈ 2.0×. Higher k extends the ceiling with diminishing returns — the marginal probability of accepting the 10th token (α^10) is much lower than the 2nd token. Optimal k is typically 3–8 in practice. The real ceiling is set by your acceptance rate on your specific workload, which you must measure.
 :::
-:::
 
-::: {.callout-warning title="Mid Level"}
-**Q6. Under what conditions does speculative decoding NOT provide speedup?**
+---
+
+### Mid Level
+
+**Q6. Explain the rejection sampling step and why it guarantees the output distribution matches the target.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Speculative decoding fails to provide speedup or actively hurts performance under four main conditions.
+The rejection sampling procedure ensures that regardless of which draft tokens are accepted or rejected, the marginal distribution of output tokens equals the target model's distribution p(·).
 
-Low acceptance rate: when the draft model's distribution diverges significantly from the target (high TV distance), acceptance rate drops below the break-even threshold. For a draft model with 20% of the target's cost (r=0.2), you need acceptance rate above ~40% per token to break even. Creative generation at high temperature, domain-shifted input (draft model was trained on different data than the target), or mismatched tokenization all reduce acceptance rate. Monitoring acceptance rate per request type and disabling speculation below a threshold is important for production deployments.
+For each proposed token x with draft probability q(x) and target probability p(x): accept with probability min(1, p(x)/q(x)). If rejected, resample from r(x) = max(0, p(x) − q(x)) / Z.
 
-Large batch sizes: as discussed, continuous batching causes effective accepted token count per step to equal the minimum across the batch. At batch size 32, the probability that all 32 sequences accept all k proposals is α^{32k} — essentially zero. The effective token gain collapses to near 1, while the draft model overhead remains. Speculative decoding should be disabled or only applied to small-batch or single-sequence scenarios.
+**Proof sketch:**
 
-Compute-bound workloads: speculative decoding helps only when decode is memory-bandwidth bound (single token generation). During prefill, the model is already compute-bound (processing many tokens in parallel). Applying speculation during prefill provides no benefit. Similarly, if the target model is already at high utilization due to batch parallelism, verification does not run faster than sequential generation and the draft overhead is pure cost.
+The probability of outputting token x through the acceptance path is q(x) × min(1, p(x)/q(x)) = min(q(x), p(x)).
 
-Draft-target distribution mismatch at inference time: even with a well-trained draft model, distribution at inference can shift due to dynamic quantization, temperature settings, or system prompt changes that were not reflected in draft training. Periodically re-measuring acceptance rates and updating draft model choices is operationally important for maintaining speedup in production.
+The rejection path triggers with probability 1 - Σ_x min(q(x), p(x)) = TV(p,q)/2. On rejection, sample from r(x) = max(0, p(x) - q(x)) / Z.
+
+Total probability of outputting x = min(q(x), p(x)) + [TV(p,q)/2] × max(0, p(x)-q(x))/Z.
+
+With the correct normalizer Z, this simplifies exactly to p(x). The residual distribution is designed to top up the deficit between min(q,p) and p, so the combined marginal is exactly the target distribution.
+
+**Practical consequence:** You can use any draft model — even a terrible one — and the output distribution remains exactly the target model's. A bad draft model only hurts speedup, never quality.
 :::
-:::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q7. A customer needs to reduce inference latency by 2x for a chat use case. Would speculative decoding help? What draft model would you choose for a Llama-3-70B target?**
+**Q7. Compare Medusa vs. EAGLE — what does each optimize for and when would you choose each?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Speculative decoding can plausibly achieve 2× latency reduction for a single-user or low-concurrency chat use case with a well-matched draft model, but achieving exactly 2× requires the right conditions and careful setup.
+Both avoid a separate draft model but optimize different aspects of the draft quality vs. overhead tradeoff.
 
-For Llama-3-70B target on chat tasks: expected acceptance rate is 65–75% at temperature=0.7 (typical chat default). With k=5 draft tokens and α=0.7, expected accepted tokens per step ≈ (1 − 0.7^6)/(1 − 0.7) ≈ 2.9. With a draft model cost ratio r ≈ 0.1 (for an 8B draft vs. 70B target on same GPU), speedup ≈ 2.9/1.1 ≈ 2.6×. So yes, 2× is achievable and likely surpassable for chat at reasonable temperature settings.
+**Medusa:** Attaches k lightweight FFN "heads" to the target model's last transformer layer output. Head i predicts position t+i using only the final hidden state at position t. All heads run in parallel on the current hidden state at zero additional memory-bandwidth cost — pure byproduct of the target model's forward pass. Weakness: all heads condition on the same fixed representation and cannot model conditional dependencies between draft tokens (head 2 should depend on what head 1 predicted, but Medusa ignores this). Acceptance rates: 70–80% on code, 60–70% on chat.
 
-Draft model recommendation for Llama-3-70B target:
-1. First choice: Llama-3-8B (or Llama-3.2-3B for lower draft cost) — same architecture family, same tokenizer, same vocabulary. Same-family models have the highest acceptance rates because they were trained on similar data with the same objective. Llama-3-8B as draft for Llama-3-70B is the canonical setup and achieves acceptance rates of 70–80% on chat benchmarks.
-2. Second choice: Llama-3.2-3B — even smaller and faster draft at some acceptance rate cost. For latency-critical sub-100ms targets, 3B draft may be preferable.
-3. EAGLE draft model trained on Llama-3-70B: higher acceptance rates (80–90%) at slightly more setup complexity. Best option if peak latency reduction is the goal.
+**EAGLE:** Trains a separate autoregressive draft model (~1/12 target size) that operates on the target model's penultimate-layer feature vectors. The draft model autoregressively predicts future (feature, token) pairs conditioned on the target's own intermediate representations. This gives EAGLE access to richer context than Medusa and allows autoregressive conditioning between draft positions. Acceptance rates: 80–90% on code, 75–85% on chat. Cost: requires extracting penultimate-layer activations and running a small separate model per speculative step.
 
-Infrastructure requirement: the draft model must fit on the same GPU(s) as the target model (otherwise inter-GPU communication adds latency that negates the benefit). For 70B at FP16 on 2× A100 80GB: ~140GB weights, plus 16GB for Llama-3-8B draft in FP16 = 156GB total, within the 160GB capacity. Alternatively, use quantized draft (8B in INT4 ≈ 4GB) to leave margin. vLLM's --speculative-model flag handles this configuration.
+**When to choose:**
+- EAGLE: latency-critical single-user scenarios, highest priority is minimizing per-request latency
+- Medusa: throughput-oriented scenarios, high batch sizes, the zero-overhead drafting compensates for lower α at large batch
+- Neither helps much at batch size > 16 — both suffer from the minimum-across-batch bottleneck
+
+**Follow-up: What about EAGLE-2?** It dynamically adjusts the draft tree structure based on observed confidence in each branch — concentrating speculation on high-confidence paths. Useful when acceptance rate varies significantly across different parts of a generation.
 :::
-:::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q8. A customer is running vLLM in production — is speculative decoding compatible with continuous batching?**
+**Q8. What happens to speculative decoding speedup as batch size grows?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Yes, vLLM supports speculative decoding with continuous batching, but with important caveats about when it actually helps and how to configure it correctly.
+Speedup collapses. The mechanism: in a batch of B sequences, you propose k draft tokens for every sequence simultaneously. The effective tokens-per-step gain equals the **minimum** accepted draft length across all sequences in the batch — not the average.
 
-vLLM (version 0.5+) implements speculative decoding through a "batch expansion" approach: for each speculative step, the draft model generates k tokens for all active sequences, the batch is expanded to include all (sequence, draft_token_position) pairs, the target model runs one forward pass over the expanded batch, and the rejection sampling determines accepted lengths per sequence. The key compatibility mechanism: sequences that accept different numbers of draft tokens are handled by padding — shorter accepted sequences get no-op padding for the additional positions. The batch stays synchronized.
+If sequence 1 accepts all 5 proposals but sequence 2 accepts only 1, the batch advances by 1 step for sequence 2. Sequence 1 gets no-op padding for positions 2-5. You cannot advance sequence 1 by 5 without advancing sequence 2 by 5 as well.
 
-The practical issue: at high concurrency (many users), speculative decoding benefit collapses. For a batch of 32 active sequences, most speculative steps will have at least one sequence that rejects the first draft token (acceptance ≈ 0.7^1 per token; probability all 32 accept first token ≈ 0.7^32 ≈ 0.001%). In practice, effective token gain per step is 1.1–1.3 at high batch occupancy, barely covering the draft model overhead.
+Probability that all B sequences accept ≥ k tokens: P ≈ α^{kB}. For α=0.80, k=5, B=16: P ≈ 10^{-6}. In practice, the effective token gain per step converges to ~1 with large batches, while draft model overhead remains constant.
 
-Recommendation for the customer: enable speculative decoding with dynamic batch-size gating. vLLM's --speculative-disable-by-batch-size flag disables speculation when batch occupancy exceeds a threshold (e.g., 8 concurrent sequences). Below that threshold (low traffic periods or latency-critical priority users), speculation runs and provides 1.5–2.5× latency reduction. Above the threshold, fall back to standard decoding for maximum throughput. This tiered approach captures latency benefits during low-load periods without degrading throughput under high load.
+**The implication:** Speculative decoding is a latency optimization, not a throughput optimization. Best for: batch size 1–4 (single user, latency-critical). Worst for: large batch serving (the dominant GPU utilization scenario in production). vLLM's `--speculative-disable-by-batch-size` should be tuned to the crossover point for your workload.
 
-For the specific goal of 2× latency reduction at P50: achievable for chat at low-moderate concurrency. Set speculation on Llama-3-8B draft, k=4, batch threshold=8, and expect P50 latency to drop from ~150ms to ~70ms for typical chat responses at batch occupancy ≤ 4. Monitor acceptance rate per day-of-week/time-of-day and adjust k dynamically.
+**Follow-up: Can this be addressed?** SpecInfer and similar systems explore speculative decoding with tree-structured drafts and multiple acceptance chains, allowing different sequences to accept different branches — partially mitigating the minimum-acceptance bottleneck at the cost of significantly more complex implementation.
 :::
+
+**Q9. Explain the interaction between speculative decoding and continuous batching (vLLM-style).**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Continuous batching changes the batch composition between steps (adding new requests, removing completed ones), complicating the standard draft-verify synchronization that assumes a fixed batch.
+
+vLLM (0.5+) handles this via "batch expansion": for each speculative step, draft tokens are generated for all currently-active sequences. The batch is expanded to (B × k) entries for the target forward pass. After rejection sampling, sequences that accepted fewer tokens are padded. The batch then contracts back to B sequences, with different effective token counts per sequence handled by padding. Continuous batching continues normally — new sequences can join at the start of the next speculative cycle.
+
+**The practical problem:** At high batch occupancy (many concurrent users), the minimum-accepted-length bottleneck dominates. vLLM's response: `--speculative-disable-by-batch-size N` disables speculation entirely when there are more than N active sequences. This is critical for production — without it, high-load scenarios actively degrade throughput because the draft model overhead is pure cost when the minimum-acceptance collapses to 1.
+
+**Recommended configuration:** Set the threshold at the batch size where your measured speedup drops below 1.1× (roughly 10% overhead tolerance). For most workloads at α ≈ 0.75, this is around batch size 8–12.
+:::
+
+**Q10. How would you configure speculative decoding in vLLM for a chat application targeting P50 latency improvement?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+For a chat application, the goal is reducing P50 latency for individual users while not degrading throughput during high-load periods.
+
+**Configuration strategy:**
+
+1. Choose draft model: Llama-3-8B-Instruct for a Llama-3-70B-Instruct target (same family, 8.75× size ratio). Expected α ≈ 0.70–0.75 for chat at temperature=0.7.
+
+2. Set k=4–5 draft tokens (diminishing returns beyond 5 for α=0.70)
+
+3. Set `--speculative-disable-by-batch-size 8` — disables speculation when > 8 concurrent sequences are active
+
+4. Monitor: vLLM exposes `vllm:spec_decode_draft_acceptance_rate` and `vllm:spec_decode_efficiency` via Prometheus. Alert if α drops below 0.55.
+
+5. Segment by temperature: users at temp=0.3 will see α ≈ 0.80 and 2.5× speedup; users at temp=1.0 will see α ≈ 0.55 and ~1.4× speedup. Consider disabling speculation for requests with temperature > 0.85.
+
+**Expected result:** P50 latency drops from ~150ms to ~70ms (for typical 100-token chat responses) at batch occupancy ≤ 4. P95 improvement is smaller due to variance in acceptance rate. No regression at high batch occupancy because speculation is disabled there.
+:::
+
+---
+
+### Senior Level
+
+**Q11. When does speculative decoding NOT help, or can actually hurt throughput?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Speculative decoding hurts throughput under four distinct conditions, each with a different root cause.
+
+**1. Low acceptance rate (α < break-even threshold).** The break-even is where draft overhead equals token gain: r = (1 - α^{k+1}) / (1 - α) - 1. For r=0.15 (15% draft cost), k=5: break-even α ≈ 0.45. Below this, the draft model costs more compute than the extra tokens it enables. Creative writing at high temperature, domain-shifted inputs, or poorly-matched draft-target pairs can push α below break-even. You must measure α per workload category before enabling speculation.
+
+**2. High batch size (> 8–16 concurrent sequences).** The minimum-accepted-length-across-batch bottleneck means that with 32 concurrent sequences and α=0.80, the expected effective token gain per step is ≈ 1.08 — barely above 1. The draft model runs for every sequence at full cost; the benefit rounds to almost nothing. At B=32, draft overhead is 32 × 0.15 = 4.8 target-equivalent cost per step, while token gain is 1.08. Net: -4× throughput vs. no speculation. This is an active regression, not just lost optimization.
+
+**3. Very short sequences.** If the average output is 20 tokens, the fixed overhead of loading and running the draft model may be amortized over only 4 speculative steps. The per-request overhead is noticeable.
+
+**4. Quantization mismatch.** If the target model is dynamically quantized at serving time (e.g., FP8 or INT4 online quantization) but the draft model was trained against the FP16 target, the target model's distribution has shifted relative to what the draft was calibrated against. The TV distance increases, α drops, and you lose speedup while still paying draft overhead.
+
+> **What great looks like:** A strong answer names the break-even formula, quantifies the batch-size collapse with probability math, and identifies the quantization gotcha. Weak answers just say "when the draft model is bad" without connecting it to the underlying distribution distance or batch dynamics.
+:::
+
+**Q12. How does Medusa differ from standard speculative decoding with a separate draft model? What is the tradeoff?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Standard speculative decoding uses a completely separate model (e.g., Llama-3-8B for Llama-3-70B target). Medusa replaces the separate model with k small FFN heads attached to the target model's last transformer layer — each head predicts a different future offset (t+1, t+2, ..., t+k) from the same shared last-token hidden state.
+
+**Key differences:**
+
+| Dimension | Separate Draft Model | Medusa |
+|---|---|---|
+| Draft memory bandwidth | Separate model weight loads | Zero extra (byproduct of target pass) |
+| Acceptance rate | Higher (full-model calibration) | Lower (shared fixed representation) |
+| Conditional modeling | Autoregressive between draft tokens | None (all heads see same state) |
+| Training complexity | Use an existing small model | Fine-tune k FFN heads on frozen base |
+| Batch performance | Collapses at large batch | Also collapses; zero overhead reduces the harm |
+
+**The fundamental tradeoff:** Medusa's zero-overhead drafting means the break-even acceptance rate is lower — even at α=0.60, Medusa is net positive because there is no draft cost to recoup. A separate draft model with α=0.60 and r=0.15 barely breaks even. This makes Medusa attractive at workloads with moderate acceptance rates and high batch sizes where the draft model overhead would dominate.
+
+**Where Medusa falls short:** Tasks requiring the draft to model multi-step dependencies. Medusa's head 3 predicts position t+3 conditioning only on position t's hidden state, ignoring what heads 1 and 2 proposed. A separate autoregressive draft model conditions each draft step on all previous draft tokens — more accurate for position t+3 prediction. This is why EAGLE (which is also a lightweight add-on to the target but preserves autoregressive conditioning) achieves higher acceptance rates than Medusa.
+
+> **What great looks like:** Explains the zero-overhead property precisely (byproduct of target's forward pass, not an additional compute step), connects it to the break-even formula to show why it changes the economics, and identifies the conditional-independence weakness at the representation level.
+:::
+
+**Q13. Design a production speculative decoding setup for a customer running Llama-3-70B with mixed workloads: 40% code generation, 40% chat, 20% creative writing.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a workload segmentation and adaptive configuration problem. The three workload types have meaningfully different acceptance rates and therefore different optimal configurations.
+
+**Expected acceptance rates by workload:**
+- Code generation: α ≈ 0.85–0.90 (highly predictable structure)
+- Chat at temperature=0.7: α ≈ 0.70–0.75
+- Creative writing at temperature=0.9: α ≈ 0.50–0.60
+
+**Configuration:**
+
+1. **Draft model:** Llama-3-8B-Instruct (same family, 8.75× size ratio, shared tokenizer). Fits on the same GPU node as 70B in INT4 quantization (~4GB for 8B vs ~35GB for 70B INT4).
+
+2. **Per-workload k setting:** Code k=6–7 (high α means longer drafts are worth it); Chat k=4–5; Creative writing k=3 or disabled if α measurement shows α < 0.50.
+
+3. **Dynamic disabling:** Use request metadata (system prompt tag or API parameter) to identify workload type at request time. Disable speculation for creative writing requests with temperature > 0.85 — the expected speedup (~1.2×) is not worth the operational complexity and latency variance.
+
+4. **Batch-size gating:** `--speculative-disable-by-batch-size 8`. During peak hours (high concurrency), speculation auto-disables. During off-peak (low concurrency), full speculative benefit applies.
+
+5. **Monitoring:** Track per-workload-type acceptance rate in Prometheus. Alert threshold: α < 0.55 for code (something has drifted), α < 0.45 for chat.
+
+6. **Expected aggregate speedup:** Weighted average: 0.40 × 2.8× + 0.40 × 2.0× + 0.20 × 1.0× (disabled) = 1.12 + 0.80 + 0.20 = 2.12× aggregate speedup at low batch occupancy. At peak load (batch-size gating active), falls back to 1×.
+
+**Hardware note:** The 8B INT4 draft and 70B INT4 target total ~39GB — fits on a single A100 80GB with room for KV cache. No inter-GPU communication overhead for the draft model.
+:::
+
+**Q14. A customer complains that after fine-tuning Llama-3-70B on their domain, their speculative decoding speedup dropped from 2.5× to 1.3×. Diagnose and fix.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Root cause: the fine-tuned target model's distribution has diverged from the draft model's distribution. The draft model (Llama-3-8B-Instruct, not fine-tuned) was calibrated against the base Llama-3-70B distribution. After fine-tuning, the target model has learned domain-specific token preferences that the draft model does not predict. TV distance between draft and target has increased, acceptance rate dropped from ~0.75 to ~0.50, killing most of the speedup.
+
+**Diagnosis steps:**
+1. Check vLLM's `spec_decode_draft_acceptance_rate` metric — expect it has dropped from ~0.75 to ~0.50 (which explains the speedup drop from 2.5× to 1.3×)
+2. Sample 100 prompts from the new domain, run both models, compare top-5 token distributions — quantify the distribution shift
+3. Confirm the base model (without fine-tuning) still achieves the original acceptance rate against the original draft — rules out hardware or serving config issues
+
+**Fixes, in order of effort:**
+1. **Fine-tune the draft model on the same domain data.** This is the correct long-term fix. Fine-tune Llama-3-8B on the same instruction/domain data used to fine-tune the target. Re-measure acceptance rate — should recover to 0.75–0.80.
+
+2. **Switch to EAGLE with a draft trained on the fine-tuned target.** Train an EAGLE draft model on the fine-tuned 70B's activations. This gives higher acceptance rate than a standalone fine-tuned 8B but requires training infrastructure to capture activation traces from the fine-tuned target.
+
+3. **Reduce k temporarily.** With α=0.50, k=3 is more efficient than k=5 (fewer wasted rejected proposals). This doesn't recover speedup but stops it from getting worse while you fix the draft model.
+
+4. **Medusa on the fine-tuned base.** Train Medusa heads on the fine-tuned 70B at zero base-model overhead. Takes a few hours of training, recovers acceptance rate close to original.
+
+> **What great looks like:** Immediately identifies distribution shift as the cause (not hardware, not serving config), quantifies the relationship between the acceptance rate drop and the speedup drop using the formula, and provides a prioritized fix list with tradeoffs.
 :::

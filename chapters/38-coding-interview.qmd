@@ -1,0 +1,672 @@
+# LLM Coding Interview: Implementing Core Concepts {#sec-38}
+
+::: {.callout-note}
+**Who this chapter is for:** Entry / Mid / FDE
+**What you'll be able to answer after reading this:**
+
+- Implement scaled dot-product attention and multi-head attention from scratch in PyTorch
+- Implement a KV cache and explain its complexity impact on the decode phase
+- Implement greedy decoding, temperature sampling, and top-p nucleus sampling
+- Reason about implementation choices: why √d_k, why contiguous(), why only K and V are cached
+- Extend your attention implementation with a causal mask and prefix caching
+:::
+
+## What AI Coding Interviews Test
+
+Coding interviews for GenAI engineer roles differ from general software engineering interviews in an important way: the problems are drawn from the core mechanics of the systems you will build. An interviewer asking you to implement attention is not testing whether you memorized the formula — they are testing whether you understand the mechanism well enough to reconstruct it from first principles, explain each design choice as you go, and identify failure modes. A correct implementation with no ability to explain it will not pass. An explanation without code will not pass either.
+
+The canonical implementations covered in this chapter — attention, multi-head attention, KV cache, decoding — appear repeatedly across companies. They are well-scoped (each fits in a reasonable interview window), they separate candidates who have genuine mechanical understanding from those who have only used the APIs, and they serve as a foundation for follow-up questions about optimization, correctness, and system design. The guiding principle: if you understand the math, the code follows naturally. The implementations below are not obfuscated. Every line corresponds directly to a step in the mathematical definition. Read them that way.
+
+The interview format typically proceeds: implement the core function, then the interviewer asks "why" questions about each line, then extends to an optimization or variation ("now add prefix caching," "now make it handle batches," "what's the memory complexity"). Prepare by being able to explain every line of every implementation in this chapter before writing it — the explanation is as important as the code.
+
+## Implementing Scaled Dot-Product Attention
+
+Attention is a mechanism for computing a weighted combination of value vectors, where the weights are determined by the compatibility between a query and a set of keys. The mathematical definition:
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right) V$$
+
+The Python implementation follows the formula exactly:
+
+```{python}
+#| label: scaled-dot-product-attention
+#| eval: false
+
+import torch
+import torch.nn.functional as F
+import math
+
+def scaled_dot_product_attention(Q, K, V, mask=None):
+    """
+    Q, K, V: (batch, heads, seq_len, d_k)
+    Returns: (batch, heads, seq_len, d_v), attention_weights
+    """
+    d_k = Q.size(-1)
+    # Step 1: compute raw compatibility scores between all query-key pairs
+    scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
+    # Step 2: apply causal mask for autoregressive (decoder) attention
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, float('-inf'))
+    # Step 3: normalize scores into a probability distribution over keys
+    weights = F.softmax(scores, dim=-1)
+    # Step 4: weighted sum of values
+    return torch.matmul(weights, V), weights
+```
+
+**Why divide by √d_k.** The dot product Q · K computes the sum of d_k element-wise products. If Q and K have entries drawn from a distribution with variance 1, each element of the dot product is a sum of d_k random variables, and the sum's variance grows with d_k. For d_k = 64, the raw dot products have variance ~64 and standard deviation ~8; for d_k = 512, standard deviation ~22. When softmax receives inputs with large magnitude, its output is pushed toward one-hot distributions — one key gets weight ≈ 1 and all others get weight ≈ 0. Gradients through near-zero softmax outputs vanish, stopping learning. Dividing by √d_k normalizes the scores back to unit variance regardless of d_k, keeping the softmax in a well-behaved operating range.
+
+**Why transpose(-2, -1) and not (-1, -2).** The input tensor has shape (batch, heads, seq_len, d_k). We want the matrix product Q × K^T to produce a (seq_len × seq_len) score matrix. K has shape (..., seq_len, d_k); transposing the last two dimensions gives (..., d_k, seq_len). The product Q @ K^T is then (..., seq_len, d_k) × (..., d_k, seq_len) = (..., seq_len, seq_len). Using (-1, -2) would also work mathematically here, but (-2, -1) is the conventional form that clearly indicates "transpose the sequence and d_k dimensions."
+
+**What the causal mask does.** In a decoder-only model (GPT-style), token i should not attend to tokens j > i — the model should not see the future during training. The causal mask is a lower-triangular matrix of ones: position (i, j) is 1 if j ≤ i and 0 if j > i. `masked_fill(mask == 0, float('-inf'))` sets future-position scores to negative infinity before softmax. Since exp(-∞) = 0, softmax assigns exactly zero weight to masked positions. After softmax, the output for token i is a weighted sum only over tokens 0 through i — causality is enforced.
+
+## Implementing Multi-Head Attention
+
+Single-head attention computes one set of attention weights with one query/key/value projection. Multi-head attention runs h independent attention computations in parallel, then concatenates and projects the results. This lets different heads attend to different aspects of the sequence simultaneously — one head may learn syntactic dependencies, another coreference, another local context.
+
+```{python}
+#| label: multi-head-attention
+#| eval: false
+
+import torch.nn as nn
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        self.d_k = d_model // num_heads
+        self.num_heads = num_heads
+        # Four linear projections: Q, K, V projections and output projection
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def split_heads(self, x, batch_size):
+        # (batch, seq, d_model) -> (batch, seq, heads, d_k) -> (batch, heads, seq, d_k)
+        x = x.view(batch_size, -1, self.num_heads, self.d_k)
+        return x.transpose(1, 2)
+
+    def forward(self, x, mask=None):
+        batch_size = x.size(0)
+        # Project input to Q, K, V, then split into heads
+        Q = self.split_heads(self.W_q(x), batch_size)
+        K = self.split_heads(self.W_k(x), batch_size)
+        V = self.split_heads(self.W_v(x), batch_size)
+        # Run scaled dot-product attention on all heads in parallel
+        attn_out, _ = scaled_dot_product_attention(Q, K, V, mask)
+        # Reassemble heads: (batch, heads, seq, d_k) -> (batch, seq, d_model)
+        attn_out = attn_out.transpose(1, 2).contiguous()
+        attn_out = attn_out.view(batch_size, -1, self.num_heads * self.d_k)
+        # Final output projection
+        return self.W_o(attn_out)
+```
+
+**Why contiguous() before view().** `transpose()` returns a view with a modified stride pattern — the underlying data is not rearranged in memory, only the indexing logic changes. `view()` requires the tensor to have contiguous memory layout because it reinterprets the raw memory buffer according to a new shape. If the strides from the transpose are non-contiguous, `view()` raises a RuntimeError. `contiguous()` copies the data into a new tensor with standard C-contiguous memory layout, ensuring `view()` works. The alternative is `reshape()`, which calls `contiguous()` internally when needed, but explicitly writing `.contiguous().view()` signals intent clearly in an interview context.
+
+**What split_heads achieves.** The W_q linear projection maps (batch, seq, d_model) → (batch, seq, d_model). But we want to run num_heads independent attention computations, each with d_k = d_model/num_heads dimensions. `split_heads` reshapes the last dimension from d_model into (num_heads, d_k), then transposes to put the head dimension second. The resulting shape (batch, heads, seq, d_k) lets `scaled_dot_product_attention` broadcast naturally across the heads dimension — each head runs its own QK^T computation independently with no cross-head interference.
+
+**The purpose of W_o.** After concatenating the num_heads attention outputs, we have a tensor of shape (batch, seq, d_model). W_o is a (d_model × d_model) projection that mixes information across heads. Without W_o, the output would be a simple concatenation where each head's output occupies a dedicated subspace with no cross-head integration. W_o allows the model to learn linear combinations that mix head outputs — head 1 might detect syntax and head 2 coreference, and W_o learns to combine them into a representation that jointly leverages both signals for the next layer.
+
+## Implementing KV Cache
+
+During autoregressive generation, the model processes one new token at a time. Without caching, the full attention computation re-processes all previous tokens at every step: for a sequence of length T generated so far, step T+1 requires computing attention over T+1 tokens, step T+2 over T+2 tokens, and so on. Total attention computation is O(T²) in the number of generated tokens. With a KV cache, we cache the key and value tensors from previous steps and reuse them at each new step, reducing the per-step attention computation from O(T²) to O(T) — the new token attends to all cached KV pairs in one matmul.
+
+```{python}
+#| label: kv-cache
+#| eval: false
+
+class KVCache:
+    def __init__(self):
+        self.cache = {}  # maps layer_idx -> (K_tensor, V_tensor)
+
+    def update(self, layer_idx, new_k, new_v):
+        """Append new K, V to the cache for this layer."""
+        if layer_idx not in self.cache:
+            self.cache[layer_idx] = (new_k, new_v)
+        else:
+            old_k, old_v = self.cache[layer_idx]
+            # Concatenate along the sequence dimension (dim=-2)
+            self.cache[layer_idx] = (
+                torch.cat([old_k, new_k], dim=-2),
+                torch.cat([old_v, new_v], dim=-2)
+            )
+        return self.cache[layer_idx]
+
+    def get(self, layer_idx):
+        return self.cache.get(layer_idx, (None, None))
+
+    def clear(self):
+        self.cache = {}
+```
+
+**Why K and V are cached but not Q.** During the decode phase, at each step the model processes a single new token and produces the next token. The query for that step is computed from the new token's embedding — it is a query of shape (batch, heads, 1, d_k), representing "what does the current token want to attend to?" Keys and values represent what previous tokens can contribute. Since all previous tokens are unchanged, their K and V tensors are identical to what was computed in previous steps. Caching them avoids recomputation. Q cannot be cached because it is always computed fresh for the current position — each step needs a new Q from the new token.
+
+**Memory growth.** Each layer caches K and V tensors. For a sequence of length T, each layer's cached tensors have shape (batch, num_heads, T, d_k) for K and (batch, num_heads, T, d_v) for V. Total KV cache memory: 2 × num_layers × batch_size × num_heads × T × d_k × bytes_per_element. For Llama-3-8B: 32 layers, 32 heads, d_k = 128, FP16. A batch size of 1, sequence length 4096: 2 × 32 × 1 × 32 × 4096 × 128 × 2 bytes ≈ 2GB. This is why KV cache memory is a significant fraction of total GPU memory budget for inference, and why KV cache quantization (reducing to INT8 or INT4) is an active optimization area.
+
+**When to clear the cache.** Clear between independent generation requests — different user prompts share no cached state. Within a single request, the cache accumulates through all decode steps and is cleared when the EOS token is generated or the maximum sequence length is reached. For prefix caching (reusing cached KV pairs across requests with the same prompt prefix), clearing is deferred until the prefix is no longer needed, which is a key optimization for system prompts reused across many requests.
+
+## Implementing Greedy Decoding and Temperature Sampling
+
+```{python}
+#| label: generation
+#| eval: false
+
+def generate(model, tokenizer, prompt, max_new_tokens=100, temperature=1.0):
+    """
+    Generate tokens autoregressively.
+    temperature=0 -> greedy (deterministic argmax)
+    temperature=1.0 -> standard sampling from model distribution
+    temperature<1.0 -> sharper distribution (more focused/deterministic)
+    temperature>1.0 -> flatter distribution (more random/creative)
+    """
+    input_ids = tokenizer.encode(prompt, return_tensors='pt')
+
+    for _ in range(max_new_tokens):
+        with torch.no_grad():
+            logits = model(input_ids).logits[:, -1, :]  # (batch, vocab_size)
+
+        if temperature == 0:  # greedy decoding
+            next_token = logits.argmax(dim=-1, keepdim=True)
+        else:
+            # Temperature scaling shifts probability concentration
+            probs = torch.softmax(logits / temperature, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+
+        input_ids = torch.cat([input_ids, next_token], dim=-1)
+
+        if next_token.item() == tokenizer.eos_token_id:
+            break
+
+    return tokenizer.decode(input_ids[0])
+```
+
+**Why `logits[:, -1, :]`.** The model processes the full input sequence and produces logits of shape (batch, seq_len, vocab_size) — a prediction for each position. In autoregressive generation, we only care about the prediction for the next token after the last input token. Index -1 along the sequence dimension selects the logits at the final position. Selecting any earlier position would give predictions conditioned on only part of the prefix, not the full context.
+
+**How temperature shifts the distribution.** The softmax of logits/T computes: exp(logit_i / T) / Σ_j exp(logit_j / T). As T → 0, the largest logit dominates — its exponential grows much faster than all others', and softmax approaches a one-hot distribution over the argmax token. This is equivalent to greedy decoding. As T → ∞, logits/T → 0 for all tokens, exp(0) = 1 for all tokens, and softmax approaches the uniform distribution. For T = 1 (standard), the distribution matches the model's learned probabilities. T < 1 concentrates probability mass on the highest-probability tokens (useful for factual tasks where you want the model's best guess). T > 1 spreads probability mass (useful for creative generation where diversity is desired).
+
+**EOS stopping criterion.** The loop breaks when the sampled token is the end-of-sequence token. This is necessary because without it, the model would continue generating indefinitely until max_new_tokens is reached. In practice, EOS handling in production includes additional stopping criteria: specific stop strings, maximum context length enforcement, and request-level cancellation.
+
+## Implementing Top-p (Nucleus) Sampling
+
+Top-p sampling restricts sampling to the smallest set of tokens whose cumulative probability exceeds p. This adapts to the model's uncertainty: when the model is confident (one token has probability 0.9), the nucleus is small (just that token). When the model is uncertain (many tokens at similar probabilities), the nucleus is large (many tokens participate). This dynamic nucleus is more principled than top-k sampling, which always includes exactly k tokens regardless of the probability distribution's shape.
+
+```{python}
+#| label: top-p-sampling
+#| eval: false
+
+def top_p_sampling(logits, top_p=0.9, temperature=1.0):
+    """
+    Nucleus sampling: sample from the smallest set of tokens whose
+    cumulative probability >= top_p.
+    Returns: sampled token index in the original (unsorted) vocabulary.
+    """
+    # Apply temperature and convert to probabilities
+    probs = torch.softmax(logits / temperature, dim=-1)
+    # Sort probabilities in descending order
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+    # Build cumulative probability distribution
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    # Identify tokens to remove: those that push cumulative prob above top_p
+    # Shift by 1 (cumulative_probs - sorted_probs) to keep the token that
+    # first crosses the threshold
+    sorted_indices_to_remove = cumulative_probs - sorted_probs > top_p
+    # Zero out the removed tokens' probabilities
+    sorted_probs[sorted_indices_to_remove] = 0.0
+    # Renormalize so remaining probs sum to 1
+    sorted_probs = sorted_probs / sorted_probs.sum()
+    # Sample from the nucleus
+    sampled_sorted_index = torch.multinomial(sorted_probs, num_samples=1)
+    # Map back to the original vocabulary index
+    return sorted_indices[sampled_sorted_index]
+```
+
+**Why `cumulative_probs - sorted_probs > top_p`.** After sorting in descending order and computing the cumulative sum, `cumulative_probs[i]` is the total probability of the top i+1 tokens. We want to include token i if it is needed to reach top_p. Token i is needed if the cumulative probability of all tokens before it is still below top_p — equivalently, if removing token i's own probability from the cumulative total is still below top_p. `cumulative_probs[i] - sorted_probs[i]` is the cumulative probability up to but not including token i. If this value already exceeds top_p, token i is not needed (the threshold was already crossed before reaching it), so it should be removed. This off-by-one logic ensures we always keep the token that first pushes the cumulative sum over top_p.
+
+**Why renormalization is necessary.** After zeroing out the removed tokens, the remaining probabilities no longer sum to 1 — they sum to approximately top_p (the actual sum depends on where the cutoff falls). Sampling with `torch.multinomial` requires a valid probability distribution summing to 1. Dividing by the sum of surviving probabilities renormalizes the nucleus into a proper distribution. Skipping renormalization would cause `multinomial` to raise an error or produce incorrect behavior.
+
+## Common Interview Variations
+
+**RMSNorm.** Modern LLMs (Llama, Mistral) replace LayerNorm with RMSNorm (Root Mean Square Layer Normalization):
+
+```{python}
+#| label: rmsnorm
+#| eval: false
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        # RMS = sqrt(mean of squared values)
+        rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
+        return (x / rms) * self.weight
+```
+
+RMSNorm omits the mean-centering step in LayerNorm (it does not subtract the mean before normalizing). The rationale: mean centering is computationally expensive and empirically adds little benefit for transformer representations that already have near-zero mean at initialization. RMSNorm achieves comparable quality at lower compute cost — roughly 7-15% faster than LayerNorm in practice due to removing the mean computation.
+
+**LoRA layer.** A LoRA adapter wraps an existing linear layer with a low-rank update:
+
+```{python}
+#| label: lora-layer
+#| eval: false
+
+class LoRALinear(nn.Module):
+    def __init__(self, in_features, out_features, rank=8, alpha=16):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features, bias=False)
+        self.lora_A = nn.Linear(in_features, rank, bias=False)
+        self.lora_B = nn.Linear(rank, out_features, bias=False)
+        self.scale = alpha / rank
+        # B initialized to zero so LoRA starts as identity modification
+        nn.init.zeros_(self.lora_B.weight)
+        # Freeze base weights
+        self.linear.weight.requires_grad = False
+
+    def forward(self, x):
+        return self.linear(x) + self.scale * self.lora_B(self.lora_A(x))
+```
+
+**Causal mask construction.** A standard causal mask for decoder-only attention:
+
+```{python}
+#| label: causal-mask
+#| eval: false
+
+def make_causal_mask(seq_len, device):
+    # Lower triangular matrix: position (i, j) is 1 if j <= i, else 0
+    mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
+    # Add batch and head dimensions for broadcasting: (1, 1, seq, seq)
+    return mask.unsqueeze(0).unsqueeze(0)
+```
+
+---
+
+## Interview Questions
+
+::: {.callout-tip title="Entry Level"}
+**Q1. Why do we divide attention scores by √d_k? What happens if we don't?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The dot product Q · K at position (i, j) sums d_k element-wise products. If query and key vectors have entries drawn from a distribution with mean 0 and variance 1, each element of the dot product has variance 1, and the sum of d_k independent unit-variance terms has variance d_k. The standard deviation of the raw dot product grows as √d_k. For d_k = 64, the typical dot product magnitude is around 8; for d_k = 512, around 22.
+
+When softmax receives inputs of large magnitude, it saturates: the largest input gets weight approaching 1, and all others approach 0. This near-one-hot distribution means the output is nearly a hard lookup of the single highest-scoring value vector. More critically for training: softmax gradients at saturation are nearly zero (the derivative of sigmoid-like functions near 0 and 1 is nearly flat). Vanishing gradients prevent the query and key weight matrices from learning.
+
+Dividing by √d_k scales the scores back to unit variance regardless of d_k, keeping softmax in the well-behaved linear region where gradients are non-vanishing. Without the scaling, training is unstable for large d_k values, and empirically you see attention heads collapse to near-uniform or near-one-hot patterns early in training and fail to learn diverse attention patterns.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q2. What is the KV cache caching, and why not Q?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The KV cache stores the key (K) and value (V) tensors computed in previous decode steps. During autoregressive generation, at step t the model has produced tokens 1 through t-1 and is generating token t. To compute attention for token t, it needs K and V tensors for all positions 1 through t (to attend back over the full context). These K and V tensors for positions 1 through t-1 are identical to what was computed in previous steps — they come from the same input tokens with the same weights. Recomputing them from scratch at every step is wasteful.
+
+Q is not cached because the query for step t represents "what does position t want to attend to?" — it is derived from the embedding of the newly generated token at position t, which did not exist in previous steps. There is no prior Q to reuse. Every step needs a fresh Q computed from the current token.
+
+The memory and compute impact: without the KV cache, generating a 1000-token sequence requires recomputing attention over t tokens at each of the 1000 steps — O(T²) total attention operations. With the KV cache, each step requires computing attention over the cached KV tensors with just one new query — O(T) total attention operations. The cache trades memory (storing growing KV tensors) for compute (avoiding recomputation), which is the correct tradeoff for most inference hardware where compute is the bottleneck.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q3. Implement greedy decoding in pseudocode.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+```
+function greedy_decode(model, tokenizer, prompt, max_tokens):
+    tokens = tokenizer.encode(prompt)
+
+    for step in 1 to max_tokens:
+        logits = model.forward(tokens)     # shape: (vocab_size,) for last position
+        next_token = argmax(logits)        # pick highest-probability token
+        tokens.append(next_token)
+
+        if next_token == EOS_TOKEN_ID:
+            break
+
+    return tokenizer.decode(tokens)
+```
+
+The key design decisions in this pseudocode:
+- We use `argmax` (not sampling) — greedy means always selecting the most probable token.
+- We pass the full growing token sequence to the model at each step, though in practice a KV cache avoids reprocessing previous tokens.
+- We stop at EOS to avoid generating past the natural completion point.
+- We use `logits` from the last position only — the model predicts the next token based on everything it has seen so far.
+
+Greedy decoding is deterministic — given the same prompt, it always produces the same output. This is predictable but can produce repetitive or suboptimal sequences because a locally optimal choice at each step may not lead to globally optimal output. Beam search generalizes greedy by keeping the top-k partial sequences at each step rather than just the single best.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q4. What does contiguous() do in PyTorch and why is it needed before view()?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+In PyTorch, tensors store data in a flat memory buffer and use a stride metadata to define how to traverse that buffer along each dimension. A tensor is contiguous if its data is laid out in memory in C-contiguous order (row-major: the last dimension varies fastest). Operations like `transpose()`, `permute()`, and `narrow()` return a view of the same underlying data with modified strides — they do not copy or rearrange data. The result is a tensor with non-contiguous strides.
+
+`view()` is a zero-copy reshape that reinterprets the existing memory buffer with a new shape. It works by computing new strides for the requested shape. But this is only possible if the current strides form a contiguous layout — if the strides indicate non-contiguous memory (e.g., after a transpose), there is no valid set of new strides that would produce the requested shape without actually moving data. PyTorch raises a RuntimeError in this case.
+
+`contiguous()` creates a new tensor by copying data from the non-contiguous buffer into a fresh contiguous allocation. After calling `contiguous()`, `view()` is guaranteed to succeed. The alternative is `reshape()`, which calls `contiguous()` internally when necessary, making it slightly less transparent but more convenient. In an interview, writing `.contiguous().view()` explicitly demonstrates you understand the memory layout issue, whereas just writing `.reshape()` might obscure that understanding.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q5. Why is temperature sampling better than greedy for most generation tasks?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Greedy decoding makes a locally optimal choice at each step — it always picks the highest-probability next token. But a sequence of locally optimal choices does not guarantee a globally optimal sequence. A concrete failure mode: greedy can get stuck in repetitive loops where a locally high-probability token keeps reappearing because its presence makes it even more probable in the next step ("The company is a company that is a company..."). Greedy is also deterministic, producing the same output for the same input — useful for reproducibility, but problematic when you need to generate multiple distinct completions for the same prompt.
+
+Temperature sampling draws from the full distribution rather than collapsing it to a point mass. At T=1, the model samples proportional to its learned probabilities, allowing less-likely but still reasonable tokens to appear. This produces more natural, diverse text because real language is not a sequence of the single most probable words — it includes variation, unexpected word choices, and diverse phrasings. At T=0.7 (the typical setting for chat models), the distribution is sharpened to reduce randomness while still allowing variation, producing confident but not repetitive output.
+
+The tradeoff: temperature sampling introduces stochasticity, making outputs non-deterministic. For tasks with objectively correct answers (factual Q&A, code completion with tests), greedy or low temperature (T=0.0-0.3) is appropriate. For creative tasks (story generation, brainstorming, open-ended dialogue), T=0.7-1.0 produces better results. Most production models default to T=1 with top-p filtering to control diversity while preventing low-probability garbage tokens from appearing.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q6. Implement scaled dot-product attention in PyTorch from scratch. Explain every line.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+```python
+import torch
+import torch.nn.functional as F
+import math
+
+def scaled_dot_product_attention(Q, K, V, mask=None):
+    d_k = Q.size(-1)
+    scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, float('-inf'))
+    weights = F.softmax(scores, dim=-1)
+    return torch.matmul(weights, V), weights
+```
+
+Line by line:
+
+`d_k = Q.size(-1)` — extracts the key/query dimension from the last axis of Q. Q has shape (batch, heads, seq, d_k); Q.size(-1) gives d_k. This is needed for the scaling factor.
+
+`scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)` — computes QK^T scaled by 1/√d_k. K.transpose(-2, -1) swaps the seq and d_k dimensions, turning (..., seq, d_k) into (..., d_k, seq). The matmul Q @ K^T produces (..., seq_q, seq_k) — a score for every query-key pair. Dividing by √d_k prevents dot product magnitude from growing with d_k, keeping softmax in its well-behaved range.
+
+`scores = scores.masked_fill(mask == 0, float('-inf'))` — applies the optional causal mask. Positions where mask == 0 (future positions in autoregressive attention) receive -∞ before softmax. exp(-∞) = 0, so those positions get zero attention weight.
+
+`weights = F.softmax(scores, dim=-1)` — normalizes scores along dim=-1, which is the key dimension. For each query position, the weights over all key positions sum to 1. The result is the attention weight matrix.
+
+`return torch.matmul(weights, V), weights` — computes the weighted sum of value vectors. weights has shape (..., seq_q, seq_k), V has shape (..., seq_k, d_v). The product is (..., seq_q, d_v) — for each query position, a convex combination of all value vectors weighted by their relevance scores. We also return the weights for visualization or analysis.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q7. Implement top-p nucleus sampling. Where is the boundary between included and excluded tokens?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+```python
+def top_p_sampling(logits, top_p=0.9, temperature=1.0):
+    probs = torch.softmax(logits / temperature, dim=-1)
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    sorted_indices_to_remove = cumulative_probs - sorted_probs > top_p
+    sorted_probs[sorted_indices_to_remove] = 0.0
+    sorted_probs = sorted_probs / sorted_probs.sum()
+    sampled_sorted_index = torch.multinomial(sorted_probs, num_samples=1)
+    return sorted_indices[sampled_sorted_index]
+```
+
+The boundary is defined by the removal condition `cumulative_probs - sorted_probs > top_p`. After sorting in descending order, `cumulative_probs[i]` is the total probability of the top i+1 tokens. `cumulative_probs[i] - sorted_probs[i]` is the cumulative probability of the top i tokens (not counting token i itself).
+
+A token at sorted position i is **excluded** if the cumulative probability of all tokens before it already exceeds top_p — meaning token i is not needed to reach top_p. A token is **included** if its contribution is needed to push the cumulative sum over top_p. The last included token is the one where adding its probability first causes the cumulative sum to cross top_p.
+
+Example with top_p=0.9: if sorted probabilities are [0.5, 0.3, 0.15, 0.04, 0.01], cumulative sums are [0.5, 0.8, 0.95, 0.99, 1.0]. The removal flags `cumulative - prob > 0.9` are [False, False, False, True, True] — the fourth token (cumulative before it = 0.95 > 0.9) and beyond are excluded. The nucleus includes the top 3 tokens with probabilities [0.5, 0.3, 0.15], renormalized to [0.526, 0.316, 0.158]. Note the third token is included even though it pushes the cumulative sum over 0.9 — it is the token that crosses the threshold, and we keep it.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q8. Implement a KV cache and explain how it changes the complexity of the decode phase.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+```python
+class KVCache:
+    def __init__(self):
+        self.cache = {}  # layer_idx -> (K_tensor, V_tensor)
+
+    def update(self, layer_idx, new_k, new_v):
+        if layer_idx not in self.cache:
+            self.cache[layer_idx] = (new_k, new_v)
+        else:
+            old_k, old_v = self.cache[layer_idx]
+            self.cache[layer_idx] = (
+                torch.cat([old_k, new_k], dim=-2),
+                torch.cat([old_v, new_v], dim=-2)
+            )
+        return self.cache[layer_idx]
+
+    def get(self, layer_idx):
+        return self.cache.get(layer_idx, (None, None))
+
+    def clear(self):
+        self.cache = {}
+```
+
+**Complexity without KV cache.** Generating T tokens: step t processes a sequence of length t (all tokens generated so far plus the input prefix of length P). Attention at step t is O((P+t)²) for the full self-attention. Summed over all T decode steps: O(T × (P+T)²). For a 1000-token generation with a 100-token prefix, this is O(1000 × 1100²) ≈ O(10⁹) operations.
+
+**Complexity with KV cache.** At step t, the new token's query (shape: 1) attends to all cached KV pairs (shape: P+t). Attention for one new token over P+t cached positions is O(P+t). Summed over T steps: O(Σ_{t=1}^{T} (P+t)) = O(T×P + T²/2) ≈ O(T²) — but with a much smaller constant because we eliminated the quadratic-in-T factor for the sequence reprocessing. In practice, the per-step cost is O(1 × (P+t)) instead of O(t × (P+t)), which is roughly a t× speedup at step t. For long sequences, this is the difference between seconds and minutes per generation.
+
+**Memory tradeoff.** KV cache memory: 2 × num_layers × batch × num_heads × (P+T) × d_k × bytes. For Llama-3-8B at FP16 with a 4096-token context: ~2GB per request. This is the reason KV cache size is a primary constraint on batch size during inference.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q9. What is the causal mask in decoder-only attention? Implement it.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The causal mask enforces the autoregressive property: when computing the representation for token i, the model should only attend to tokens 0 through i (itself and earlier positions), not to tokens i+1 through T-1 (future positions). This is critical during training — without the causal mask, the model could "cheat" by attending to the token it is trying to predict, making training loss trivially low but the model useless for generation.
+
+Implementation:
+
+```python
+def make_causal_mask(seq_len, device):
+    # Lower triangular matrix of ones
+    # mask[i, j] = 1 if j <= i, else 0
+    mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
+    # Add batch and head dimensions for broadcasting: (1, 1, seq, seq)
+    return mask.unsqueeze(0).unsqueeze(0)
+
+# Usage in attention:
+# mask = make_causal_mask(seq_len, device=Q.device)
+# scores = scores.masked_fill(mask == 0, float('-inf'))
+```
+
+`torch.tril` returns a lower triangular matrix — all elements above the main diagonal are zero. Position (i, j) in the mask is 1 if j ≤ i (token j is at or before position i) and 0 if j > i (token j is in the future relative to position i). When passed to `masked_fill(mask == 0, float('-inf'))`, future positions receive -∞ and softmax assigns them weight 0.
+
+The unsqueezing adds dimensions for batch and head broadcasting — the mask shape (1, 1, seq, seq) broadcasts with the scores shape (batch, heads, seq, seq) without requiring explicit batch or head dimensions in the mask tensor.
+
+During inference (generation), the causal mask is implicitly applied by the KV cache structure: when generating token t, only K and V tensors from positions 0 through t-1 exist in the cache, so there is nothing to attend to at future positions even without an explicit mask. The mask is critical during training where all positions are present in the input simultaneously.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q10. Implement an RMSNorm layer and explain why it's preferred over LayerNorm in modern LLMs.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+```python
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        # Compute RMS: sqrt(mean of squares) along the feature dimension
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        # Normalize and apply learned scale
+        return (x / rms) * self.weight
+```
+
+LayerNorm (for comparison):
+```python
+# LayerNorm: subtract mean, divide by std, apply scale and shift
+x_norm = (x - x.mean(-1, keepdim=True)) / (x.std(-1, keepdim=True) + eps)
+output = weight * x_norm + bias
+```
+
+**Why RMSNorm is preferred:**
+
+1. **Computational efficiency.** LayerNorm requires computing both the mean and the standard deviation of each input vector. RMSNorm requires only the RMS (mean of squares). The mean subtraction step in LayerNorm is one extra pass over the activations — roughly 7-15% more compute. At the scale of modern LLMs with hundreds of LayerNorm applications per forward pass, this adds up.
+
+2. **No centering, no bias parameter.** LayerNorm centers the input by subtracting the mean. RMSNorm does not center — it only rescales. Empirically, the centering step provides minimal benefit for transformer representations, which are already approximately zero-mean at initialization and remain near zero-mean throughout training due to residual stream dynamics. Removing the mean subtraction also removes the need for the bias (shift) parameter, slightly reducing parameter count.
+
+3. **Equivalent empirical quality.** The Llama, Mistral, and Gemma families all use RMSNorm and match or exceed the quality of earlier GPT-style models using LayerNorm. The quality difference is negligible, making the efficiency argument decisive.
+
+The `eps` term in the denominator prevents division by zero when the input vector has near-zero norm — this is a rare edge case but matters for numerical stability. The `weight` (γ) parameter allows the model to learn a feature-wise scale after normalization, restoring the expressiveness lost by normalizing.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q11. You're in a coding interview and asked to implement multi-head attention. Walk through your implementation and explain the design choices.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I would start by narrating the plan before writing any code:
+
+"Multi-head attention runs h parallel attention computations, each in a d_k = d_model/h dimensional subspace, then combines the results with an output projection. I'll implement it in three parts: the four projection matrices, the head splitting logic, and the forward pass."
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+
+def scaled_dot_product_attention(Q, K, V, mask=None):
+    d_k = Q.size(-1)
+    scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, float('-inf'))
+    weights = F.softmax(scores, dim=-1)
+    return torch.matmul(weights, V), weights
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+        assert d_model % num_heads == 0
+        self.d_k = d_model // num_heads
+        self.num_heads = num_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def split_heads(self, x, batch_size):
+        x = x.view(batch_size, -1, self.num_heads, self.d_k)
+        return x.transpose(1, 2)
+
+    def forward(self, x, mask=None):
+        batch_size = x.size(0)
+        Q = self.split_heads(self.W_q(x), batch_size)
+        K = self.split_heads(self.W_k(x), batch_size)
+        V = self.split_heads(self.W_v(x), batch_size)
+        attn_out, _ = scaled_dot_product_attention(Q, K, V, mask)
+        attn_out = attn_out.transpose(1, 2).contiguous()
+        attn_out = attn_out.view(batch_size, -1, self.num_heads * self.d_k)
+        return self.W_o(attn_out)
+```
+
+**Design choices I'd explain unprompted:**
+
+- `assert d_model % num_heads == 0` — fail early with a clear message rather than silently producing wrong shapes. In interviews, explicit assertions show you think about invariants.
+- Four separate Linear layers rather than one large projection — this matches the standard formulation and makes the Q/K/V/O roles clear. In practice, some implementations fuse them for efficiency.
+- `split_heads` is a separate method — it is called three times (Q, K, V) and separating it reduces repetition and clarifies intent.
+- `.contiguous()` before `.view()` — I proactively explain this: transpose changes strides without copying data, view requires contiguous memory, contiguous() copies to fix the layout.
+- W_o output projection — without it, concatenating heads produces a tensor where each head's output is isolated to its own subspace with no cross-head mixing. W_o allows the model to learn linear combinations across all heads.
+
+For follow-up on cross-attention (encoder-decoder): I would modify `forward` to accept a separate `context` argument, compute K and V from context and Q from x.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q12. A colleague's attention implementation runs 3x slower than expected. You see they're using standard attention. What optimization would you suggest and what would the implementation change look like?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The standard attention implementation materializes the full attention weight matrix of shape (batch, heads, seq, seq) in GPU HBM. For a sequence length of 2048 with 32 heads and batch size 8, the attention matrix is 8 × 32 × 2048 × 2048 × 2 bytes (FP16) ≈ 4GB per layer. Reading and writing this matrix to HBM is the bottleneck — not the FLOP count. The FLOP count of attention is O(seq² × d_model), but memory bandwidth is the binding constraint because the attention matrix is seq² sized and must be written to and read from HBM.
+
+The optimization is **Flash Attention** (Dao et al., 2022). Instead of materializing the full seq × seq attention matrix, Flash Attention tiles the computation across blocks that fit in SRAM (the fast on-chip cache), computes the softmax numerically stably using an online algorithm, and accumulates the output without ever writing the full attention matrix to HBM. The result is identical to standard attention mathematically, but the memory reads/writes are reduced from O(seq²) to O(seq), giving 2-4× speedup for typical sequence lengths and 5-10× for long sequences.
+
+In PyTorch, the implementation change is a one-line swap:
+
+```python
+# Standard attention (slow for long sequences):
+scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(d_k)
+weights = F.softmax(scores, dim=-1)
+output = torch.matmul(weights, V)
+
+# Flash Attention (fast, same mathematical result):
+output = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask)
+# PyTorch 2.0+ automatically dispatches to FlashAttention kernels
+# when inputs are on CUDA and sequence length is above a threshold
+```
+
+`F.scaled_dot_product_attention` in PyTorch 2.0+ automatically selects the Flash Attention CUDA kernel when available. No manual tiling or custom CUDA code required. I'd also mention that for even longer sequences (>32K tokens), you would look at Flash Attention 2 or ring attention for multi-GPU contexts.
+
+The 3x slowdown symptom aligns with: materializing the attention matrix for medium-length sequences (1K-4K tokens) where the O(seq²) memory traffic is the bottleneck but the sequence is not so long that the problem is obviously obvious.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q13. In a system design follow-up, the interviewer asks how to add prefix caching to your attention implementation. Walk through the modification.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Prefix caching allows multiple requests that share the same prompt prefix to reuse the KV cache computed for that prefix. For a system prompt used across thousands of user requests, this avoids recomputing identical KV tensors at every request, reducing time-to-first-token and saving compute proportional to prefix_length / total_length.
+
+The implementation modification has three components:
+
+**1. Prefix cache storage with a content key.**
+
+```python
+import hashlib
+
+class PrefixKVCache:
+    def __init__(self):
+        # prefix_hash -> {layer_idx: (K_tensor, V_tensor)}
+        self.prefix_store = {}
+
+    def compute_prefix_hash(self, input_ids):
+        # Hash the token IDs of the prefix to create a cache key
+        return hashlib.md5(input_ids.numpy().tobytes()).hexdigest()
+
+    def store_prefix(self, prefix_hash, layer_caches):
+        # layer_caches: dict of layer_idx -> (K, V)
+        self.prefix_store[prefix_hash] = layer_caches
+
+    def get_prefix(self, prefix_hash):
+        return self.prefix_store.get(prefix_hash, None)
+```
+
+**2. Modified attention forward pass to initialize from cached prefix.**
+
+```python
+def forward_with_prefix_cache(model, input_ids, prefix_cache, prefix_hash):
+    # Check if prefix KV is cached
+    cached_layers = prefix_cache.get_prefix(prefix_hash)
+
+    kv_cache = KVCache()
+    if cached_layers is not None:
+        # Warm-start the KV cache with the prefix's cached tensors
+        kv_cache.cache = cached_layers.copy()
+        # Only process the suffix (tokens after the prefix)
+        prefix_len = cached_layers[0][0].size(-2)  # seq_len from K shape
+        suffix_ids = input_ids[:, prefix_len:]
+    else:
+        suffix_ids = input_ids
+
+    # Run the model forward on suffix only (or full input if no cache)
+    output = model.forward(suffix_ids, kv_cache=kv_cache)
+
+    # Store prefix cache if this is a new prefix
+    if cached_layers is None:
+        prefix_cache.store_prefix(prefix_hash, kv_cache.cache)
+
+    return output
+```
+
+**3. Eviction policy.** Prefix caches can grow unboundedly in memory. A simple LRU (Least Recently Used) eviction policy removes the least recently accessed prefix when the cache exceeds a memory budget. In production systems (vLLM's prefix caching, SGLang's RadixAttention), the prefix trie is more sophisticated — it identifies the longest common prefix among all cached sequences and shares KV tensors at the block level.
+
+**Key correctness consideration.** The cached KV tensors must be computed with the same attention position indexing as when they will be reused. If the model uses rotary position embeddings (RoPE), KV tensors have rotation applied at their original position indices. Reusing them in a request that places them at different positions would be incorrect. The cache is only valid when the prefix occupies exactly positions 0 through prefix_len-1 in the new request — which is guaranteed when all requests begin with the same system prompt prefix.
+
+**Interviewer follow-up I'd anticipate:** "What if the prefix has a different batch size than what's cached?" — the KV tensors would need to be expanded along the batch dimension or each batch element managed independently.
+:::
+:::

@@ -1,0 +1,462 @@
+---
+title: "Tokenization Deep Dive"
+chapter: 36
+---
+
+# Tokenization Deep Dive {#sec-36}
+
+> 💡 **Senior Tip:** Tokenization bugs are invisible until they're expensive. A multilingual product that looks fine in English QA can cost 4× more in production once real users submit Arabic, Korean, or Japanese queries — and those users will hit context limits that English users never see.
+
+## Why Tokenization Matters
+
+A language model does not see text. It sees a sequence of integers. Tokenization is the function that maps raw Unicode text to that integer sequence, and its inverse maps integers back to text. The vocabulary — the finite set of strings each integer maps to — is fixed at training time and cannot change at inference time without retraining.
+
+Tokenization affects four things that matter in production:
+
+**Cost.** APIs charge by token, not character or word. English runs about 1.3 tokens/word. Arabic and Korean can be 4–8 tokens/word with an English-centric tokenizer. A 50-word English query ≈ 65 tokens; the same semantic content in Arabic ≈ 250 tokens. Multilingual cost projections are wrong by 3–10× if built on English token estimates.
+
+**Context window efficiency.** A 128k-token context sounds large — but if your documents tokenize inefficiently, effective context shrinks proportionally. Users hitting context limits on French documents when English documents of identical word count fit comfortably: that's a tokenization problem, not a model problem.
+
+**Arithmetic and reasoning accuracy.** Models tokenize numbers digit-cluster-by-digit-cluster — "100000" may be one token, "99999" may be three. Inconsistent number tokenization is a root cause of arithmetic errors and poor generalization across numeric scales.
+
+**Code understanding.** Most tokenizers split Python indentation into multiple tokens. Whitespace at the start of a line can become 4 separate tokens instead of 1. This wastes context and makes code generation harder.
+
+## The Four Major Algorithms
+
+### BPE — Byte Pair Encoding
+
+**Used by:** GPT-2, GPT-3/4 (via tiktoken cl100k_base), LLaMA, Mistral, Qwen
+
+**Algorithm:**
+1. Start: every Unicode character is its own token
+2. Count: find the most frequent adjacent pair in the corpus
+3. Merge: replace all occurrences of that pair with a new token
+4. Repeat until vocabulary size is reached (typically 32k–200k merges)
+
+**Key properties:**
+- Vocabulary is learned bottom-up from frequency statistics
+- Frequent subwords get merged early; rare subwords stay as character sequences
+- Deterministic once merge rules are fixed
+- Character-level fallback: any Unicode character can be represented (no true OOV)
+
+```python
+# Minimal BPE tokenizer demo
+from collections import Counter
+
+def get_pairs(vocab: dict[tuple, int]) -> Counter:
+    """Count adjacent pair frequencies across all words in vocab."""
+    pairs = Counter()
+    for word, freq in vocab.items():
+        symbols = list(word)
+        for i in range(len(symbols) - 1):
+            pairs[(symbols[i], symbols[i+1])] += freq
+    return pairs
+
+def merge_vocab(pair: tuple[str, str], vocab: dict) -> dict:
+    """Apply one BPE merge step."""
+    bigram = " ".join(pair)
+    replacement = "".join(pair)
+    new_vocab = {}
+    for word in vocab:
+        new_word = tuple(" ".join(word).replace(bigram, replacement).split())
+        new_vocab[new_word] = vocab[word]
+    return new_vocab
+
+# Production Gotcha: BPE is greedy and order-dependent.
+# Two tokenizers trained on different corpora will produce different tokens
+# for the same input even with the same target vocab size.
+# Never mix tokenizers across model checkpoints.
+```
+
+### WordPiece
+
+**Used by:** BERT, DistilBERT, ELECTRA, mBERT
+
+**Algorithm:**
+- Like BPE, but merges are chosen to maximize likelihood of training data rather than raw frequency
+- Subwords that appear mid-word are prefixed with `##` (e.g., "playing" → ["play", "##ing"])
+- Unknown tokens are marked `[UNK]`; rare character sequences may not be representable
+
+**Key difference from BPE:** WordPiece is likelihood-based (maximizes LM probability of training data), BPE is frequency-based (maximizes compression). In practice the outputs are very similar.
+
+**True OOV problem:** If a character is absent from the vocabulary (some rare Unicode), the entire word becomes `[UNK]`. This is a hard limitation BPE avoids through byte-level encoding.
+
+### Unigram Language Model (SentencePiece)
+
+**Used by:** T5, mT5, ALBERT, XLNet, Gemma (often via SentencePiece library)
+
+**Algorithm:**
+- Start with a large over-complete vocabulary (hundreds of thousands of candidate subwords)
+- Iteratively *remove* tokens whose removal increases LM loss by the least
+- Stop when target vocabulary size is reached
+
+**Key properties:**
+- Probabilistic: a string can be tokenized multiple ways; the algorithm returns the most likely segmentation under the Unigram LM
+- Supports subword regularization: sample from the top-k segmentations at training time for data augmentation
+- SentencePiece library handles this; it treats the entire input as a sequence (no whitespace pre-tokenization required)
+
+### Byte-Level BPE
+
+**Used by:** GPT-2/3/4 (cl100k_base), LLaMA tokenizer, most modern chat models
+
+**The key insight:** Before applying BPE, map every character to a byte representation (256 possible values). This guarantees:
+- **Zero OOV tokens** — any Unicode string is representable
+- **No `[UNK]`** — worst case is representing a character as individual bytes
+- **Language-agnostic base** — emoji, mathematical symbols, Arabic, Chinese, Korean all representable
+
+```python
+import tiktoken
+
+def analyze_token_fertility(text: str, encoding_name: str = "cl100k_base") -> dict:
+    """Measure token fertility (tokens per word) for a text."""
+    enc = tiktoken.get_encoding(encoding_name)
+    tokens = enc.encode(text)
+    words = text.split()
+    return {
+        "text_length": len(text),
+        "token_count": len(tokens),
+        "word_count": len(words),
+        "chars_per_token": len(text) / len(tokens),
+        "tokens_per_word": len(tokens) / max(len(words), 1),
+        "tokens": [enc.decode([t]) for t in tokens[:20]]  # first 20 for inspection
+    }
+
+# Demonstrate cross-language fertility differences
+examples = {
+    "English": "The transformer architecture uses self-attention to process sequences.",
+    "French":  "L'architecture transformateur utilise l'auto-attention pour traiter les séquences.",
+    "Arabic":  "تستخدم بنية المحول الانتباه الذاتي لمعالجة التسلسلات.",
+    "Japanese": "トランスフォーマーアーキテクチャは自己注意を使用してシーケンスを処理します。",
+    "Code (Python)": "def transformer(x):\n    return attention(x) + x",
+}
+
+for lang, text in examples.items():
+    result = analyze_token_fertility(text)
+    print(f"{lang:20s} → {result['tokens_per_word']:.2f} tokens/word")
+
+# Expected approximate output:
+# English              → 1.3 tokens/word
+# French               → 1.6 tokens/word
+# Arabic               → 4.8 tokens/word
+# Japanese             → 5.2 tokens/word
+# Code (Python)        → 1.1 tokens/word  (Python keywords are efficient)
+```
+
+## Algorithm Comparison
+
+| Property | BPE | WordPiece | Unigram LM | Byte-Level BPE |
+|---|---|---|---|---|
+| Base unit | Characters | Characters | Characters | Bytes (256) |
+| Merge direction | Bottom-up | Bottom-up | Top-down pruning | Bottom-up |
+| Selection criterion | Frequency | Likelihood | Loss minimization | Frequency |
+| OOV handling | Char fallback | `[UNK]` possible | Char fallback | Never OOV |
+| Probabilistic | No | No | Yes | No |
+| Used by | GPT-2, LLaMA | BERT family | T5, Gemma | GPT-3/4, Claude |
+| Library | tokenizers | tokenizers | SentencePiece | tiktoken |
+
+## Token Fertility and Language Bias
+
+**Token fertility** = tokens / words for a given text. High fertility means more tokens for the same information — higher cost and less effective context.
+
+| Language | Approximate fertility (cl100k_base) |
+|---|---|
+| English | 1.3 |
+| Spanish/French/German | 1.5–1.8 |
+| Polish/Czech | 2.0–2.5 |
+| Russian/Ukrainian | 2.5–4.0 |
+| Arabic | 4–8 |
+| Korean | 4–7 |
+| Japanese | 4–8 |
+| Chinese (simplified) | 1.5–2.5 (character-efficient) |
+| Code (Python/JS) | 1.0–1.3 |
+| Number-heavy text | 2–4 |
+
+**Implication for multilingual products:**
+- Cost forecasts must be built per language, not on English benchmarks
+- Context window budgets should use the worst-case fertility for each supported language
+- If Arabic/Korean users hit context limits, the fix may be: switch to a tokenizer trained on multilingual data (e.g., mT5/Gemma tokenizer) or reduce document chunk size
+
+## Number Tokenization Problems
+
+Numbers tokenize erratically, and this is a root cause of arithmetic failures in LLMs.
+
+```python
+import tiktoken
+enc = tiktoken.get_encoding("cl100k_base")
+
+numbers = ["1", "12", "123", "1234", "12345", "100000", "99999", "3.14159"]
+for n in numbers:
+    tokens = enc.encode(n)
+    print(f"{n:10s} → {len(tokens)} token(s): {[enc.decode([t]) for t in tokens]}")
+
+# Key observations:
+# "100000" → 1 token  (round numbers often merge)
+# "99999"  → 2 tokens ["999", "99"]  (asymmetric with 100000!)
+# "3.14159" → 4 tokens  (each decimal digit often separate)
+# This inconsistency means models can't generalize arithmetic patterns
+```
+
+**Why this matters for reasoning:**
+- Models learn arithmetic patterns from training data
+- If "100000" is one token but "99999" is 2–3, the model can't learn clean positional relationships
+- Leading to poor performance on: carrying operations, large-number arithmetic, floating-point comparisons
+- The fix is to pre/post-process numbers as strings, use calculators/code execution for math
+
+## Token Budget Management in Production
+
+```python
+import tiktoken
+from typing import Optional
+
+class TokenBudgetManager:
+    """Manage token budgets across a multi-turn conversation."""
+
+    PRICING = {  # USD per 1M tokens as of late 2025
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+    }
+
+    def __init__(self, model: str = "gpt-4o", context_limit: int = 128_000):
+        self.enc = tiktoken.get_encoding("cl100k_base")
+        self.model = model
+        self.context_limit = context_limit
+        self.conversation_tokens = 0
+
+    def count(self, text: str) -> int:
+        return len(self.enc.encode(text))
+
+    def estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        if self.model not in self.PRICING:
+            return 0.0
+        p = self.PRICING[self.model]
+        return (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000
+
+    def truncate_to_budget(self, text: str, max_tokens: int, from_end: bool = True) -> str:
+        """Truncate text to stay within token budget. from_end=True preserves the end."""
+        tokens = self.enc.encode(text)
+        if len(tokens) <= max_tokens:
+            return text
+        if from_end:
+            return self.enc.decode(tokens[-max_tokens:])
+        return self.enc.decode(tokens[:max_tokens])
+
+    def fits_in_context(self, *texts: str, reserved_for_output: int = 1000) -> bool:
+        total = sum(self.count(t) for t in texts)
+        return total + reserved_for_output <= self.context_limit
+
+# Production Gotcha: Count tokens BEFORE sending API requests.
+# A naive concatenation of system prompt + history + new message + documents
+# can silently exceed context limits → truncation happens inside the model
+# with no warning, cutting off your most recent instructions.
+```
+
+## Common Tokenization Bugs
+
+### Bug 1: String Splitting on Character Boundaries That Don't Match Tokens
+
+```python
+# WRONG: truncate by character count
+def truncate_wrong(text: str, max_chars: int) -> str:
+    return text[:max_chars]  # May split inside a multi-byte character or token
+
+# RIGHT: truncate by token count, then decode
+def truncate_right(text: str, max_tokens: int, enc) -> str:
+    tokens = enc.encode(text)
+    return enc.decode(tokens[:max_tokens])
+```
+
+### Bug 2: Assuming Token Count ≈ Word Count for Budgeting
+
+```python
+# WRONG: budget assuming 1 token/word
+estimated_tokens = len(user_input.split()) * 1.5  # Could be 5× off for non-English
+
+# RIGHT: count actual tokens
+actual_tokens = len(enc.encode(user_input))
+```
+
+### Bug 3: Not Accounting for Special Tokens in Format
+
+```python
+# Most chat APIs add special tokens for roles:
+# <|system|>...<|end|><|user|>...<|end|><|assistant|>
+# These overhead tokens (typically 4–10 per turn) add up in long conversations.
+# Always use the model's tokenizer chat template, not raw text counting.
+from transformers import AutoTokenizer
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+messages = [{"role": "user", "content": "Hello"}]
+formatted = tokenizer.apply_chat_template(messages, tokenize=True)
+print(len(formatted))  # Includes BOS, role tokens, EOS — not just "Hello"
+```
+
+### Bug 4: Token Boundary Splits in RAG Chunking
+
+```python
+# Chunking on character count can split tokens mid-sequence.
+# Always chunk on sentence/paragraph boundaries and verify token count after.
+import tiktoken
+
+def chunk_by_tokens(text: str, max_tokens: int, overlap: int = 50) -> list[str]:
+    enc = tiktoken.get_encoding("cl100k_base")
+    sentences = text.split(". ")
+    chunks, current, current_tokens = [], [], 0
+    for sent in sentences:
+        t = len(enc.encode(sent))
+        if current_tokens + t > max_tokens and current:
+            chunks.append(". ".join(current))
+            # Overlap: keep last N tokens worth of sentences
+            while current and current_tokens > overlap:
+                current_tokens -= len(enc.encode(current.pop(0)))
+        current.append(sent)
+        current_tokens += t
+    if current:
+        chunks.append(". ".join(current))
+    return chunks
+```
+
+## Vocabulary Size Tradeoffs
+
+| Vocab Size | Examples | Tokens/Word (EN) | Pros | Cons |
+|---|---|---|---|---|
+| 8k–16k | Early GPT-1, T5-small | 1.8–2.5 | Small embedding table | Poor multilingual, many tokens/word |
+| 32k | LLaMA-1, GPT-2 | 1.3–1.5 | Balanced for English | Mediocre multilingual |
+| 50k–65k | GPT-3/4 (cl100k_base) | 1.2–1.4 | Good English + code | English-centric |
+| 100k–128k | Gemma, Qwen, LLaMA-3 | 1.1–1.3 | Better multilingual | Larger embedding matrix |
+| 200k+ | Claude (speculated), mT5 | ~1.0–1.2 | Near word-level for many languages | Very large embedding table, training cost |
+
+**Back-of-envelope:** A 100k vocab with 4096-dim embeddings = 100k × 4096 × 2 bytes (fp16) = 800 MB just for the embedding layer. Doubling vocab size adds 800 MB. This is why you don't just make vocab infinite.
+
+## Cheat Sheet
+
+- BPE: bottom-up merges by frequency — GPT family, LLaMA, Mistral
+- WordPiece: bottom-up merges by likelihood — BERT family; `##` prefix for subwords
+- Unigram LM: top-down pruning by loss — T5, Gemma, SentencePiece
+- Byte-level BPE: operates on bytes first → zero OOV, handles all Unicode — GPT-3/4, Claude
+- Token fertility: tokens per word; English ≈ 1.3, Arabic/Korean ≈ 4–8 (cl100k_base)
+- Multilingual cost: always measure per-language fertility before pricing a product
+- Number tokenization: erratic; "100000" = 1 token, "99999" = 2–3 → arithmetic errors
+- tiktoken: fastest tokenizer for GPT family; exact count, not estimates
+- Special tokens: chat templates add role tokens per turn (4–10 overhead each)
+- Chunking: always chunk by token count, not character count, for RAG pipelines
+- Vocab size: 32k → English-centric; 128k+ → better multilingual; larger = bigger embedding matrix
+- SentencePiece: library for Unigram/BPE used by T5/ALBERT; handles raw text without pre-tokenization
+- Subword regularization: sample different tokenizations during training for data augmentation
+- OOV: WordPiece can produce `[UNK]`; byte-level BPE cannot — always prefer byte-level for production
+- Cost estimation: count tokens with tiktoken BEFORE sending; truncate explicitly, never rely on model to truncate
+
+## Interview Questions
+
+### 🟢 Entry Level (0–2 years)
+
+**Q: What is tokenization and why can't models just use characters or words?**
+
+Tokenization maps raw text to integer IDs a model can process. Pure character-level: very long sequences, each step has little information. Pure word-level: vocabulary can't cover all words (OOV problem), memory scales with vocabulary size, no sharing across morphological variants ("run", "running", "ran"). Subword tokenization (BPE, WordPiece) is a middle ground: frequent words get single tokens, rare words break into known subwords, no OOV (especially with byte-level BPE).
+
+---
+
+**Q: What's the difference between BPE and WordPiece?**
+
+Both build a subword vocabulary bottom-up. BPE merges the most *frequent* adjacent pair at each step. WordPiece merges the pair that *maximizes training data likelihood* at each step. In practice, outputs are very similar. BERT uses WordPiece with `##` prefixes for within-word subwords. GPT/LLaMA use BPE. WordPiece can produce `[UNK]` for truly unseen characters; byte-level BPE cannot.
+
+---
+
+**Q: What is token fertility and why does it matter for multilingual products?**
+
+Token fertility is the number of tokens per word. For an English-centric tokenizer like cl100k_base, English averages ~1.3 tokens/word. Arabic, Korean, Japanese average 4–8. This means a multilingual product that budgets API cost based on English usage can be 4–8× underestimated for some user populations. It also means non-English users hit context limits much faster.
+
+---
+
+**Q: How do you count tokens before making an API call?**
+
+Use tiktoken for OpenAI models: `enc = tiktoken.get_encoding("cl100k_base"); n = len(enc.encode(text))`. For HuggingFace models: `tokenizer(text, return_tensors="pt").input_ids.shape[1]`. Count *before* sending — truncation inside the model silently drops content with no warning.
+
+---
+
+**Q: Why do LLMs struggle with arithmetic on large numbers?**
+
+Numbers tokenize inconsistently. "100000" may be one token; "99999" may be three separate tokens. The model can't learn general positional arithmetic patterns when the same digit sequence tokenizes differently based on frequency. The fix is using a code interpreter tool for any arithmetic that needs to be correct.
+
+---
+
+### 🟡 Mid Level (2–5 years)
+
+**Q: How does byte-level BPE eliminate out-of-vocabulary tokens?**
+
+Byte-level BPE maps each Unicode character to its byte representation first — any character in any language can be expressed as 1–4 bytes, each from a 256-value alphabet. BPE is then applied on top of this byte vocabulary. Since the base vocabulary covers all 256 possible byte values, any Unicode string is representable. The worst case is a string of unseen characters requiring one token per byte — inefficient but never producing `[UNK]`.
+
+*Follow-up: What's the cost of this zero-OOV guarantee?*
+The vocabulary needs to be large enough to merge frequent byte sequences back to efficient representations. Tokenizers that skip byte-level encoding can use smaller vocabularies for comparable fertility on their primary language, but they sacrifice multilingual coverage.
+
+---
+
+**Q: A customer reports that French users are hitting context limits that English users never see. How do you diagnose and fix this?**
+
+Diagnosis: measure token fertility on a sample of French vs English documents. Calculate `len(enc.encode(french_text)) / len(enc.encode(english_text))` for matched semantic content — expect 1.3–1.8× more tokens for French. Check if French users' documents are longer or if this affects documents of identical word count.
+
+Fix options: (1) Reduce chunk size for non-English documents by fertility multiplier. (2) Switch to a model with a more multilingual tokenizer (Gemma, Qwen, mT5 vocabulary tends to be better for European languages). (3) Pre-process: compress/summarize French content before including in context. (4) Increase context window if the model supports it and cost allows.
+
+---
+
+**Q: How would you implement safe RAG chunking that respects token boundaries?**
+
+Split on sentence/paragraph boundaries (natural language units), then measure token count per chunk using the actual tokenizer. Keep a sliding window: when the current chunk approaches the token limit, emit it and start a new chunk with `overlap` tokens of context. Never split on character count — a character boundary mid-token produces malformed input and breaks the tokenizer's inverse mapping.
+
+---
+
+**Q: What is SentencePiece and how does Unigram tokenization differ from BPE?**
+
+SentencePiece is a library (used by T5, Gemma, ALBERT) that implements both BPE and Unigram LM tokenization without requiring pre-tokenization (whitespace normalization is built in). Unigram starts with a large vocabulary and *prunes* it: at each step, remove the token whose removal increases training data loss by the least. Unlike BPE's deterministic merge, Unigram produces a probability distribution over possible segmentations — the most probable segmentation is used at inference, and multiple segmentations can be sampled during training for subword regularization.
+
+---
+
+**Q: Walk through designing a token budget system for a multi-turn customer support chatbot.**
+
+Components: (1) System prompt budget: fixed, count once. (2) History budget: sliding window — trim oldest turns when total approaches limit. (3) Retrieved document budget: fixed allocation per turn (e.g., 30% of context). (4) User message + response reservation: whatever remains. Implementation: count tokens for each component using tiktoken before assembling the final request. Reserve 15–20% headroom for response. If history exceeds budget, summarize older turns rather than dropping them. Alert on messages where a single turn exceeds 20% of context.
+
+---
+
+### 🔴 Senior / Lead / Staff Level (5+ years)
+
+**Q: Design a tokenization-aware cost estimation system for a multilingual product serving 10 languages.**
+
+System components:
+
+*Measurement layer:* Sample 1,000 real messages per language from production (or approximated from localization files). Compute p50/p95/p99 token fertility per language using the actual model's tokenizer. Store as `{"ar": 5.2, "ko": 4.8, "en": 1.3, ...}`.
+
+*Cost model:* When a user submits a query, before proxying to the model API: `est_tokens = len(enc.encode(query)) + system_prompt_tokens + avg_retrieval_tokens_for_language[lang] + avg_history_tokens`. Estimate response: `model_output_tokens ≈ 250 × fertility_multiplier`. Cost = (input + output) × per-token price.
+
+*Budget enforcement:* Per-user/session token quotas tracked in Redis. If estimated cost would exceed quota, return a helpful message rather than a degraded truncated response.
+
+*Monitoring:* Track actual vs estimated tokens per language per request in your observability pipeline. Alert when a language's fertility estimate drifts > 20% from measured (e.g., a new content type triggers different tokenization patterns).
+
+*Capacity planning:* For a 1M MAU product, if 15% of users are Arabic speakers and Arabic has 4× fertility, throughput demand on your inference cluster is 1.4× higher than an English-only capacity model predicts. Plan GPU allocation accordingly.
+
+> 🎯 **What great looks like:** A candidate who distinguishes between input token cost (deterministic from the tokenizer) and output token cost (stochastic, must be estimated), who thinks about fertility monitoring as an ongoing operational concern, and who links tokenization to GPU capacity planning.
+
+---
+
+**Q: You're switching a production system from GPT-4 to a model with a different tokenizer. What can break and how do you manage the migration?**
+
+**What breaks:**
+
+1. *Token budget limits:* Existing prompts designed for cl100k_base token counts may overflow the new model's context (if fertility is higher) or be wasteful (if lower). Revalidate all prompt templates.
+
+2. *Chunking pipeline:* If RAG chunks were sized to 512 cl100k tokens, they may be 600+ tokens in the new tokenizer — breaking the retrieval-to-context assembly.
+
+3. *Cost estimates:* Price-per-token multiplied by wrong fertility = wrong billing projections.
+
+4. *Special token handling:* Chat templates differ between model families. System prompt injection, role delimiters, and stop sequences are all tokenizer-specific.
+
+5. *Evaluation metrics:* BLEU/ROUGE computed on tokenizer output differ across tokenizers — evaluation baselines aren't directly comparable.
+
+**Migration checklist:**
+- Measure fertility ratio: new_tokenizer vs old_tokenizer on production prompt samples
+- Resize all chunk sizes by the fertility ratio
+- Update all token budget constants throughout the codebase
+- Validate chat template formatting against the new model's requirements
+- Re-run all token-count-based evaluations with the new tokenizer
+- Shadow-test with a 1–5% traffic split before full cutover
+- Keep the old tokenizer in the codebase until migration is fully complete; label clearly which encoder each component uses
+
+> ⚠️ **Common Mistake:** Assuming tokenizers are interchangeable because "they both use BPE." The merge rules are model-specific. cl100k_base and Llama tokenizer will produce different token counts for the same string, even if both use byte-level BPE.

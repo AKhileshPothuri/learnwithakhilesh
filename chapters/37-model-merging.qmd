@@ -1,0 +1,462 @@
+---
+title: "Model Merging: Task Arithmetic, SLERP, TIES, DARE & WARP"
+chapter: 37
+---
+
+# Model Merging: Task Arithmetic, SLERP, TIES, DARE & WARP {#sec-37}
+
+> 💡 **Senior Tip:** Model merging is not a research curiosity — it's a practical tool for shipping single-endpoint solutions that would otherwise require routing between multiple fine-tuned models. The key question is always: do these fine-tuned models share enough base-weight geometry to merge cleanly?
+
+## Why Merge Models
+
+Fine-tuning a pretrained model for a specialized task invariably degrades performance on other tasks — catastrophic forgetting. Multitask fine-tuning addresses this but requires simultaneous access to all datasets and careful loss balancing.
+
+Model merging sidesteps the training problem. The core insight is geometric: fine-tuning from the same base checkpoint moves models to nearby regions in parameter space. Linear paths through that region often pass through points that retain capabilities from both endpoints. The base checkpoint acts as a shared anchor constraining all fine-tuned variants to a locally connected neighborhood.
+
+**The result:** a merged model combining multiple skill sets at the same inference cost as a single model, with no additional training.
+
+**Three scenarios where merging beats alternatives:**
+
+1. **Single model budget:** Inference infrastructure is fixed to one endpoint; adding a second model requires a full second deployment.
+2. **Complementary datasets inaccessible simultaneously:** Legal/privacy constraints prevent combining datasets from different domains in one training run.
+3. **Iterative fine-tune stacking:** A series of fine-tunes, each improving one capability, need to be integrated without re-running all prior training.
+
+**Prerequisites:**
+- All models must share the same base checkpoint (same architecture, same pretrained weights)
+- Fine-tuned models should be adjacent in parameter space (same base = satisfied)
+- Task distributions should not be fundamentally opposed (merging a safe-assistant-tuned model with a model specifically trained to bypass safety filters will degrade both)
+
+## The Task Vector Hypothesis
+
+The foundational observation (Ilharco et al. 2022): fine-tuning produces a **task vector** — the difference between fine-tuned weights and base weights.
+
+$$\tau = \theta_{ft} - \theta_{base}$$
+
+Task vectors have meaningful geometric structure:
+- **Adding** a task vector to the base model improves that task
+- **Subtracting** a task vector *reduces* performance on that task (useful for removing a capability)
+- **Adding multiple** task vectors combines capabilities
+- Task vectors for *similar* tasks point in similar directions in weight space
+
+```python
+import torch
+from safetensors.torch import load_file
+
+def compute_task_vector(base_path: str, finetuned_path: str) -> dict[str, torch.Tensor]:
+    """Compute task vector: delta between fine-tuned and base weights."""
+    base = load_file(base_path)
+    finetuned = load_file(finetuned_path)
+    return {k: finetuned[k].float() - base[k].float() for k in base}
+
+def apply_task_vector(base_path: str, task_vector: dict, scale: float = 1.0) -> dict:
+    """Apply task vector at given scale to base model."""
+    base = load_file(base_path)
+    merged = {}
+    for k, v in base.items():
+        delta = task_vector.get(k, torch.zeros_like(v.float()))
+        merged[k] = (v.float() + scale * delta).to(v.dtype)
+    return merged
+
+# Production Gotcha: Task vector arithmetic assumes all weight tensors are
+# on the same dtype. Always cast to float32 before arithmetic, then cast back.
+# bf16 arithmetic accumulates significant error in subtraction.
+```
+
+## Method 1: Linear Interpolation (LERP / Model Soup)
+
+The simplest merge: weighted average of two (or more) models' weights.
+
+$$\theta_{merged} = (1 - \lambda) \cdot \theta_A + \lambda \cdot \theta_B$$
+
+**Model Soup** (Wortsman et al. 2022): average multiple fine-tuned checkpoints of the *same* model (different hyperparameters) to get better than any individual checkpoint.
+
+```python
+def linear_merge(models: list[dict], weights: list[float]) -> dict:
+    """Weighted average merge of multiple model weight dicts."""
+    assert abs(sum(weights) - 1.0) < 1e-6, "Weights must sum to 1"
+    merged = {}
+    keys = list(models[0].keys())
+    for k in keys:
+        stacked = torch.stack([m[k].float() for m in models])
+        w = torch.tensor(weights, dtype=torch.float32).view(-1, *([1] * stacked.dim() - 1))
+        merged[k] = (stacked * w).sum(dim=0).to(models[0][k].dtype)
+    return merged
+
+# Best for: same task, multiple checkpoints, or very similar task distributions.
+# Fails when: models are trained on very different tasks — averaging creates
+# a model that is mediocre at both rather than competent at each.
+```
+
+## Method 2: SLERP (Spherical Linear Interpolation)
+
+Linear interpolation in Euclidean space ignores the curved geometry of weight space. SLERP interpolates along the great circle arc on a hypersphere.
+
+$$\text{SLERP}(\theta_A, \theta_B, t) = \frac{\sin((1-t)\Omega)}{\sin\Omega} \theta_A + \frac{\sin(t\Omega)}{\sin\Omega} \theta_B$$
+
+where $\Omega = \arccos\left(\frac{\theta_A \cdot \theta_B}{|\theta_A||\theta_B|}\right)$ is the angle between the two weight vectors.
+
+**Why SLERP beats LERP for merging:** maintains magnitude (norm) of weight tensors along the interpolation path. Linear interpolation shrinks norms mid-path ("weight shrinkage"), which can degrade performance on both tasks simultaneously.
+
+```python
+def slerp_tensors(a: torch.Tensor, b: torch.Tensor, t: float) -> torch.Tensor:
+    """Spherical linear interpolation between two weight tensors."""
+    a_flat = a.float().flatten()
+    b_flat = b.float().flatten()
+
+    dot = torch.dot(a_flat / a_flat.norm(), b_flat / b_flat.norm()).clamp(-1, 1)
+    omega = torch.acos(dot)
+
+    if omega.abs() < 1e-6:  # Nearly parallel — fall back to LERP
+        return ((1 - t) * a + t * b).to(a.dtype)
+
+    sin_omega = torch.sin(omega)
+    result = (torch.sin((1 - t) * omega) / sin_omega) * a_flat + \
+             (torch.sin(t * omega) / sin_omega) * b_flat
+    return result.reshape(a.shape).to(a.dtype)
+
+def slerp_models(model_a: dict, model_b: dict, t: float = 0.5) -> dict:
+    """Apply SLERP per-layer between two model weight dicts."""
+    return {k: slerp_tensors(model_a[k], model_b[k], t) for k in model_a}
+
+# Production Gotcha: Apply SLERP per-tensor (per layer weight matrix),
+# not on the concatenated all-parameters vector. Layers have different scales
+# and the angle calculation is only meaningful within a single tensor.
+```
+
+## Method 3: Task Arithmetic
+
+Explicitly use task vectors to compose or subtract capabilities.
+
+**Compose:**
+$$\theta_{merged} = \theta_{base} + \lambda_1 \tau_1 + \lambda_2 \tau_2$$
+
+**Subtract (remove a capability):**
+$$\theta_{detoxified} = \theta_{base} - \lambda \cdot \tau_{toxic}$$
+
+```python
+def task_arithmetic_merge(
+    base: dict,
+    task_vectors: list[dict],
+    scales: list[float],
+) -> dict:
+    """Combine multiple task vectors with given scales onto a base model."""
+    merged = {k: base[k].float().clone() for k in base}
+    for tv, scale in zip(task_vectors, scales):
+        for k in merged:
+            if k in tv:
+                merged[k] += scale * tv[k].float()
+    return {k: v.to(base[k].dtype) for k, v in merged.items()}
+
+# Example: combine a code-tuned and a safety-tuned task vector
+# tau_code = compute_task_vector(base_path, code_ft_path)
+# tau_safe = compute_task_vector(base_path, safety_ft_path)
+# merged = task_arithmetic_merge(base, [tau_code, tau_safe], [0.8, 0.6])
+```
+
+**Scale parameter λ:** Controls contribution strength. Typically 0.3–1.0. Too high → one task dominates or weight magnitudes explode. Too low → minimal effect. Tune on a small held-out eval set.
+
+## Method 4: TIES-Merging (Trim, Elect Sign, Merge)
+
+**Problem with naive task arithmetic:** When merging many task vectors, parameters with small magnitudes can interfere destructively — small deltas in opposing directions cancel out meaningful large deltas.
+
+TIES-Merging (Yadav et al. 2023) applies three steps:
+
+**Step 1 — Trim:** For each task vector, keep only the top-k% parameters by magnitude. Set the rest to zero. Typically k = 20% (80% of the delta is noise).
+
+**Step 2 — Elect Sign:** For each parameter position, take a majority vote across task vectors on the sign (+/-) of the delta. Parameters voting minority sign are zeroed.
+
+**Step 3 — Merge:** Average only the non-zero, sign-consistent parameters.
+
+```python
+def ties_merge(
+    base: dict,
+    task_vectors: list[dict],
+    top_k: float = 0.2,
+    scale: float = 1.0,
+) -> dict:
+    """TIES-Merging: Trim → Elect Sign → Merge."""
+    merged = {}
+    for key in base:
+        tv_tensors = [tv[key].float() for tv in task_vectors if key in tv]
+        if not tv_tensors:
+            merged[key] = base[key]
+            continue
+
+        # Step 1: Trim — keep top-k% by magnitude per task vector
+        trimmed = []
+        for tv in tv_tensors:
+            threshold = tv.abs().flatten().kthvalue(
+                max(1, int((1 - top_k) * tv.numel()))
+            ).values
+            trimmed.append(tv * (tv.abs() >= threshold))
+
+        # Step 2: Elect Sign — majority vote
+        stacked = torch.stack(trimmed)
+        sign_vote = stacked.sign().sum(dim=0).sign()  # +1, -1, or 0
+        # Zero out any trimmed delta that disagrees with majority sign
+        elected = torch.stack([
+            t * (t.sign() == sign_vote).float() for t in trimmed
+        ])
+
+        # Step 3: Merge — mean of non-zero elected values
+        count = (elected != 0).float().sum(dim=0).clamp(min=1)
+        merged_delta = elected.sum(dim=0) / count
+
+        merged[key] = (base[key].float() + scale * merged_delta).to(base[key].dtype)
+
+    return merged
+
+# Production Gotcha: top_k=0.2 is a default. Tune it on your eval set.
+# Lower top_k (more trimming) → cleaner merge, may lose beneficial small deltas.
+# Higher top_k → more interference, but less information loss.
+```
+
+## Method 5: DARE (Drop And REscale)
+
+**The observation:** Most fine-tuning delta parameters are very small and don't affect model behavior. You can randomly drop 90% of them and rescale the survivors by 1/(1-p) to preserve the expected value — similar to dropout but applied to the merged delta.
+
+$$\tau_{dare} = \frac{m \odot \tau}{1-p}$$
+
+where $m \sim \text{Bernoulli}(1-p)$ is a random mask and $p$ is the drop rate (typically 0.9).
+
+**Why it helps in merging:** Sparse task vectors have less destructive interference when combined. DARE + TIES combined is currently one of the strongest merging strategies for multi-task models.
+
+```python
+def dare_task_vector(tau: dict, drop_rate: float = 0.9, seed: int = 42) -> dict:
+    """DARE: randomly drop delta parameters and rescale survivors."""
+    torch.manual_seed(seed)
+    dare_tau = {}
+    for k, v in tau.items():
+        mask = torch.bernoulli(torch.ones_like(v.float()) * (1 - drop_rate))
+        dare_tau[k] = (mask * v.float()) / (1 - drop_rate)
+    return dare_tau
+
+# DARE + TIES workflow:
+# 1. Compute task vectors
+# 2. Apply DARE to each (sparse them)
+# 3. Run TIES merge on the sparse task vectors
+# Result: typically best quality for 3+ model merges
+```
+
+## Method 6: WARP (Weighted Averaging from Ranked Parameters)
+
+WARP applies model soups iteratively: first averaging checkpoints within a fine-tune run (good for the same task), then applying SLERP between the averaged model and the base to pull back toward the base distribution. Particularly effective for RLHF-aligned models where you want to preserve safety alignment.
+
+$$\theta_{warp} = \text{SLERP}(\theta_{base}, \theta_{soup}, t)$$
+
+The "soup" here is a model average of multiple RLHF checkpoints at different steps, then SLERP pulls it back toward base to prevent over-alignment drift.
+
+## Mergekit: Production Merge Tool
+
+[mergekit](https://github.com/arcee-ai/mergekit) is the de-facto standard tool for running these merges without writing custom code.
+
+```yaml
+# mergekit config: TIES merge of code + instruct + math fine-tunes
+models:
+  - model: base-model/llama-3-8b
+    parameters:
+      weight: 1.0
+
+merge_method: ties
+base_model: base-model/llama-3-8b
+
+slices:
+  - sources:
+    - model: my-org/llama-3-8b-code-ft
+      layer_range: [0, 32]
+      parameters:
+        weight: 0.8
+        density: 0.2   # DARE drop rate implicit: keep 20%
+    - model: my-org/llama-3-8b-instruct-ft
+      layer_range: [0, 32]
+      parameters:
+        weight: 0.7
+        density: 0.3
+    - model: my-org/llama-3-8b-math-ft
+      layer_range: [0, 32]
+      parameters:
+        weight: 0.6
+        density: 0.2
+
+parameters:
+  normalize: true    # Normalize task vectors before merging
+  int8_mask: true    # Use int8 for masks to save memory
+
+tokenizer_source: base
+dtype: bfloat16
+```
+
+```bash
+# Run the merge
+mergekit-yaml config.yml ./merged-model \
+  --copy-tokenizer \
+  --allow-crimes \  # Allows experimental options
+  --out-shard-size 5B \
+  --low-cpu-memory  # Stream weights to avoid OOM on large models
+```
+
+## When Merging Beats Alternatives
+
+| Scenario | Best Approach | Why Merging Wins |
+|---|---|---|
+| Two fine-tunes, same base, related tasks | SLERP or Task Arithmetic | No training, single endpoint |
+| 3–5 fine-tunes to combine | TIES + DARE | Destructive interference controlled |
+| Same task, multiple checkpoints | Model Soup (linear avg) | Averaging reduces variance |
+| Datasets can't coexist (legal/privacy) | Task Arithmetic | No joint training needed |
+| Undo a specific capability | Subtract task vector | Surgical, no retraining |
+| Models from different base checkpoints | Multitask fine-tune | Merging requires shared base |
+| Very different task distributions | Fine-tune jointly | Merging → mediocre at both |
+| One model needs safety, other doesn't | WARP | Pulls back toward safe base |
+
+## Method Comparison
+
+| Method | Complexity | Requires Training | OOV Interference | Quality (2 models) | Quality (5+ models) |
+|---|---|---|---|---|---|
+| Linear (LERP) | Trivial | No | High | Good | Poor |
+| SLERP | Low | No | Medium | Very Good | N/A (2-model only) |
+| Task Arithmetic | Low | No | Medium | Good | Fair |
+| TIES | Medium | No | Low | Very Good | Good |
+| DARE + TIES | Medium | No | Very Low | Very Good | Very Good |
+| WARP | High | No | Low | Very Good | N/A |
+| Multitask FT | High | Yes | N/A | Best possible | Best possible |
+
+## Cheat Sheet
+
+- Task vector: τ = θ_ft − θ_base — the "edit" that fine-tuning applies to the base model
+- Task Arithmetic: add/subtract task vectors to compose or remove capabilities
+- LERP: weighted average — simplest, but weight shrinkage hurts quality at t=0.5
+- SLERP: interpolates along a sphere — preserves weight norms, better than LERP for 2-model merges
+- TIES: Trim (top-k% of delta) → Elect Sign (majority vote) → Merge — handles destructive interference
+- DARE: randomly drop 90% of delta, rescale survivors — sparsifies for cleaner multi-model merges
+- DARE + TIES: current state-of-the-art for merging 3–5 fine-tuned models
+- WARP: soup of RL checkpoints + SLERP toward base — for alignment-preserving merges
+- mergekit: open-source tool for production merging; supports TIES, DARE, SLERP, Task Arithmetic via YAML config
+- Prerequisite: all models must share the same base checkpoint and architecture
+- top_k in TIES: keep top-k% of delta by magnitude; 0.2 (20%) is a typical starting point
+- Scale λ: controls task vector contribution strength; tune on held-out eval (0.3–1.0 typical range)
+- Model Soup: average multiple checkpoints of the same fine-tune for better-than-any-individual performance
+- When merging fails: tasks are from very different distributions → fine-tune jointly or use routing
+- Production workflow: merge → eval on each task separately → compare against individual fine-tunes → ship
+
+## Interview Questions
+
+### 🟢 Entry Level (0–2 years)
+
+**Q: What is model merging and why would you use it?**
+
+Model merging combines multiple fine-tuned models into a single model using weight-space arithmetic — no additional training required. You use it when you have two fine-tuned models (e.g., one for code generation, one for customer support) that both start from the same base checkpoint, and you want a single model that does both without routing between two separate endpoints. The merged model has the same inference cost as a single model.
+
+---
+
+**Q: What is a task vector?**
+
+A task vector is the parameter delta produced by fine-tuning: τ = θ_ft − θ_base. It represents the "edit" that fine-tuning applied to the base model. Task vectors have geometric meaning in weight space: adding the task vector to a base model improves that task; adding multiple task vectors can combine capabilities; subtracting one can remove a specific behavior.
+
+---
+
+**Q: What's the difference between LERP and SLERP?**
+
+LERP (linear interpolation) is a weighted average in Euclidean space. At t=0.5 the merged model's weight norms shrink — "weight shrinkage" — which degrades both tasks simultaneously. SLERP (spherical linear interpolation) interpolates along the great circle arc on a sphere, preserving the norm throughout the path. For 2-model merges, SLERP generally produces higher quality merged models than LERP.
+
+---
+
+**Q: What is TIES-Merging and what problem does it solve?**
+
+TIES solves destructive interference in multi-model merges. When merging 3+ task vectors, parameters with opposing small deltas cancel each other out, destroying information. TIES applies three steps: (1) Trim — zero out small-magnitude deltas (keep top 20% by magnitude); (2) Elect Sign — take majority vote on delta sign per parameter; (3) Merge — average only parameters with consistent signs. This keeps strong, consistent signals and discards noise.
+
+---
+
+**Q: When would model merging NOT work?**
+
+Merging requires models to share the same base checkpoint. If they have different architectures, different pretraining, or different vocabularies, merging produces nonsense. Merging also works poorly when tasks are fundamentally opposed (e.g., a safety-trained model merged with one trained to bypass safety) or very different in distribution (code generation vs. medical diagnosis) — the merged model may be worse at both than either individual model.
+
+---
+
+### 🟡 Mid Level (2–5 years)
+
+**Q: Explain DARE and why sparse task vectors merge more cleanly.**
+
+DARE (Drop And REscale) randomly zeroes out 90% of task vector parameters and rescales the remaining 10% by ×10 to preserve expected value. The insight from the paper: most fine-tuning deltas are very small and don't contribute to model behavior. They do, however, contribute noise during merging. Sparse task vectors have less overlap in which parameters are non-zero — so when you average them, more positions have clear contributions from a single task rather than competing near-zero signals from multiple tasks. Empirically, DARE reduces interference and improves downstream task performance when merging 3+ models.
+
+*Follow-up: Why rescale by 1/(1-p)?*
+To preserve the expected value of the task vector. If you drop 90% without rescaling, the merged model receives 10% of the intended task signal — too weak to matter. Rescaling ensures the expectation of each surviving parameter equals the original delta value.
+
+---
+
+**Q: Walk through designing a merge of a code-tuned and an instruct-tuned model. What method would you use and how would you evaluate it?**
+
+Both must be fine-tuned from the same base. I'd use SLERP for a 2-model merge as a starting point, tuning t (0.3–0.7) on a held-out eval set that covers both coding tasks and instruction following tasks.
+
+Evaluation approach: (1) Coding: HumanEval pass@1 — compare merged model vs. code-only fine-tune. (2) Instruction following: IFEval or MT-Bench — compare vs. instruct-only fine-tune. (3) Target: 90%+ of each individual model's score on its primary task. (4) If SLERP underperforms, try Task Arithmetic with scale tuning. (5) Log the evaluation scores at multiple t values (0.3, 0.4, 0.5, 0.6, 0.7) and pick the Pareto-optimal t for the tradeoff you care about.
+
+---
+
+**Q: How does mergekit handle memory constraints for merging 70B models?**
+
+70B models are ~140 GB in bfloat16. Two of them can't fit in a typical GPU memory budget simultaneously. Mergekit uses CPU streaming: it loads one layer (or shard) at a time from each model, performs the merge computation in CPU RAM or a small GPU buffer, and writes the merged layer to disk. The `--low-cpu-memory` flag enables even more aggressive streaming. For a 70B merge you typically need a machine with 256+ GB RAM and substantial NVMe storage (500+ GB for input + output).
+
+---
+
+**Q: What is WARP and when would you use it over TIES?**
+
+WARP (Weighted Averaging from Ranked Parameters) is designed for merging RLHF checkpoints where you want to preserve safety alignment while combining multiple alignment runs. Step 1: average multiple RLHF checkpoints of the same model (a "soup" of alignment checkpoints). Step 2: SLERP the soup toward the base model to pull back toward pre-alignment behavior where the soup over-tuned. This is a very specialized technique — use it when: you have multiple RLHF fine-tune runs of the same model and want to combine their improvements, and you're worried about alignment drift or reward hacking amplified by the soup step. For general multi-task merging, DARE + TIES is better.
+
+---
+
+**Q: Design a production workflow for merging, evaluating, and shipping a merged model.**
+
+Stage 1 — Compute task vectors: for each fine-tuned model, save `θ_ft - θ_base` to disk. Verify shapes match base exactly.
+
+Stage 2 — Merge configuration: choose method (TIES + DARE for 3+ models, SLERP for 2). Set initial hyperparameters (density=0.2, scale=0.7). Run merge with mergekit, output to a temp checkpoint directory.
+
+Stage 3 — Evaluation battery: run all task-specific evals (HumanEval for code, MT-Bench for instruction following, domain-specific evals for any specialized tasks). Compare against each individual fine-tune. Target: ≥90% of each individual model's score on its primary task.
+
+Stage 4 — Hyperparameter sweep: vary density (0.15, 0.20, 0.30) and scale (0.5, 0.7, 0.9). Pick the Pareto-optimal configuration across all tasks.
+
+Stage 5 — Safety evaluation: run safety benchmarks (ToxiGen, BBQ, refusal consistency) — merged models can sometimes surface unexpected behaviors from the combination.
+
+Stage 6 — Shadow deployment: 5% traffic split vs. routing-based solution. Measure latency (same endpoint, single model = lower latency than routing), quality (task success rate), cost (no routing overhead).
+
+Stage 7 — Ship: if merged model within 5% of routed solution on quality and measurably better on cost/latency, ship the merged model.
+
+---
+
+### 🔴 Senior / Lead / Staff Level (5+ years)
+
+**Q: You're managing an ML platform team. Three product teams each have a fine-tuned model and want a single shared endpoint. Design the merging strategy, evaluation, and failure modes.**
+
+Context: 3 teams, 3 fine-tunes from the same base (verified prerequisite). Tasks: customer support, legal document summarization, code review.
+
+Assessment: These are substantially different task distributions. Linear merge or SLERP will produce a mediocre generalist. TIES + DARE is the appropriate method for 3 models with potentially interfering deltas.
+
+Execution plan:
+1. Compute task vectors for all three. Inspect vector norms and pairwise cosine similarities — if two vectors are nearly identical (cos > 0.9), they're essentially the same task and can be averaged first before the 3-way merge.
+2. Apply DARE to each task vector (drop_rate=0.9, different seeds per vector).
+3. Run TIES merge with density=0.2, scale tuning via grid search on held-out evals.
+4. Run full eval battery: each team provides a holdout test set. Target 90%+ of individual model performance on each task.
+
+Failure mode 1 — Task interference: Legal summarization requires formal, hedged language; customer support requires casual, direct tone. If merged model sounds formal for support and casual for legal, the representations are interfering. Fix: increase density threshold for language/tone parameters specifically, or accept that this merge isn't viable and use routing.
+
+Failure mode 2 — Safety regression: Code review model may have been fine-tuned to discuss vulnerabilities in detail. Combining with customer support may expose this in unexpected contexts. Run adversarial safety probes post-merge.
+
+Failure mode 3 — Regression on rare inputs: Merged model passes aggregate evals but fails on edge cases that individual models handled. Ensure holdout sets include p95/p99 difficulty examples, not just average-difficulty queries.
+
+Decision gate: if merged model doesn't reach 85%+ of all three individual models' scores, recommend routing (lightweight router model + three inference endpoints) over merging. Present the latency/cost/quality tradeoff table to stakeholders; let them decide the threshold.
+
+> 🎯 **What great looks like:** A candidate who (1) starts by questioning whether the task distributions are compatible for merging, (2) knows to inspect task vector similarities before picking a method, (3) designs evaluation that covers each task's holdout rather than an aggregate metric, and (4) knows when to recommend against merging.
+
+---
+
+**Q: What does the task vector hypothesis predict about fine-tuning order and initialization?**
+
+The hypothesis predicts that task vectors computed from fine-tunes of the same base checkpoint lie in a locally linear region of parameter space. This has several implications for fine-tuning strategy:
+
+*Order independence:* If you fine-tune A then B starting from base, the task vector for B (from base) and the task vector for A→B fine-tune chain are different — only the former represents a "clean" task vector usable for merging.
+
+*Continual fine-tuning compounds drift:* Each sequential fine-tune moves further from the base anchor. After 3–4 sequential fine-tunes, the model may be far enough from base that merging the final checkpoint with another base fine-tune produces poor results.
+
+*Always fine-tune from base:* For merging purposes, each task's fine-tune should always start from the original base checkpoint, not from another fine-tune. This keeps all task vectors in the same locally linear region.
+
+*LoRA vs. full fine-tune:* LoRA fine-tuning produces small deltas (because ΔW = BA has constrained rank). LoRA task vectors are inherently sparse and low-rank — they merge more cleanly because there's less interference. This is an underappreciated advantage of LoRA beyond parameter efficiency.
+
+> ⚠️ **Common Mistake:** Merging a model that was sequentially fine-tuned (Base → Task A → Task B) with a clean Base → Task C fine-tune. The Task A→B model's task vector includes Task A contamination. The merge produces unexpected Task A behaviors in contexts that should only trigger Task C.

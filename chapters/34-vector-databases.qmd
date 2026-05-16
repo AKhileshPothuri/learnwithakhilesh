@@ -1,0 +1,353 @@
+---
+title: "Vector Databases Deep Dive"
+---
+
+# Vector Databases Deep Dive {#sec-34}
+
+> 💡 **Senior Tip:** Vector DB selection is rarely the bottleneck. The embedding model quality and chunking strategy matter far more. Pick a DB that fits your ops constraints, then optimize.
+
+## Why Vector Databases?
+
+**Plain-English definition:** A database optimized for storing and searching high-dimensional vectors by semantic similarity, not exact match.
+
+Traditional SQL: `WHERE name = 'Paris'` (exact match)
+Vector DB: `NEAREST_NEIGHBOR([0.1, -0.3, ..., 0.7])` (approximate similarity)
+
+**Use cases:** RAG retrieval, semantic search, recommendation systems, image similarity, anomaly detection, duplicate detection.
+
+**Core operations:**
+- **Upsert**: insert or update a vector + metadata
+- **ANN search**: find k most similar vectors to a query
+- **Filtered search**: ANN within a metadata subset
+- **Delete/update**: handle stale embeddings
+
+## Indexing Algorithms
+
+### HNSW (Hierarchical Navigable Small World)
+
+**Definition:** A graph-based ANN index that builds a hierarchy of graphs, enabling logarithmic-time nearest neighbor search.
+
+**How it works:** Vectors are inserted into a hierarchical graph. Each node connects to M nearest neighbors. Search starts at the top (sparse) layer and greedily descends to the bottom (dense) layer. This mimics "six degrees of separation" — you navigate through high-level connections to reach the right neighborhood, then do local exhaustive search.
+
+**Key hyperparameters:**
+- `ef_construction`: number of candidates considered during index build (higher = better index, slower build)
+- `M`: number of bidirectional connections per node (higher = better recall, more memory)
+- `ef_search`: candidates considered during query (higher = better recall, slower query)
+
+**Tradeoffs:** High recall (~99%), high memory usage (stores graph structure), logarithmic search time. Best for high-recall requirements.
+
+### IVF (Inverted File Index)
+
+**Definition:** Clusters vectors into k groups using k-means, then at query time searches only the nearest `nprobe` cluster centroids.
+
+**Key hyperparameters:**
+- `nlist`: number of clusters (sqrt(n) is a good starting point)
+- `nprobe`: how many clusters to search at query time (recall-speed tradeoff)
+
+**Tradeoffs:** Lower memory than HNSW, slightly lower recall, good for very large collections where HNSW memory becomes prohibitive.
+
+### Product Quantization (PQ)
+
+**Definition:** Compress each vector by splitting it into subvectors and quantizing each to a codebook entry.
+
+**Example:** 1536-dim vector → 192 × 8-dim subvectors → each quantized to 1 of 256 codes → 192 bytes per vector (vs 6,144 bytes for float32).
+
+**Tradeoffs:** 10-32x memory reduction, 5-10% recall loss, much faster distance computation (table lookups). Use HNSW+PQ for large-scale production.
+
+## Algorithm Comparison
+
+| Algorithm | Memory | Recall | Build Speed | Query Speed | Best For |
+|---|---|---|---|---|---|
+| Flat (brute force) | Low | 100% | Instant | Slow (O(n)) | <100k vectors, testing |
+| HNSW | High | ~99% | Medium | Fast (O(log n)) | <50M vectors, high recall |
+| IVF | Medium | ~95% | Slow | Fast | 10M–1B vectors |
+| IVF+PQ | Very low | ~90% | Slow | Very fast | 100M+ vectors, memory constrained |
+| HNSW+PQ | Medium | ~95% | Medium | Fast | Production balance |
+
+## Metadata Filtering
+
+The tricky part: how do you do ANN search *and* filter by metadata?
+
+**Pre-filtering:** Filter the dataset first, then do ANN on the subset. High precision but low recall when filter is very selective (might miss vectors outside the filter that are actually closer).
+
+**Post-filtering:** Do ANN on full collection, then filter results. Can return fewer than k results if many are filtered out — requires oversampling (fetch 10k, return top-k after filter).
+
+**In-graph filtering (native):** Qdrant, Weaviate support filtering inside the HNSW graph traversal. Best recall, most complex to implement.
+
+```python
+from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue, SearchRequest
+
+client = QdrantClient("localhost", port=6333)
+
+# Filtered search: find similar documents from a specific tenant
+results = client.search(
+    collection_name="documents",
+    query_vector=[0.1, -0.3, 0.8, ...],  # query embedding
+    query_filter=Filter(
+        must=[
+            FieldCondition(key="tenant_id", match=MatchValue(value="acme_corp")),
+            FieldCondition(key="doc_type", match=MatchValue(value="policy")),
+        ]
+    ),
+    limit=10,
+    with_payload=True
+)
+
+for r in results:
+    print(f"Score: {r.score:.3f} | ID: {r.id} | Payload: {r.payload}")
+```
+
+## Database Comparison
+
+| Database | Hosting | Open Source | Hybrid Search | Filtering | Scale | Best For |
+|---|---|---|---|---|---|---|
+| FAISS | Self-host | Yes | No | Limited | Single node | Research, offline batch |
+| Pinecone | Managed only | No | Yes | Yes | Very high | Fast setup, no ops |
+| Weaviate | Both | Yes | Yes (native BM25) | Yes | High | Hybrid search, diverse data types |
+| Qdrant | Both | Yes | Yes | Yes (in-graph) | High | Fast, memory efficient, Rust-based |
+| pgvector | Self-host | Yes | Via pg_search | Yes | Medium | Existing Postgres users |
+| Milvus | Self-host | Yes | Yes | Yes | Very high | Kubernetes-native, large scale |
+| Chroma | Self-host | Yes | Limited | Limited | Low | Development, prototyping |
+
+```python
+# FAISS example - flat L2 search for prototyping
+import faiss
+import numpy as np
+
+dim = 1536  # embedding dimension
+index = faiss.IndexFlatL2(dim)  # brute-force baseline
+
+# Add vectors
+embeddings = np.random.rand(10000, dim).astype('float32')
+index.add(embeddings)
+
+# Search
+query = np.random.rand(1, dim).astype('float32')
+distances, indices = index.search(query, k=5)
+print(f"Top-5 neighbors: {indices[0]}, Distances: {distances[0]}")
+
+# For production, use HNSW:
+hnsw_index = faiss.IndexHNSWFlat(dim, 32)  # M=32
+hnsw_index.add(embeddings)
+```
+
+```python
+# pgvector example - vector search in Postgres
+import psycopg2
+import numpy as np
+
+conn = psycopg2.connect("postgresql://localhost/mydb")
+cur = conn.cursor()
+
+# Create table with vector column
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS documents (
+        id SERIAL PRIMARY KEY,
+        content TEXT,
+        tenant_id TEXT,
+        embedding vector(1536)
+    )
+""")
+
+# Create HNSW index
+cur.execute("""
+    CREATE INDEX ON documents USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64)
+""")
+
+# Insert a vector
+embedding = np.random.rand(1536).tolist()
+cur.execute(
+    "INSERT INTO documents (content, tenant_id, embedding) VALUES (%s, %s, %s)",
+    ("Policy document text...", "acme_corp", embedding)
+)
+
+# Filtered similarity search
+query_embedding = np.random.rand(1536).tolist()
+cur.execute("""
+    SELECT id, content, 1 - (embedding <=> %s::vector) AS similarity
+    FROM documents
+    WHERE tenant_id = 'acme_corp'
+    ORDER BY embedding <=> %s::vector
+    LIMIT 10
+""", (query_embedding, query_embedding))
+
+results = cur.fetchall()
+```
+
+## Handling Embedding Model Updates
+
+When you upgrade your embedding model, all existing vectors are incompatible (different space).
+
+**Zero-downtime re-indexing strategy:**
+
+```
+1. Create new collection (v2_index) alongside existing (v1_index)
+2. Start dual-write: new documents go to both v1 and v2
+3. Batch re-embed all existing documents in v1 → write to v2
+   - Hash document content: skip unchanged documents
+   - Process in parallel batches (respect rate limits)
+4. Canary: route 5% of traffic to v2, compare recall metrics
+5. Gradual rollout: 5% → 25% → 50% → 100% over 1 week
+6. Decommission v1 after 2 weeks of stable v2 operation
+```
+
+```python
+import hashlib
+from openai import OpenAI
+
+client = OpenAI()
+
+def content_hash(text: str) -> str:
+    """Hash document content to detect changes."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+def re_embed_batch(documents: list[dict], old_hashes: dict) -> list[dict]:
+    """Re-embed only changed documents."""
+    to_embed = []
+    for doc in documents:
+        h = content_hash(doc["content"])
+        if old_hashes.get(doc["id"]) != h:  # Content changed or new
+            to_embed.append(doc)
+
+    if not to_embed:
+        return []
+
+    # Batch embedding for efficiency
+    texts = [d["content"] for d in to_embed]
+    response = client.embeddings.create(model="text-embedding-3-large", input=texts)
+    embeddings = [e.embedding for e in response.data]
+
+    return [
+        {"id": d["id"], "embedding": emb, "hash": content_hash(d["content"])}
+        for d, emb in zip(to_embed, embeddings)
+    ]
+```
+
+## Cheat Sheet
+
+- HNSW: best recall, high memory — default for most production use cases under 50M vectors
+- IVF: lower memory, good for 10M–1B vectors — tune nprobe for recall/speed balance
+- PQ: compress 10-32x with ~5-10% recall loss — combine with HNSW for large scale
+- Flat/brute-force: only for <100k vectors or as correctness baseline
+- Metadata filtering: in-graph filtering (Qdrant/Weaviate) > post-filtering > pre-filtering for recall
+- pgvector: great if you already run Postgres and scale is under 10M vectors
+- Pinecone: fastest time-to-production, most expensive at scale
+- Qdrant: fastest open-source, Rust-based, best in-graph filtering
+- Hybrid search: dense + BM25 → Reciprocal Rank Fusion — almost always beats either alone
+- Embedding model upgrade: dual-write + canary + content hash dedup for zero downtime
+- Memory estimate: HNSW uses 1.1-1.5× raw vector size; IVF uses ~1.0×; PQ uses 0.05-0.1×
+- Never use cosine similarity with unnormalized vectors — normalize before indexing
+- ef_search tuning: start high (200), reduce until recall drops below your SLA
+- Production recall target: >0.95 recall@10 for most RAG use cases
+- Benchmark: ann-benchmarks.com for recall vs QPS tradeoff curves
+
+## Interview Questions
+
+### 🟢 Entry Level (0–2 years)
+
+**Q: What is a vector database and why do you need one for RAG?**
+
+**Weak answer:** "It stores vectors."
+
+**Strong answer:** A vector database stores high-dimensional embeddings and supports efficient approximate nearest neighbor (ANN) search — finding the most semantically similar vectors to a query. For RAG, you embed your documents and store them in a vector DB, then at query time you embed the user's question and retrieve the most similar document chunks. Traditional databases don't support similarity search efficiently; SQL's `ORDER BY distance` requires scanning every row (O(n)), which is impractical at scale.
+
+---
+
+**Q: What is the difference between HNSW and IVF indexing?**
+
+HNSW builds a hierarchical graph where each vector connects to its nearest neighbors. Search traverses the graph in O(log n) time with very high recall (~99%). IVF clusters vectors into groups using k-means. Search only checks the nearest clusters, not all vectors. HNSW has higher memory requirements; IVF is more memory-efficient and scales to larger collections. For most production RAG systems under 50M vectors, HNSW is the default choice.
+
+---
+
+**Q: What is hybrid search?**
+
+Hybrid search combines dense vector search (semantic similarity) with sparse keyword search (BM25/TF-IDF). Dense retrieval finds semantically similar documents even if they don't share keywords. Sparse retrieval is better for exact terms, product codes, or rare proper nouns. Combining them — typically with Reciprocal Rank Fusion to merge the result lists — almost always beats either approach alone, especially for mixed query types.
+
+---
+
+**Q: When would you use pgvector instead of a dedicated vector database?**
+
+When you're already running Postgres and your collection is under 5-10M vectors. pgvector adds vector similarity search to Postgres with HNSW and IVF index support. Benefits: no new infrastructure, unified data model, ACID transactions, rich filtering via SQL. Limitations: lower throughput than dedicated vector DBs (Qdrant, Weaviate) at very high QPS, and less operational tooling for vector-specific tasks like embedding drift detection.
+
+---
+
+**Q: What is Product Quantization (PQ)?**
+
+PQ compresses high-dimensional vectors by splitting them into subvectors and quantizing each to a codebook. A 1536-dim float32 vector (6KB) can be compressed to 192 bytes — a 32x reduction. Distance computations use precomputed lookup tables instead of floating-point math, making them faster. The tradeoff is ~5-10% recall loss. PQ is typically combined with HNSW or IVF (IVF+PQ) for billion-scale collections where memory is the constraint.
+
+---
+
+### 🟡 Mid Level (2–5 years)
+
+**Q: How does metadata filtering interact with HNSW search and what are the tradeoffs?**
+
+Three approaches: Pre-filtering applies metadata filters before ANN search — efficient when many documents match, but if the filter is selective (0.1% of collection matches), you're doing ANN on a tiny set with degraded recall. Post-filtering does ANN on the full collection, then applies filters — can return fewer than k results if many are filtered out, requiring oversampling (fetch 10k, keep top-k post-filter). In-graph filtering (Qdrant, Weaviate) integrates filter awareness into HNSW traversal — best recall, most complex. For production multi-tenant systems, in-graph filtering is almost always the right choice.
+
+*Follow-up: How do you size the oversampling factor for post-filtering?*
+Set it based on your filter selectivity. If 10% of documents match your typical filter, fetch 10× more candidates than k. Monitor recall@k in production and adjust.
+
+---
+
+**Q: Walk me through setting up a production vector search for a multi-tenant RAG system.**
+
+Use Qdrant for its efficient in-graph filtering. Create a collection with HNSW index (M=16, ef_construction=100). Store `tenant_id` as a payload field on every vector. At query time, always filter by `tenant_id` to ensure tenant isolation. For embedding: text-embedding-3-large (1536 dim) for English, multilingual-e5-large for multilingual. Set up replication (2 replicas minimum). Monitor: query latency p99, recall@10 (estimated from user feedback), memory usage. Alert on latency p99 > 200ms or memory > 80%.
+
+---
+
+**Q: How do you evaluate the quality of your vector search in production?**
+
+Two approaches: (1) Offline: create a golden retrieval test set of (query, relevant_document_ids) pairs, compute Recall@k, MRR, and NDCG@k. Run weekly to catch degradation. (2) Online: use implicit signals — track "did the user ask a follow-up question?" (suggesting the retrieved context was insufficient), session abandonment rate after RAG answers, and thumbs-down rate segmented by query type. Also sample (query, retrieved_docs) pairs and use LLM-as-judge to score relevance.
+
+---
+
+**Q: What happens to your vector search when you upgrade your embedding model?**
+
+The embedding space changes — vectors from the old model are incompatible with vectors from the new model. You can't mix them. Strategy: create a new collection (v2), dual-write all new documents to both v1 and v2, batch re-embed all existing v1 documents into v2 (use content hashing to skip unchanged documents), run a canary (5% traffic to v2), compare recall metrics, then gradually shift traffic. Never rename v2 to v1 until v2 is fully validated and v1 is completely re-embedded.
+
+---
+
+**Q: Design a vector index for 100M documents with <50ms p99 search latency.**
+
+Use IVF+PQ (FAISS IVFFlat + HNSW quantizer) or Milvus with IVF+PQ. For 100M docs at 1536 dims: flat storage = 600GB (float32), PQ compression at 64 bytes/vector = 6.4GB — fits in RAM. Index settings: nlist = 10,000 clusters, nprobe = 64 (tune for recall vs latency tradeoff). Horizontal scaling: shard by document range across 4 nodes, each handling 25M vectors. Each node handles queries in parallel. Load balance across replicas for read scaling. Benchmark with ann-benchmarks methodology to validate <50ms before production.
+
+---
+
+### 🔴 Senior / Lead / Staff Level (5+ years)
+
+**Q: Your vector search latency spikes as the collection grows past 50M vectors. Walk through diagnosis and solutions.**
+
+**Strong answer:**
+
+*Diagnosis:* Check index type — if using HNSW, memory pressure causes swapping (HNSW must be in RAM). Check node memory utilization. If using IVF, check nprobe — increasing nprobe for better recall linearly increases latency. Profile query time: is it in distance computation or result ranking?
+
+*Solutions by root cause:*
+
+1. **Memory pressure (HNSW):** Switch to IVF+PQ — 10-30x memory reduction. Or add RAM. Or shard across more nodes.
+2. **nprobe too high (IVF):** Tune nprobe down, accept 1-2% recall loss, measure if that's acceptable.
+3. **Index not built optimally:** Rebuild with better nlist (√n rule of thumb) and larger ef_construction.
+4. **Single-node bottleneck:** Shard collection across multiple nodes by document range or tenant.
+5. **No caching:** Add semantic caching layer for repeated queries (20-40% cache hit rate typical).
+
+*Prevention:* Set memory alert at 70% utilization, benchmark with target collection size before hitting production, always have 2x RAM headroom for HNSW.
+
+> 🎯 **What great looks like:** Separating HNSW memory issues from IVF nprobe issues, knowing the √n nlist heuristic, and proposing semantic caching as a cost-effective first step before hardware scaling.
+
+---
+
+**Q: You need to update your embedding model from text-embedding-ada-002 to text-embedding-3-large for a production system with 50M documents and zero-downtime requirement. How do you do it?**
+
+Phase 1 — Preparation (Week 1): Create new collection (v2) alongside existing (v1). Test re-embedding pipeline on 100k documents. Validate recall@10 on golden test set — confirm new model improves quality. Estimate re-embedding time: 50M docs / (batch_size=100 × rate_limit=500 RPS) ≈ 28 hours.
+
+Phase 2 — Dual-write (Week 2): Deploy application change to write all new/updated documents to both v1 and v2. This ensures v2 doesn't fall behind.
+
+Phase 3 — Backfill (Week 2-3): Batch re-embed all v1 documents into v2. Use SHA-256 content hashes to skip unchanged docs (typically 60-80% unchanged in mature systems). Run 8 parallel workers to complete in ~4 hours.
+
+Phase 4 — Canary (Day 1 of Week 4): Route 5% of traffic to v2. Compare latency, recall (via LLM-as-judge on sampled results), and error rates. If metrics match or improve, continue.
+
+Phase 5 — Rollout: 5% → 25% → 50% → 100% over 5 days, monitoring at each step.
+
+Phase 6 — Cleanup: After 2 weeks stable on v2, decommission v1.
+
+> ⚠️ **Common Mistake:** Trying to do an in-place index update. Vector indices can't be partially updated when the embedding space changes — you must rebuild from scratch in a parallel collection.

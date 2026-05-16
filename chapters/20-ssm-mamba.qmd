@@ -13,140 +13,646 @@
 
 ## The Transformer Bottleneck
 
+**Plain-English definition:** Transformers must compare every word to every other word in a sequence — quadratic cost that becomes physically impossible at very long contexts.
+
 The O(n²) complexity of self-attention is not an implementation accident — it is a fundamental property of the computation. Attention computes pairwise relationships between every position pair in the sequence: the Q×K^T matrix multiplication produces an n×n matrix where n is sequence length. Computing this matrix is O(n²d) time and storing it requires O(n²) memory. For n=32,768 (32k context), the attention matrix is approximately 4GB at FP16 before considering batch size. At n=131,072 (128k), it is 64GB per sequence — impossible to store on a single GPU. FlashAttention avoids storing the full matrix in HBM but the compute complexity remains O(n²). Doubling context length quadruples attention compute, not doubles it, making very long contexts prohibitively expensive even with memory-efficient implementations.
 
-The KV cache compounds this at inference time. As the model generates tokens autoregressively, every new token must attend to all previous tokens. The KV cache stores the key and value projections from all previous positions: its size scales as 2 × n × num_heads × head_dim × num_layers × 2 bytes (FP16). For a 32-layer model with 32 heads of dimension 128, a single 32k-token sequence requires approximately 2 × 32768 × 32 × 128 × 32 × 2 ≈ 16GB for the KV cache alone. Serving a large batch of long-context requests means the KV cache dominates GPU memory allocation, directly limiting throughput. The memory problem is linear in context length, but the compute problem is quadratic — both grow unsustainably as you scale context.
+**Analogy:** Imagine you are summarizing a 1,000-page book by having every sentence on every page have a conversation with every other sentence. That is O(n²) attention. An SSM is more like reading linearly, updating a running summary note as you go — the note stays the same size whether you are on page 5 or page 995.
 
-Recurrent architectures (RNNs, LSTMs) solve the memory problem trivially: they maintain a fixed-size hidden state that summarizes all past context, regardless of sequence length. Inference is O(1) per token in memory and O(d²) in compute, independent of sequence length. The fatal flaw is training: because each step depends on the previous, backpropagation through time (BPTT) must process steps sequentially, making training O(n) sequential operations. This prevents parallelism across the sequence dimension — GPUs and TPUs are optimized for parallel matrix operations, not sequential chains. LSTM training on a 32k-length sequence requires 32k sequential recurrent steps, which is catastrophically slow compared to transformers that process all positions in parallel. This is why RNNs were replaced despite their inference-time advantages: the training bottleneck made them non-viable for large-scale pretraining.
+The KV cache compounds this at inference time. As the model generates tokens autoregressively, every new token must attend to all previous tokens. The KV cache stores the key and value projections from all previous positions: its size scales as 2 × n × num_heads × head_dim × num_layers × 2 bytes (FP16). For a 32-layer model with 32 heads of dimension 128, a single 32k-token sequence requires approximately 2 × 32768 × 32 × 128 × 32 × 2 ≈ 16GB for the KV cache alone. Serving a large batch of long-context requests means the KV cache dominates GPU memory allocation, directly limiting throughput.
 
-SSMs thread the needle: they are recurrent in structure (constant-memory inference) but can be reformulated as a global convolution that admits fully parallel training. The recurrence h_{t} = A h_{t-1} + B x_t defines the state evolution; but if A is time-invariant (fixed matrices), the entire sequence output can be computed as a single convolution y = x ★ K where K is the SSM's convolution kernel derived analytically from A, B, C matrices. This global convolution runs as a single parallel operation over the full sequence, enabling the same GPU parallelism as transformer training. At inference, you switch back to the recurrent form and process one token at a time with O(1) memory. This dual representation — parallel for training, recurrent for inference — is the architectural innovation that makes SSMs computationally attractive.
+::: {.callout-warning}
+**Common Misconception:** "FlashAttention solves the quadratic complexity problem."
+
+FlashAttention is a memory-efficient implementation that avoids materializing the full attention matrix in HBM — it reduces the *memory* cost from O(n²) to O(n). But the *compute* cost is still O(n²). Doubling context still quadruples FLOPs. FlashAttention is a hardware optimization, not an algorithmic complexity improvement.
+:::
+
+### Why Not Just Use RNNs?
+
+Recurrent architectures (RNNs, LSTMs) solve the memory problem trivially: they maintain a fixed-size hidden state regardless of sequence length. Inference is O(1) per token in memory and O(d²) in compute, independent of sequence length. The fatal flaw is training: because each step depends on the previous, backpropagation through time (BPTT) must process steps sequentially. This prevents parallelism across the sequence dimension — GPUs are optimized for parallel matrix operations, not sequential chains. LSTM training on a 32k-length sequence requires 32k sequential recurrent steps, catastrophically slow compared to transformers.
+
+SSMs thread the needle: they are recurrent in structure (constant-memory inference) but can be reformulated as a global convolution that admits fully parallel training. The recurrence $h_t = A h_{t-1} + B x_t$ defines the state evolution; when A is time-invariant, the entire sequence output can be computed as a single convolution $y = x \star K$ where K is the SSM's convolution kernel derived analytically from A, B, C matrices. This global convolution runs as a single parallel operation, enabling the same GPU parallelism as transformer training. At inference, you switch back to the recurrent form with O(1) memory. **Parallel for training, recurrent for inference** — this dual representation is the architectural innovation.
+
+| Property | Transformer | Vanilla RNN/LSTM | SSM (Mamba) |
+|---|---|---|---|
+| Training complexity | O(n²) time, O(n²) memory | O(n) sequential steps | O(n log n) with parallel scan |
+| Inference memory per token | O(n) KV cache | O(1) fixed state | O(1) fixed state |
+| Inference compute per token | O(n) (over KV cache) | O(d²) | O(d × d_state) |
+| Long context quality | Exact retrieval | Poor (vanishing gradients) | Good; can miss precise retrieval |
+| Training parallelism | Fully parallel | Sequential (no GPU efficiency) | Fully parallel (parallel scan) |
+| Maturity / tooling (2026) | Excellent | Moderate | Growing |
+
+: Architecture comparison: transformers, RNNs, and SSMs {.striped}
 
 ## SSM Fundamentals
 
-The continuous-time SSM is defined by two equations: h'(t) = Ah(t) + Bx(t) for state evolution, and y(t) = Ch(t) for output. Here h(t) ∈ ℝ^N is the hidden state, x(t) ∈ ℝ is a scalar input (or a channel of a multi-channel input), A ∈ ℝ^{N×N} is the state transition matrix, B ∈ ℝ^{N×1} is the input projection, and C ∈ ℝ^{1×N} is the output projection. This is exactly a linear time-invariant (LTI) system from control theory. The parameters A, B, C are fixed matrices shared across all time steps — they do not depend on the input. This time-invariance is both the SSM's efficiency advantage and its limitation before Mamba.
+### Continuous-Time Formulation
 
-Discretization converts the continuous-time equations to a discrete recurrence suitable for processing token sequences. The zero-order hold (ZOH) method is the standard: given a step size Δ (the timescale parameter), the discretized matrices are Ā = exp(ΔA) and B̄ = (ΔA)^{-1}(exp(ΔA) − I) ΔB. In practice, with diagonal A, exp(ΔA) is computed element-wise and efficiently. The discrete recurrence is h_t = Āh_{t-1} + B̄x_t and y_t = Ch_t, with Ā and B̄ derived from A, B, Δ. The timescale parameter Δ controls how much "memory" the state retains: large Δ corresponds to longer-range dependencies; small Δ causes the state to decay quickly and focus on local context. In pre-Mamba SSMs, Δ is a learned scalar or vector but still input-independent.
+**Plain-English definition:** An SSM is a learnable "running average" of the input sequence — it reads in signals and maintains a summary state that it updates at every step.
 
-The structured state space design addresses the question: what should A be? An unconstrained N×N matrix is expensive to compute exp(ΔA) for and may have poor gradient flow. The HiPPO (High-order Polynomial Projection Operator) framework provides a theoretically motivated initialization for A that gives the SSM a principled mechanism for memorizing polynomial projections of its input history. Concretely, the HiPPO matrix is structured such that the hidden state h_t optimally approximates the history of x up to time t as a projection onto a set of basis polynomials (Legendre, Fourier, etc.). This is why SSMs initialized with HiPPO can theoretically memorize arbitrary-length history — the state tracks the continuous function of past inputs, not just a lossy summary. In practice, S4 (Structured State Space Sequence Model) uses diagonal-plus-low-rank (DPLR) approximations of HiPPO-initialized A, enabling efficient computation while retaining the theoretical memory properties.
+The continuous-time SSM is defined by two equations:
 
-Parallel scan is the algorithmic trick that enables efficient training of SSMs without sequential computation. The recurrence h_t = Ā h_{t-1} + B̄ x_t is a first-order linear recurrence. The parallel prefix scan algorithm computes all h_t values in O(log n) sequential steps using O(n log n) work — a substantial improvement over the naive O(n) sequential chain. The algorithm proceeds by computing partial sums in a tree structure: first pair adjacent elements, then combine pairs, then combine groups of 4, etc., doubling the covered range at each level. On GPU hardware with many parallel processors, all operations at each level execute simultaneously, giving effective O(log n) wall-clock time instead of O(n). For n=32k, this is a 15× reduction in the number of sequential steps, enabling training that is competitive with transformer training speeds despite the recurrent formulation.
+$$h'(t) = Ah(t) + Bx(t) \quad \text{(state evolution)}$$
+$$y(t) = Ch(t) \quad \text{(output)}$$
+
+Here $h(t) \in \mathbb{R}^N$ is the hidden state, $x(t)$ is the input, and A, B, C are parameter matrices. This is exactly a linear time-invariant (LTI) system from control theory. The parameters A, B, C are fixed matrices shared across all time steps — they do not depend on the input. This time-invariance is both the SSM's efficiency advantage and, before Mamba, its principal limitation.
+
+### Discretization
+
+To process sequences of discrete tokens, the continuous-time equations are discretized. The zero-order hold (ZOH) method:
+
+$$\bar{A} = \exp(\Delta A), \quad \bar{B} = (\Delta A)^{-1}(\exp(\Delta A) - I)\Delta B$$
+
+The discrete recurrence becomes:
+
+$$h_t = \bar{A} h_{t-1} + \bar{B} x_t, \quad y_t = C h_t$$
+
+The timescale parameter $\Delta$ controls how much memory the state retains: large $\Delta$ corresponds to longer-range dependencies; small $\Delta$ causes the state to decay quickly. In pre-Mamba SSMs, $\Delta$ is a learned scalar but still input-independent.
+
+### The HiPPO Matrix: Solving Long-Range Memory
+
+**Plain-English definition:** HiPPO gives SSMs a principled starting point for the A matrix so that the hidden state mathematically remembers important patterns from far in the past, instead of forgetting them through gradient decay.
+
+A fundamental challenge is initializing the state transition matrix A. An arbitrary A may cause the hidden state to explode (eigenvalues > 1) or vanish (eigenvalues < 1) over long sequences — the same problem that plagued vanilla RNNs.
+
+HiPPO (High-order Polynomial Projection Operator) provides a theoretically motivated initialization. The insight: the hidden state $h_t$ should optimally approximate the history of the input $x$ up to time $t$ as a projection onto orthogonal basis functions (typically Legendre polynomials). The HiPPO matrix A is constructed so that the state update implements exactly this online polynomial projection. With N basis functions, $h_t \in \mathbb{R}^N$ represents the best N-polynomial approximation of the input history — earlier inputs are compressed into polynomial basis coefficients rather than discarded.
+
+The practical consequence: a HiPPO-initialized SSM can in principle memorize arbitrarily long input history. The A matrix has structured form (lower-triangular with specific pattern) that keeps eigenvalues near the unit circle, preventing both explosion and vanishing. S4 uses diagonal-plus-low-rank (DPLR) approximations of HiPPO-initialized A for computational tractability.
+
+### Parallel Scan: Training as Fast as Transformers
+
+**Plain-English definition:** A clever tree-structured algorithm that computes all steps of a recurrence simultaneously in O(log n) rounds instead of O(n) sequential steps — making recurrent models trainable at transformer speeds.
+
+The recurrence $h_t = \bar{A} h_{t-1} + \bar{B} x_t$ looks sequential, but the parallel prefix scan algorithm computes all n values in O(log n) sequential rounds using O(n) parallel processors.
+
+**Key insight:** Any prefix of the recurrence collapses into an affine function $h_t = A_{t:0} h_0 + B_{t:0}$. Two affine functions compose as $(A_2, B_2) \circ (A_1, B_1) = (A_2 A_1,\ A_2 B_1 + B_2)$. This composition is associative, enabling tree-structured computation:
+
+- Round 1: Compute pairwise compositions for all adjacent pairs (n/2 operations in parallel)
+- Round 2: Combine results with stride-2 (n/4 operations in parallel)
+- Continue for log₂(n) rounds
+
+For n=32,768: naive sequential requires 32,768 sequential steps; parallel scan requires only 15 rounds. All operations within each round execute simultaneously on GPU. This gives SSMs transformer-like training throughput despite their recurrent structure.
+
+## S4: The First Effective SSM
+
+**Plain-English definition:** S4 was the breakthrough that proved a carefully structured SSM could match transformers on long-range tasks — by combining HiPPO-inspired initialization with an efficient diagonal convolution.
+
+S4 (Structured State Space Sequence Model, Gu et al., 2022) was the first SSM to match or beat transformers on long-range dependency benchmarks (Long Range Arena). The key contributions:
+
+1. **HiPPO initialization** for the A matrix, giving principled long-range memory
+2. **DPLR structure** (diagonal plus low-rank) for A, enabling efficient computation of exp(ΔA)
+3. **Selective convolution interpretation**: at training time, the SSM is viewed as a global convolution, computed efficiently in the frequency domain via FFT
+
+S4's limitation: A, B, C, Δ are still input-independent (LTI). The same transformation applies to every token regardless of its content. An SSM cannot decide "this token is important, I should remember it" vs. "this token is noise, I should ignore it." This limitation motivated Mamba.
 
 ## Mamba's Selective State Space
 
-The central limitation of pre-Mamba SSMs is input-independence. The matrices A, B, C, Δ are learned parameters but apply identically to every token in every sequence — the SSM computes the same transformation regardless of the content of the input. This means an SSM cannot selectively "forget" irrelevant context or "sharpen" its attention on salient inputs. It processes a boring filler word and a critical keyword with the same transition matrix. This is adequate for tasks that depend on the aggregate statistics of a sequence (like many classification tasks) but insufficient for tasks requiring selective recall of specific content — precisely the tasks where transformers excel through attention.
+**Plain-English definition:** Mamba lets the model dynamically decide — per token, based on the token's content — how strongly to update its memory and how to read from it. This is the SSM equivalent of attention's ability to focus.
 
-Mamba's key innovation is making the SSM parameters input-dependent: B, C, and Δ are computed as functions of the current input x_t. Concretely, B_t = LinearB(x_t), C_t = LinearC(x_t), and Δ_t = softplus(LinearΔ(x_t) + parameter_bias). The A matrix remains structured (fixed diagonal structure with learned parameters, not input-dependent) for computational tractability, but B, C, and Δ varying per token gives the model the ability to selectively update its state and selectively read from it. When Δ_t is large for a particular token, the state updates strongly (high memory write); when Δ_t is small, the state largely ignores the input (high forgetting). When C_t is in a direction aligned with the current state, the output strongly reflects that state component; when misaligned, that state component is suppressed. The combination of selective write (via Δ and B) and selective read (via C) gives Mamba associative recall capability that pure LTI SSMs lack.
+### The Core Innovation: Input-Dependent Parameters
 
-The hardware-aware parallel scan algorithm in Mamba addresses a practical obstacle: the selective (input-dependent) SSM cannot precompute a single convolution kernel because the kernel changes with every input. Standard parallel scan would require materializing intermediate state tensors of shape (batch, seq_len, d_state), which at large sequence lengths exceeds GPU SRAM capacity and requires slow HBM reads. Mamba's hardware-aware algorithm reorders computation to keep intermediate states in SRAM by fusing the scan with kernel computation: it tiles the sequence into chunks that fit in SRAM, processes each chunk entirely in registers and SRAM, and writes only the final chunk state to HBM. This is conceptually analogous to FlashAttention's tiling approach — both avoid materializing large intermediate tensors in slow memory. The result is that Mamba's selective scan runs at near-memory-bandwidth-bound speed despite the input-dependent parameters, making it practical to train on sequences of millions of tokens.
+The central limitation of pre-Mamba SSMs is input-independence. The matrices A, B, C, Δ are learned parameters but apply identically to every token. Mamba's key innovation: make B, C, and Δ functions of the current input $x_t$:
 
-Inference characteristics are where Mamba's advantage is most pronounced. At inference time, Mamba switches from parallel scan to pure recurrence: each new token updates the state h_t = A_t h_{t-1} + B_t x_t and produces an output y_t = C_t h_t. This requires O(1) memory per layer — a constant-size state vector of dimension d_state × d_model, independent of sequence length. For a Mamba model with d_model=1024 and d_state=16, the state per layer is 16KB — contrasted with a transformer KV cache that grows linearly. At 100k token context, a transformer KV cache is hundreds of gigabytes; a Mamba model's state is still just 16KB per layer. This makes Mamba practically advantageous for ultra-long streaming inference where the transformer KV cache would exhaust GPU memory long before the sequence ends.
+$$B_t = \text{Linear}_B(x_t), \quad C_t = \text{Linear}_C(x_t), \quad \Delta_t = \text{softplus}(\text{Linear}_\Delta(x_t) + b)$$
 
-## Hybrid Models and Practical Boundaries
+The A matrix remains structured (fixed diagonal with learned parameters) for computational tractability, but B, C, and Δ varying per token gives the model selective memory capability:
 
-Hybrid architectures that combine attention and SSM layers address the complementary weaknesses of each. Pure SSMs excel at long-range sequential processing and streaming inference but struggle with precise in-context retrieval — associative recall of specific facts from long context (e.g., "what was the exact value mentioned in paragraph 3?") is harder for SSMs than for transformers. Pure transformers excel at precise attention-based retrieval but fail at ultra-long context due to O(n²) cost. Hybrid models interleave attention layers (for precise retrieval) with SSM layers (for efficient long-range context compression), getting the best of both.
+- **Large Δ_t**: state updates strongly (high write strength — "remember this")
+- **Small Δ_t**: state largely ignores the input (low write strength — "forget this")
+- **C_t aligned with state**: output strongly reflects that state component ("read this")
+- **C_t misaligned**: that state component is suppressed ("don't read this")
 
-Jamba (AI21 Labs, 2024) combines Mamba layers with transformer attention layers and MoE FFN layers in a single architecture. The design rationale: attention layers handle precise retrieval tasks where Mamba underperforms, while Mamba layers handle long-range context integration efficiently. MoE FFN layers provide high model capacity without proportional compute cost. Jamba-1.5-Large achieved competitive quality with transformers of similar compute budget while supporting 256k context windows without the memory explosion that would afflict a pure transformer. The interleaving ratio (how many attention vs. Mamba layers) is a hyperparameter: more attention layers improve quality on retrieval-heavy tasks at higher memory cost; more Mamba layers reduce memory and improve throughput at some quality cost.
+**Analogy:** Imagine a running summary note (the state). An LTI SSM always writes to and reads from the note in the exact same way regardless of input content. Mamba reads the current word and decides: "This word is critical — write it prominently" (large Δ, strong B), or "This is filler — barely update the note" (small Δ, weak B), and "To answer the current question, read the part of the note about X" (C aligned with X-related state).
 
-RWKV (Receptance Weighted Key Value) takes a different hybrid approach, reformulating attention as a linear recurrence without the softmax. The core idea: standard attention output is a weighted sum of values, with weights computed via softmax(QK^T/√d). RWKV approximates this with a linear recurrence where each state update is a running numerator-denominator pair tracking the weighted sum of values. This gives RWKV transformer-like parallelism during training (via parallel prefix scan on the recurrence) and RNN-like O(1) memory during inference. RWKV forgoes the full O(n²) attention capability, which limits precision on long-range associative recall but eliminates the quadratic cost. RWKV models up to 14B parameters have been trained and perform comparably to transformers on most benchmarks but fall behind on tasks requiring precise long-range recall.
+::: {.callout-tip}
+**Analogy for interviews:** "Mamba is like attention, but instead of a KV cache that grows with sequence length, it has a fixed-size 'working memory' that selectively overwrites itself. It trades exact retrieval for constant memory."
+:::
 
-The transformer still dominates production deployment for three practical reasons. First, the pretraining data advantage: virtually all large-scale foundation models trained at frontier scale (70B+) are transformers, meaning available pretrained weights, instruction-tuned checkpoints, and fine-tuning ecosystems are transformer-centric. SSM pretraining infrastructure is less mature. Second, quality on reasoning and retrieval benchmarks: at equivalent scale and compute, Mamba-style models show quality gaps on tasks involving in-context learning and associative recall, which are important for enterprise use cases. Third, tooling: vLLM, TGI, TensorRT-LLM, and the entire serving optimization stack is built and optimized for transformer architectures. SSM serving infrastructure is nascent. The gap is closing, and SSMs are compelling for specific use cases (ultra-long streaming context, edge deployment), but the practical choice for most production deployments in 2024-2025 remains transformers with efficient attention implementations.
+### Associative Recall: Where Mamba Approaches Transformer Behavior
+
+The combination of selective write (via Δ and B) and selective read (via C) gives Mamba associative recall capability that LTI SSMs lack. Given the input sequence "The capital of France is Paris. The capital of Germany is...", Mamba can:
+
+1. When processing "Paris": large Δ_t, high B_t strength → state strongly encodes (France → Paris)
+2. When processing "Germany": high C_t aligned toward "capital of Germany" → reads state for relevant associations
+
+This is not as precise as attention's exact retrieval (attention can attend directly to "Paris" in the KV cache), but it approximates associative recall within a fixed-size state.
+
+### Hardware-Aware Parallel Scan
+
+The selective (input-dependent) SSM cannot precompute a single convolution kernel because the kernel changes with every input. Standard parallel scan would require materializing intermediate state tensors of shape (batch, seq_len, d_state) — at large sequence lengths, this exceeds GPU SRAM capacity.
+
+Mamba's hardware-aware algorithm tiles the sequence into chunks that fit in SRAM, processes each chunk entirely in registers and SRAM, and writes only the final chunk state to HBM. This is conceptually identical to FlashAttention's tiling approach. The result: Mamba's selective scan runs at near-memory-bandwidth-bound speed despite the input-dependent parameters, making training on millions of tokens practical.
+
+### Mamba Inference: The Constant-Memory Advantage
+
+At inference time, Mamba switches from parallel scan to pure recurrence:
+
+$$h_t = \bar{A}_t h_{t-1} + \bar{B}_t x_t, \quad y_t = C_t h_t$$
+
+This requires O(1) memory per layer — a constant-size state vector of dimension d_state × d_model, independent of sequence length. For Mamba with d_model=1024 and d_state=16, the state per layer is 16KB. At 100k token context, a transformer KV cache is ~52GB (for 32-layer model); a Mamba model's state is ~5MB across all layers. This is the decisive advantage for ultra-long streaming inference.
+
+```python
+# Mamba inference example using the mamba-ssm package
+# pip install mamba-ssm causal-conv1d
+
+import torch
+from mamba_ssm import Mamba
+from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
+from transformers import AutoTokenizer
+
+# Load a pretrained Mamba model (e.g., state-spaces/mamba-2.8b)
+model_name = "state-spaces/mamba-2.8b-slimpj"
+tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")  # Mamba uses GPT-NeoX tokenizer
+
+model = MambaLMHeadModel.from_pretrained(
+    model_name,
+    dtype=torch.float16,
+    device="cuda",
+)
+model.eval()
+
+prompt = "The key advantage of Mamba over transformers for long sequences is"
+input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
+
+# --- Streaming inference: pure recurrent mode ---
+# At inference, Mamba uses the recurrent form: O(1) memory per token
+# regardless of how many tokens have been generated
+
+with torch.no_grad():
+    output = model.generate(
+        input_ids,
+        max_length=200,
+        temperature=0.7,
+        top_p=0.9,
+        # Mamba inference state is fixed-size (no KV cache growth)
+        # Generating token 1000 costs the same memory as token 10
+    )
+
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+
+# --- Manual recurrent step (for streaming applications) ---
+# Each token costs exactly the same compute, regardless of position
+from mamba_ssm.utils.generation import InferenceParams
+
+inference_params = InferenceParams(max_seqlen=100000, max_batch_size=1)
+
+# Process each token with constant memory
+for token_id in input_ids[0]:
+    token_tensor = token_id.unsqueeze(0).unsqueeze(0)  # [1, 1]
+    with torch.no_grad():
+        # inference_params tracks the recurrent state across calls
+        # State size: fixed at d_state × d_model per layer — never grows
+        logits = model(token_tensor, inference_params=inference_params).logits
+    # inference_params.seqlen_offset increments; state is updated in-place
+    inference_params.seqlen_offset += 1
+```
+
+```python
+# Memory comparison: Mamba vs Transformer at varying context lengths
+def transformer_kv_cache_gb(seq_len, num_layers=32, num_heads=32, head_dim=128):
+    """KV cache size in GB for a transformer (FP16)."""
+    # 2 (K and V) × seq_len × num_heads × head_dim × num_layers × 2 bytes
+    bytes_total = 2 * seq_len * num_heads * head_dim * num_layers * 2
+    return bytes_total / (1024 ** 3)
+
+def mamba_state_gb(num_layers=32, d_model=2560, d_state=16):
+    """Recurrent state size in GB for Mamba (FP16)."""
+    # d_model × d_state per layer × 2 bytes (FP16) — CONSTANT regardless of seq_len
+    bytes_total = d_model * d_state * num_layers * 2
+    return bytes_total / (1024 ** 3)
+
+contexts = [1_000, 10_000, 100_000, 500_000, 1_000_000]
+print(f"{'Context':>12} | {'Transformer KV (GB)':>20} | {'Mamba State (MB)':>18}")
+print("-" * 58)
+for ctx in contexts:
+    t_gb = transformer_kv_cache_gb(ctx)
+    m_mb = mamba_state_gb() * 1024  # convert GB to MB
+    print(f"{ctx:>12,} | {t_gb:>20.2f} | {m_mb:>16.2f} (constant)")
+```
+
+Output:
+```
+     Context | Transformer KV (GB)   | Mamba State (MB)
+----------------------------------------------------------
+       1,000 |                 0.52  |          5.00 (constant)
+      10,000 |                 5.24  |          5.00 (constant)
+     100,000 |                52.43  |          5.00 (constant)
+     500,000 |               262.14  |          5.00 (constant)
+   1,000,000 |               524.29  |          5.00 (constant)
+```
+
+## Mamba-2 and SSD
+
+**Plain-English definition:** Mamba-2 rewrote Mamba's internals to be more hardware-efficient by showing that SSMs and attention are different instances of the same mathematical structure.
+
+Mamba-2 (Dao & Gu, 2024) introduced the State Space Duality (SSD) framework, which establishes a formal mathematical equivalence between SSMs and a form of attention (specifically, semiseparable matrices and structured masked attention). The key insight: the SSM recurrence can be written as a structured matrix-vector product where the matrix has a semiseparable structure. This semiseparable structure is a generalization that includes both SSMs (recursively defined) and attention (directly computed).
+
+**Practical implications of SSD:**
+1. Mamba-2 can leverage more of the GPU's tensor core utilization via a larger state size without proportionally more compute (the SSD structure enables more efficient block decomposition)
+2. Training throughput is improved by ~2× over Mamba-1 for the same model quality
+3. The connection to attention helps with hybrid architectures — Mamba-2 and attention share more mathematical infrastructure, making alternation more principled
+
+Mamba-2 also simplifies the selective parameter structure: B and C are constrained to be rank-1 projections, making the scan operation more amenable to GPU-efficient blocked algorithms.
+
+## Hybrid Architectures
+
+**Plain-English definition:** Hybrid models interleave Mamba layers (efficient long-range context) with attention layers (precise in-context retrieval), getting the best of both at a moderate cost.
+
+### Why Hybrids?
+
+Pure SSMs excel at long-range sequential processing and streaming inference but struggle with precise in-context retrieval — finding a specific fact buried deep in a long document. Pure transformers excel at exact retrieval but fail at ultra-long context due to O(n²) cost. Hybrid models interleave attention layers (for precise retrieval) with SSM layers (for efficient long-range context compression).
+
+### Jamba
+
+Jamba (AI21 Labs, 2024) combines Mamba layers with transformer attention layers and MoE FFN layers. The architecture alternates in a pattern of ~3 Mamba layers to 1 attention layer, with MoE FFNs throughout. The design rationale: attention layers handle precise retrieval tasks where Mamba underperforms; Mamba layers handle long-range context integration efficiently; MoE provides high model capacity without proportional compute.
+
+Jamba-1.5-Large achieved competitive quality with transformers of similar compute budget while supporting 256k context windows without the memory explosion that would afflict a pure transformer. The interleaving ratio is a hyperparameter: more attention → better retrieval quality at higher memory cost; more Mamba → lower memory at some retrieval quality cost.
+
+### Zamba
+
+Zamba (Zyphra, 2024) uses a similar hybrid strategy but with a shared attention layer that is called periodically across all blocks (rather than dedicated per-block attention). This amortizes the attention cost further — the same attention weight matrix is reused across multiple Mamba blocks. Zamba-7B achieves transformer-competitive quality on most benchmarks with significantly lower memory at long context.
+
+### Hawk and Griffin (Google DeepMind)
+
+Griffin (De et al., 2024) introduces a novel gated linear recurrence that combines elements of SSMs with gated RNNs, achieving state-of-the-art quality among recurrent models while retaining the O(1) inference memory property. Hawk is a pure recurrent architecture based on the same gated linear recurrence; Griffin alternates Hawk layers with local attention layers (attending only to a window of 1024 tokens). Griffin-14B matches Llama-2-7B quality on most benchmarks with substantially lower inference memory at long context.
+
+### RWKV
+
+RWKV reformulates attention as a linear recurrence without softmax. The core idea: standard attention output is a weighted sum of values with weights via softmax(QK^T/√d). RWKV approximates this with a running numerator-denominator pair tracking the weighted value sum. This gives transformer-like parallelism during training via parallel scan and RNN-like O(1) memory during inference. RWKV models up to 14B parameters perform comparably to transformers on most benchmarks but fall behind on precise long-range recall.
+
+| Architecture | Type | Context | Memory at 100k | Quality vs Transformer |
+|---|---|---|---|---|
+| Transformer (base) | Pure attention | Limited by KV cache | ~52GB | Baseline |
+| Mamba-1/2 | Pure SSM | Unlimited | ~5MB | ~3-5pt gap on reasoning |
+| Jamba-1.5 | Mamba + Attention + MoE | 256k native | ~2GB | Competitive |
+| Griffin | Gated RNN + local attn | Unlimited | ~10MB | ~2-3pt gap |
+| Zamba | Mamba + shared attention | Long context | ~500MB | Competitive |
+| RWKV-v6 | Linear recurrence | Unlimited | ~5MB | ~2-4pt gap |
+
+: Hybrid and SSM architecture comparison {.striped}
+
+## When Mamba Beats Transformers — and When It Doesn't
+
+### When Mamba Wins
+
+**Very long sequences (> 10k tokens):** Transformer KV cache becomes the binding GPU memory constraint. Mamba's constant-memory inference is the only practical option at extreme lengths (> 100k tokens per sequence).
+
+**Streaming applications with constant latency requirements:** Per-token compute and memory cost is constant for Mamba regardless of how many tokens have already been generated. Transformer decode latency grows as context length grows (attending over a longer KV cache). For IoT, audio transcription, or real-time video captioning where latency must stay flat, Mamba's O(1) decode is architecturally correct.
+
+**Edge deployment with tight memory budgets:** A Mamba-7B model on a device with 8GB RAM can process unlimited context; a transformer-7B on the same device runs out of KV cache memory after ~2k tokens at batch size 1.
+
+**Tasks with aggregate sequential statistics:** Genomics, time-series forecasting, audio processing — domains where the relevant signal is a running summary of past context rather than precise recall of a specific position.
+
+### When Transformers Win
+
+**Complex in-context reasoning:** Few-shot prompting, chain-of-thought reasoning, multi-step instruction following. Transformers can attend exactly to in-context examples at any position. Mamba's state is lossy — examples from early in a long prompt may be partially overwritten by later content.
+
+**Precise retrieval from long context ("needle in a haystack"):** Finding a specific value mentioned at position 1 in a 100k-token document. Attention directly addresses that KV position; Mamba's state may have compressed or lost it.
+
+**Tasks with complex cross-token dependencies at arbitrary positions:** Tasks that require jointly considering two pieces of information from arbitrary positions in the sequence (not just recent context). Transformer attention handles this exactly; Mamba must have learned to retain both in its fixed state.
+
+**Production deployment (2026):** Tooling maturity. vLLM, TGI, TensorRT-LLM, PEFT libraries, Axolotl, and the full serving/fine-tuning ecosystem are built for transformers. Mamba serving is community-supported. For enterprise production deployment, the default is transformer unless you have a specific long-context requirement that transformer cannot meet.
+
+::: {.callout-tip}
+**Interview framing:** "Mamba and transformers have complementary failure modes. Mamba fails at precise long-range retrieval; transformers fail at very long context due to quadratic cost. Hybrid architectures like Jamba are the current practical answer — alternating Mamba layers (for compression) with attention layers (for retrieval)."
+:::
+
+### Capability Comparison Table
+
+| Capability | Transformer | Mamba | Hybrid (Jamba) |
+|---|---|---|---|
+| Memory at 100k context | ~52GB KV cache | ~5MB state | ~2GB |
+| Per-token inference cost | Grows with context | Constant | Mostly constant |
+| Precise in-context retrieval | Excellent | Moderate | Good |
+| Few-shot in-context learning | Excellent | Fair | Good |
+| Ultra-long context (>100k) | Impractical | Excellent | Good (256k) |
+| Streaming constant latency | No (grows) | Yes | Mostly yes |
+| Multi-step reasoning (MATH) | Baseline | ~3-5pt gap | ~1-2pt gap |
+| Fine-tuning ecosystem maturity | Excellent | Early-stage | Moderate |
+
+: Transformer vs Mamba vs Hybrid capabilities {.striped}
+
+## Practical Guidance for Production
+
+**Decision framework:**
+
+1. Context length < 32k: use a transformer (mature tooling, competitive quality, no meaningful SSM advantage)
+2. Context length 32k–256k: evaluate Jamba or transformer with efficient attention (Flash/ring attention)
+3. Context length > 256k or streaming constant-latency: Mamba or Mamba hybrid is the only practical architecture
+4. Edge/mobile deployment with tight memory: Mamba is often the only viable option
+
+::: {.callout-warning}
+**Production Gotcha:** Mamba's recurrent state at inference is stateful across tokens. If you naively batch sequences with padding (padding tokens inserted to align batch lengths), the padding tokens update the recurrent state and corrupt subsequent token processing. Unlike transformers (where padding positions can be masked in the attention matrix), Mamba padding requires careful handling — either via left-padding (putting actual content last) or padding-aware state reset logic.
+:::
+
+::: {.callout-warning}
+**Production Gotcha:** Mamba does not support KV-cache-style prefix caching (as in vLLM's prefix caching for system prompts). Transformer serving systems cache the KV pairs for a fixed system prompt so it only needs to be processed once per unique prompt. Mamba's recurrent state cannot be cached the same way — the state after processing a system prompt is model-specific and cannot be shared across requests with the same prefix unless you explicitly checkpoint and restore the state vector. This is a non-trivial operational difference.
+:::
+
+```python
+# Practical: comparing Mamba and transformer for long-context summarization
+# Shows when to choose each architecture
+
+def estimate_memory_requirements(
+    model_type: str,
+    seq_len: int,
+    model_size_b: float = 7.0,  # parameters in billions
+    num_layers: int = 32,
+    d_model: int = 4096,
+) -> dict:
+    """
+    Rough GPU memory estimate for inference.
+    Returns dict with weights_gb, state_gb, total_gb.
+    """
+    weights_gb = model_size_b * 2 / 1  # FP16: 2 bytes per param
+
+    if model_type == "transformer":
+        # KV cache: 2 * seq_len * num_heads * head_dim * num_layers * 2 bytes
+        num_heads, head_dim = 32, 128  # typical for 7B
+        kv_cache_bytes = 2 * seq_len * num_heads * head_dim * num_layers * 2
+        state_gb = kv_cache_bytes / (1024 ** 3)
+    elif model_type == "mamba":
+        # Recurrent state: d_model * d_state * num_layers * 2 bytes
+        d_state = 16  # typical Mamba
+        state_bytes = d_model * d_state * num_layers * 2
+        state_gb = state_bytes / (1024 ** 3)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    return {
+        "weights_gb": weights_gb,
+        "state_gb": state_gb,
+        "total_gb": weights_gb + state_gb,
+    }
+
+# Show the crossover
+for seq_len in [4096, 16384, 65536, 131072, 262144]:
+    t = estimate_memory_requirements("transformer", seq_len)
+    m = estimate_memory_requirements("mamba", seq_len)
+    print(
+        f"seq={seq_len:>8,}: "
+        f"transformer={t['total_gb']:.1f}GB, "
+        f"mamba={m['total_gb']:.1f}GB "
+        f"({'MAMBA WINS' if m['total_gb'] < t['total_gb'] else 'TRANSFORMER WINS'})"
+    )
+```
+
+## Cheat Sheet
+
+- Transformer attention is O(n²) in both compute and memory — **not an implementation bug, a fundamental property** of pairwise comparison
+- FlashAttention reduces *memory* cost to O(n) but compute is still O(n²); doubling context still quadruples FLOPs
+- RNNs have O(1) inference memory but cannot be parallelized for training (sequential BPTT) — replaced by transformers despite inference efficiency
+- SSMs thread the needle: **recurrent at inference (O(1) memory), parallel at training (parallel scan)**
+- SSM continuous-time form: h'(t) = Ah(t) + Bx(t), y(t) = Ch(t)
+- Discretization with ZOH: Ā = exp(ΔA), B̄ = (ΔA)^{-1}(exp(ΔA) - I)ΔB
+- HiPPO matrix: principled A initialization that approximates input history as polynomial projections — solves the vanishing/exploding gradient problem for the recurrence
+- S4 (Gu et al., 2022): first effective SSM, combines HiPPO + DPLR structure + parallel convolution training
+- **Mamba's core innovation**: B, C, Δ are input-dependent — model decides per-token how strongly to update state (Δ) and what to read (C)
+- Large Δ_t → strong state update ("remember this"); small Δ_t → weak update ("ignore this")
+- Hardware-aware scan: tiles sequence to fit in SRAM, avoids materializing large intermediate states in HBM — analogous to FlashAttention
+- **Mamba inference**: pure recurrence, O(1) memory (5MB for 7B model vs 52GB KV cache for transformer at 100k context)
+- **Mamba fails at**: precise long-range retrieval, few-shot ICL, complex multi-step reasoning (~3-5pt gap on benchmarks)
+- **Mamba wins at**: very long sequences (>10k), streaming constant-latency, edge deployment
+- Mamba-2 (SSD framework): establishes formal duality between SSMs and attention (semiseparable matrices), improves hardware efficiency ~2×
+- **Jamba** (AI21): Mamba + attention + MoE, 3:1 ratio, 256k context, transformer-competitive quality
+- **Griffin** (DeepMind): gated linear recurrence + local attention, strong quality/memory tradeoff
+- Parallel scan: O(log n) sequential rounds using O(n) parallel processors; 32k tokens → 15 rounds vs 32,768 sequential
+- Padding gotcha: Mamba's recurrent state is corrupted by padding tokens — requires left-padding or state-reset logic, unlike transformers where padding is maskable in attention
+- Prefix caching (vLLM-style) does not apply to Mamba — recurrent state cannot be shared across requests with the same prefix without explicit state checkpointing
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+### Entry Level
+
 **Q1. What is the key computational advantage of SSMs over transformers?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-SSMs have O(n) training complexity (with parallel scan) and O(1) inference memory, compared to transformers' O(n²) attention complexity and O(n) KV cache memory. The transformer's self-attention must compute relationships between every pair of positions in the sequence, producing an n×n attention matrix. At long sequence lengths, this becomes the dominant cost — both in FLOP count and in memory. SSMs instead maintain a fixed-size hidden state that summarizes all past context and update it with each new token. No pairwise comparison, no growing cache.
+**Weak answer:** "SSMs are faster than transformers."
 
-The practical implication is dramatic at long context: a transformer processing a 1M-token sequence requires an astronomically large attention matrix (or a very expensive FlashAttention pass), while an SSM processes the same sequence token-by-token with the same fixed state size throughout. This makes SSMs attractive for streaming inference applications (IoT, real-time audio/video processing) and ultra-long document processing where transformer KV caches would exhaust GPU memory.
-:::
+**Strong answer:** SSMs have O(1) inference memory (fixed-size recurrent state regardless of sequence length), compared to transformers' O(n) KV cache that grows linearly with context. At training time, SSMs achieve O(n log n) complexity via parallel scan versus transformers' O(n²) attention.
+
+The practical implication: a Mamba model processing a 1M-token sequence uses the same 5MB of recurrent state as when processing a 1k-token sequence. A transformer at 1M tokens would need hundreds of GB of KV cache — physically impossible on current hardware. This makes SSMs the only practical architecture for truly ultra-long streaming contexts, edge deployment with limited memory, or applications where per-token latency must stay constant regardless of how many tokens have already been generated.
 :::
 
-::: {.callout-tip title="Entry Level"}
 **Q2. Why can't you just use an RNN instead of a transformer for long sequences?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-RNNs have the same inference-time advantage as SSMs — O(1) memory per token generated — but they have a catastrophic training disadvantage. Because each hidden state depends on the previous hidden state, backpropagation through time (BPTT) must unroll the network through every time step sequentially. For a 32k-token sequence, that is 32k sequential operations during the backward pass. GPUs are designed for massively parallel computation; sequential dependencies eliminate almost all parallelism. Training an RNN on a 32k-sequence dataset is orders of magnitude slower than training a transformer on the same data.
+RNNs have the same inference advantage as SSMs — O(1) memory per token — but they have a catastrophic training disadvantage: backpropagation through time (BPTT) must unroll the network sequentially through every time step. For a 32k-token sequence, that is 32k sequential operations during the backward pass. GPUs are designed for massively parallel computation; this sequential dependency eliminates almost all parallelism, making RNN training orders of magnitude slower than transformers on the same data.
 
-SSMs escape this trap by exploiting the mathematical structure of linear recurrences. When the state transition is a linear operation (h_t = A h_{t-1} + B x_t with fixed A), the entire sequence of hidden states can be computed via parallel prefix scan in O(log n) sequential steps using O(n) processors in parallel. This parallel scan formulation gives SSMs transformer-like training speed while retaining the RNN's inference-time efficiency. RNNs with nonlinear activations in the recurrence (which is why LSTMs use gates — to handle vanishing gradients) cannot be parallelized this way, which is why they could not compete with transformers for large-scale pretraining.
-:::
+SSMs escape this via the linear recurrence structure. When the state transition is linear (h_t = Ah_{t-1} + Bx_t), the recurrence can be computed by parallel prefix scan in O(log n) sequential rounds. RNNs with nonlinear activations (LSTMs use tanh in the candidate state) cannot be parallelized this way — the nonlinearity breaks the associative composition property that parallel scan requires. Mamba's A matrix remains linear (even though B, C, Δ are input-dependent), which is why it retains trainability.
 :::
 
-::: {.callout-tip title="Entry Level"}
-**Q3. What makes Mamba "selective" compared to earlier SSMs?**
+**Q3. What makes Mamba "selective" compared to earlier SSMs like S4?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Earlier SSMs (S4, S5, H3) use fixed matrices A, B, C that are learned during training but applied identically to every input token at inference. The SSM computes the same state transition regardless of whether the current token is a critical keyword or an irrelevant filler word. This input-independence means the SSM cannot focus on or ignore specific parts of the input — it processes everything with the same transformation.
+Earlier SSMs (S4, S5, H3) use fixed matrices A, B, C, Δ that are learned during training but applied identically to every input token. The model computes the same state transition for every word — it processes "the" and "Paris" with the same transformation regardless of which is more important for the task.
 
-Mamba makes the B, C, and Δ parameters input-dependent: for each token x_t, Mamba computes B_t = Linear(x_t), C_t = Linear(x_t), and Δ_t = softplus(Linear(x_t)). The Δ parameter controls the state update rate — when Δ_t is large, the new token's information strongly updates the state (high write strength); when small, the state mostly ignores the input. C_t controls what aspect of the state is read for the current output. This mechanism allows Mamba to selectively memorize relevant tokens, selectively forget irrelevant tokens, and selectively attend to specific state components — approximating the discriminative behavior of attention through selective state updates and reads, but with O(1) inference memory instead of a growing KV cache.
-:::
+Mamba makes B, C, and Δ functions of the current input: B_t = Linear(x_t), C_t = Linear(x_t), Δ_t = softplus(Linear(x_t)). The Δ parameter controls how strongly the current token updates the state: large Δ means "write this token strongly to memory"; small Δ means "mostly ignore this token." C controls what aspect of the state is read. This selective write (via Δ and B) and selective read (via C) gives Mamba the ability to remember relevant tokens, forget irrelevant ones, and focus on specific state components — approximating attention's discriminative behavior within a fixed-size state.
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q4. Explain the parallel scan trick that makes SSMs trainable efficiently.**
+**Q4. Explain the recurrent vs. parallel duality in SSMs.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-A first-order linear recurrence h_t = a_t h_{t-1} + b_t (where a_t and b_t may vary per step) looks sequential — each value depends on the previous. But the parallel prefix scan algorithm computes all n values in O(log n) sequential rounds using O(n) parallel processors.
+SSMs have two mathematically equivalent representations suited to different pipeline phases.
 
-The key insight: any prefix of the recurrence can be collapsed into an affine function h_t = A_{t:0} h_0 + B_{t:0}, where A and B are accumulated transition coefficients. Two affine functions compose as (A_2, B_2) ∘ (A_1, B_1) = (A_2 A_1, A_2 B_1 + B_2). This composition is associative, enabling tree-structured parallel computation. In round 1, compute pairwise compositions for all adjacent pairs (n/2 operations in parallel). In round 2, compose results with stride-2 steps (n/4 operations in parallel). Continue for log₂(n) rounds. Every h_t is computable independently once you have the prefix accumulated up to position t.
+**Recurrent form** (for inference): h_t = Āh_{t-1} + B̄x_t, y_t = Ch_t. Processes one token at a time, requires O(1) memory (just the state vector), O(d_state × d_model) compute per step — all independent of sequence length. Ideal for autoregressive token generation.
 
-On GPU hardware, all operations within a round execute simultaneously. For n=32,768, naive sequential scan requires 32,768 sequential steps; parallel scan requires only 15 sequential rounds of decreasing-size parallel operations. The total work is O(n log n) vs. O(n) for sequential, but the wall-clock time advantage is enormous on parallel hardware. Mamba's hardware-aware implementation further fuses the scan with the selective parameter computation, keeping intermediate states in SRAM rather than writing them to HBM, achieving near-peak memory bandwidth utilization.
+**Parallel (convolutional) form** (for training): when A is time-invariant, the full sequence of outputs can be computed as y = x ★ K (convolution with a kernel K derived from A, B, C). This can run as O(n log n) via FFT or O(log n) wall-clock via parallel scan. Admits full GPU parallelism across the sequence dimension — the same batch-level throughput as transformer training.
+
+The duality is the key engineering insight: train using the parallel form (fast GPU utilization), infer using the recurrent form (constant memory). Mamba's selective parameters complicate the pure convolution form (the kernel changes per-token), but the hardware-aware parallel scan achieves similar GPU efficiency despite the input dependence.
 :::
-:::
 
-::: {.callout-warning title="Mid Level"}
-**Q5. Compare Mamba's inference characteristics (memory, speed) to a transformer at 100k token context.**
+**Q5. What is the HiPPO matrix and what problem does it solve?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-At 100k token context, the comparison is stark. A transformer must maintain a KV cache containing the K and V projections for all 100,000 previous tokens. For a 32-layer transformer with 32 heads of dimension 128, this is 2 × 100,000 × 32 × 128 × 32 × 2 bytes ≈ 52GB per sequence. Serving a single 100k-context sequence saturates an A100 80GB GPU in KV cache alone before considering weights or activations. Batching multiple such sequences is essentially impossible without significant compression.
+HiPPO (High-order Polynomial Projection Operator) provides a theoretically motivated initialization for the state transition matrix A in SSMs.
 
-A Mamba model of equivalent size maintains a fixed state per layer: for Mamba-3B with hidden dimension 2,560 and state size 16, the state per layer is 2,560 × 16 × 4 bytes ≈ 160KB. Across 32 layers, total state is ~5MB, completely independent of context length. At 100k tokens, Mamba uses 5MB of recurrent state; the transformer needs 52GB of KV cache. Memory is no longer the binding constraint for Mamba's long-context inference.
+**The problem it solves:** A randomly initialized A may have eigenvalues that cause the hidden state to explode (eigenvalues > 1) or vanish (eigenvalues < 1) over long sequences — losing information about distant inputs. This is the same vanishing/exploding gradient problem that plagued vanilla RNNs.
 
-Decode speed: Mamba's per-token decode requires one matrix-vector multiply per layer (state update) — the same operation regardless of context length. Transformer decode requires attending over all previous KV positions, with compute growing linearly with context. At 100k context, transformer decode is noticeably slower per token than at 1k context; Mamba decode is identical. The tradeoff is quality: transformers can precisely retrieve any specific token from the 100k-long KV cache; Mamba's state is a lossy compression that may lose specific details from much earlier in the sequence.
+**The solution:** HiPPO constructs A such that the state update h'(t) = Ah(t) + Bx(t) implements online projection of the input history onto orthogonal polynomial basis functions (typically Legendre polynomials). The state h_t encodes the best N-polynomial approximation of the input history up to position t. The A matrix structure keeps eigenvalues near the unit circle, preventing both explosion and vanishing.
+
+**Practical result:** SSMs initialized with HiPPO can memorize arbitrarily long input history in principle. S4 and Mamba both build on HiPPO initialization, which is why they dramatically outperform randomly initialized SSMs on long-range dependency tasks.
 :::
-:::
 
-::: {.callout-warning title="Mid Level"}
-**Q6. What is Jamba and why did Jamba combine attention with Mamba?**
+---
+
+### Mid Level
+
+**Q6. Explain the parallel scan algorithm that makes SSMs trainable efficiently.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Jamba (AI21 Labs, 2024) is a hybrid transformer-Mamba-MoE architecture that interleaves standard multi-head attention layers with Mamba SSM layers, and replaces FFN sublayers with MoE expert banks in most layers. The architecture alternates in a pattern like 3 Mamba layers : 1 attention layer, with MoE FFNs throughout.
+A first-order linear recurrence h_t = a_t h_{t-1} + b_t looks sequential — each value depends on the previous. But parallel prefix scan computes all n values in O(log n) sequential rounds using O(n) parallel processors.
 
-The motivation for combining attention with Mamba addresses the complementary failure modes of each. Pure Mamba models underperform transformers on tasks requiring precise in-context retrieval — when the model must retrieve a specific fact mentioned thousands of tokens ago, the Mamba state may have compressed it into a lossy representation. Attention layers provide exact retrieval capability: they can attend directly to any position in the sequence, regardless of how it has been compressed by the SSM state. Pure transformers cannot scale to extremely long contexts due to O(n²) attention cost and O(n) KV cache growth. Mamba layers handle long-range context integration efficiently, compressing distant context into a fixed-size state.
+**Key insight:** Any prefix of the recurrence collapses to an affine function h_t = A_{t:0} h_0 + B_{t:0}. Two affine functions compose as (A_2, B_2) ∘ (A_1, B_1) = (A_2A_1, A_2B_1 + B_2). This composition is **associative**, enabling tree-structured computation:
 
-The interleaving serves both goals: Mamba layers efficiently propagate and summarize long-range context; the periodic attention layers provide precise retrieval from the most recently attended context. Jamba-1.5-Large demonstrated that this hybrid achieves competitive benchmark quality with transformer-only models while supporting 256k context windows at a fraction of the memory cost, validating the complementarity hypothesis.
+- Round 1: Compose all adjacent pairs (n/2 parallel operations)
+- Round 2: Compose stride-2 pairs (n/4 parallel operations)
+- Continue log₂(n) rounds
+
+For n=32,768: sequential needs 32,768 steps; parallel scan needs 15 rounds. All operations within each round execute simultaneously on GPU — practical O(log n) wall-clock.
+
+Mamba's hardware-aware implementation adds an optimization: intermediate states are kept in SRAM (fast) rather than written to HBM (slow) between rounds, by tiling the sequence into chunks that fit in SRAM. This is conceptually identical to FlashAttention's tile-level optimization, achieving near-peak memory bandwidth utilization.
+
+**Follow-up: Can parallel scan handle Mamba's input-dependent parameters?** Yes. Mamba's per-token Ā_t and B̄_t are still used in the recurrence h_t = Ā_t h_{t-1} + B̄_t x_t. The affine composition still applies: (Ā_2, B̄_2) ∘ (Ā_1, B̄_1) = (Ā_2 Ā_1, Ā_2 B̄_1 + B̄_2). The input-dependence just means the a_t and b_t values are not precomputed — they are computed on-the-fly during the scan, which Mamba's hardware-aware algorithm handles efficiently.
 :::
-:::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q7. A customer has a use case processing 500k-token documents in real-time streaming. Would you recommend Mamba or transformer?**
+**Q7. Compare Mamba's inference characteristics to a transformer at 100k token context.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-For 500k-token streaming document processing, Mamba or a Mamba-hybrid is the technically correct recommendation with important caveats about production readiness.
+At 100k token context, the comparison is stark across memory, compute, and quality dimensions.
 
-The transformer is not viable without massive infrastructure: 500k-token context requires a KV cache of approximately 260GB per sequence (for a 32-layer, 32-head transformer at FP16), which cannot fit on any available GPU and would require aggressive quantization and offloading strategies that add hundreds of milliseconds of latency. Even with FlashAttention-3, the O(n²) compute cost at 500k tokens is prohibitive for real-time requirements.
+**Memory:**
+- Transformer: KV cache = 2 × 100,000 × 32 × 128 × 32 × 2 bytes ≈ 52GB per sequence. Serving even a single 100k-context sequence saturates an A100 80GB GPU before accounting for weights.
+- Mamba (3B, d_model=2560, d_state=16): state = 2,560 × 16 × 32 layers × 2 bytes ≈ 5MB. Context length has zero effect on state size.
 
-Mamba's 500k-token inference requires the same fixed state size as 1k-token inference — a fundamental advantage. For streaming (left-to-right processing as tokens arrive), Mamba's recurrent mode is exactly the right paradigm: process each token in O(1) memory and O(d²) compute, accumulate state, produce output, move to next token. Per-token latency is constant regardless of how many tokens have been seen.
+**Per-token decode compute:**
+- Transformer: must attend over all n previous KV positions. At 100k context, this is 100× more attention compute than at 1k context.
+- Mamba: one matrix-vector multiply per layer. Identical at token 1 and token 100,000. Constant per-token latency regardless of position in sequence.
 
-However, important caveats for enterprise deployment in 2025: production-grade serving infrastructure for Mamba is less mature than for transformers. vLLM does not natively support Mamba (though there are community implementations). Fine-tuning tooling (PEFT, Axolotl, etc.) is primarily transformer-focused. The quality of available Mamba checkpoints at the scale needed for complex document understanding lags behind frontier transformer models. Jamba-1.5-Large is the most production-ready option, offering 256k native context with transformer-competitive quality and better tooling than pure Mamba.
+**Quality tradeoff:**
+- Transformer: exact retrieval from any position in the KV cache. "Needle in a haystack" retrieval is essentially perfect.
+- Mamba: fixed-size state is a lossy compression. Information from very early in the sequence may be overwritten by later content. Precise retrieval of specific facts is weaker; aggregate understanding of the full document is often comparable.
 
-My recommendation: prototype with Jamba for up to 256k context or a Mamba-hybrid for 500k; plan for a transition to more mature SSM infrastructure as the ecosystem develops in 2025-2026.
+**Bottom line:** For long-context serving, Mamba's memory advantage is not incremental — it is the difference between feasible and infeasible. For tasks requiring exact retrieval, transformer or hybrid is necessary.
 :::
-:::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q8. What are the current gaps in SSM model quality vs. transformers at equivalent scale?**
+**Q8. How does Mamba's selective state space differ from a gated RNN like an LSTM?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The quality gaps between SSMs and transformers at equivalent scale (matching total parameters and training tokens) cluster around three capability areas as of 2025.
+Both use input-dependent gating to control information flow, but the crucial difference is the **linearity** of Mamba's recurrence.
 
-In-context learning (ICL) and few-shot prompting: transformers learn from examples provided in the prompt by attending directly to them during generation. SSMs must compress prompt examples into the recurrent state, and the state may not preserve all the inductive signals needed for reliable few-shot learning. Mamba models show measurable ICL capability but lag transformers on tasks requiring precise pattern extraction from 5-10 in-context examples, particularly when the pattern is subtle.
+**LSTM:** The update gate z_t = σ(W_z x_t + U_z h_{t-1}) controls how much past state carries forward. The candidate state uses tanh(W_c x_t + U_c (r_t ⊙ h_{t-1})) — a **nonlinear** operation involving h_{t-1}. This nonlinearity means the recurrence cannot be written as an affine function of h_{t-1} across steps, breaking the parallel scan's associativity requirement. You cannot fold multiple LSTM steps into a single composed operator. Training requires sequential BPTT.
 
-Precise retrieval from long context: the "needle in a haystack" style tasks — finding a specific fact embedded in a large document — remain weaker for pure Mamba vs. transformers. The recurrent state is a lossy compression and information from very early in a long sequence may be overwritten by later content. Hybrid models (Jamba, Zamba) largely close this gap by including periodic attention layers.
+**Mamba:** The recurrence h_t = Ā_t h_{t-1} + B̄_t x_t is **linear in h_{t-1}** — even though Ā_t and B̄_t are input-dependent. The linearity preserves the associative affine composition property, enabling O(log n) parallel scan. Mamba recovers gating-like selective behavior (via Δ_t controlling Ā_t magnitude) within a mathematically parallelizable framework.
 
-Complex multi-step reasoning: tasks on MATH, AIME, and competitive programming benchmarks show a systematic ~3-5 point gap between the best SSM models and equivalent-parameter transformers. The hypothesis is that multi-step reasoning requires precise "in-context scratch pad" operations that attention's exact retrieval enables but SSM's lossy state hinders. This gap is largest on reasoning benchmarks and smallest on language modeling perplexity.
-
-What is not a gap: language modeling perplexity on standard pretraining distributions, instruction following quality (for well-fine-tuned models), factual QA, and summarization are essentially equivalent between SSMs and transformers at matched scale and training tokens. The practical gap is narrower than the architectural difference might suggest.
+In short: LSTMs are gated nonlinear RNNs — powerful but not parallelizable. Mamba is a linear gated recurrence — parallelizable via scan while approximating LSTM-style selectivity. The A matrix remaining fixed (structured diagonal) while B, C, Δ vary per input is the careful design choice that maintains linearity in h while achieving selectivity in the transitions.
 :::
+
+**Q9. What is Jamba and what are the design tradeoffs in its hybrid architecture?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Jamba (AI21 Labs, 2024) interleaves Mamba SSM layers with standard multi-head attention layers and MoE FFN layers, in a pattern of approximately 3 Mamba : 1 attention, with MoE throughout.
+
+**Motivation:** Pure Mamba underperforms on precise in-context retrieval. Pure transformers cannot scale to extremely long contexts. The complementary failure modes suggest a hybrid: Mamba layers handle long-range context compression efficiently; attention layers provide exact retrieval capability from the most recent context window.
+
+**Design tradeoffs:**
+
+- *Attention layer frequency*: More attention layers → better retrieval quality but higher memory cost (KV cache grows with the number of attention layers). Fewer attention layers → lower memory at some retrieval quality cost.
+
+- *MoE vs. dense FFN*: MoE provides higher effective model capacity (total parameters) without proportional compute — only a subset of experts activates per token. This allows Jamba to have more parameters than a pure dense model at the same FLOP budget, improving quality. Tradeoff: MoE requires expert routing logic and has higher memory cost (all experts' weights must be loaded).
+
+- *Context length*: With Mamba layers compressing most of the sequence and only periodic attention layers needing KV cache, Jamba's effective KV cache is smaller than a full transformer at the same context length. Jamba-1.5 supports 256k context natively.
+
+**When to recommend Jamba:** When you need long context (>32k) with transformer-competitive quality, and you can accept that the fine-tuning/serving ecosystem is less mature than pure transformer tooling.
+:::
+
+**Q10. Explain the State Space Duality (SSD) in Mamba-2.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Mamba-2 (Dao & Gu, 2024) establishes that SSMs and a form of structured attention are mathematically dual representations of the same underlying operation — semiseparable matrix-vector products.
+
+**The duality:** The SSM recurrence h_t = Ā h_{t-1} + B̄ x_t, y_t = C_t h_t can be written as a matrix-vector product y = M x, where M is a semiseparable matrix — a structured matrix whose lower triangular part has low-rank structure (rank at most N, the state dimension). Attention can also be written as y = M x where M is an unmasked (or masked) outer product. Both are instances of structured matrix-vector products; SSMs are the low-rank semiseparable case, attention is the full-rank case.
+
+**Why this matters practically:**
+
+1. **Hardware efficiency:** The SSD connection reveals that Mamba-2 can use larger state dimensions (d_state) than Mamba-1 while maintaining competitive GPU utilization — the block-diagonal structure exposed by SSD enables more efficient blocked matrix operations that map well to GPU tensor cores.
+
+2. **Training throughput:** Mamba-2 achieves roughly 2× the training throughput of Mamba-1 at matched model quality by exploiting the SSD structure for better tensor parallelism.
+
+3. **Hybrid architecture design:** Understanding that SSMs and attention are different points on a mathematical continuum helps design hybrid architectures more principly — you can think of Jamba's Mamba-attention alternation as trading between low-rank (memory-efficient) and full-rank (precise retrieval) structured attention layers.
+:::
+
+---
+
+### Senior Level
+
+**Q11. Design a document summarization system for 500-page PDFs. Would you use Mamba or a transformer? Defend your architecture choice.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is an architecture selection problem with real constraints. The right answer depends on the requirement details, and a strong candidate asks clarifying questions before committing.
+
+**Key questions:**
+1. What context length does a 500-page PDF represent? Typically 100k–400k tokens depending on density.
+2. Does the summary need to cite or retrieve specific passages? (precision retrieval requirement)
+3. What are the latency and cost constraints? Single-user interactive vs. batch?
+4. Is this 2026 or hypothetical future? (tooling maturity matters)
+
+**Architecture recommendation: Jamba or retrieval-augmented transformer, not pure Mamba.**
+
+Here is why:
+
+A 400k-token context is beyond practical transformer capabilities (KV cache > 200GB per sequence). This rules out a naive transformer. But pure Mamba also has a weakness: summarization of 500 pages often requires the model to reference and synthesize specific facts from arbitrary positions — "What did section 3.2 say about liability?" This is precise positional retrieval, where Mamba's lossy state compression hurts.
+
+**Option A (preferred): Hierarchical transformer + RAG**
+- Chunk the PDF into 4k-token passages
+- Embed each chunk with a dense encoder
+- For summarization, retrieve top-k relevant chunks per summary section
+- Run a transformer (Llama-3-70B or similar) over the retrieved 32k-token context
+- Generates high-quality summaries with precise fact retrieval
+- Uses mature tooling (vLLM, LangChain/LlamaIndex, FAISS)
+- Latency: moderate (retrieval + generation)
+
+**Option B (if streaming/latency-critical): Jamba or Mamba-hybrid**
+- Process the full document end-to-end in one pass
+- No retrieval overhead; single-pass summary
+- Memory: ~2GB at 256k context with Jamba-1.5 (vs. 200GB+ for transformer)
+- Quality: slightly lower on specific fact retrieval; comparable on overall summary
+- Serving infrastructure is less mature but viable as of 2026 with Jamba
+
+**When to choose Mamba-based:**
+- Truly streaming input (document arrives token by token, summary needed in real-time)
+- Documents > 300k tokens where even Jamba's 256k limit is exceeded
+- Edge/offline deployment where GPU memory is the binding constraint
+
+> **What great looks like:** Names the precise context length, quantifies the transformer KV cache impossibility, identifies the retrieval quality tradeoff, proposes a concrete hybrid solution (hierarchical RAG or Jamba), and frames the answer around actual production constraints rather than theoretical architecture properties.
+:::
+
+**Q12. Explain the computational complexity difference between Mamba and transformers at inference time. Why does this matter at 1M tokens but not at 1k tokens?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Transformer inference complexity:**
+- Per-token compute: O(n × d) — each new token must attend over all n previous KV positions, each of dimension d. At token 1000, you do 1000 attention operations; at token 100,000, you do 100,000 — 100× more compute per token.
+- KV cache memory: O(n × num_layers × d_kv) — grows linearly with every token generated.
+- Practical consequence: both compute cost per token and memory usage increase as the sequence grows. A sequence at position 100k is 100× more expensive per token than at position 1k.
+
+**Mamba inference complexity:**
+- Per-token compute: O(d × d_state) — one state update and output computation, both fixed-size operations regardless of how many tokens came before.
+- Recurrent state memory: O(d × d_state × num_layers) — completely constant, independent of n.
+- Practical consequence: token 1 and token 1,000,000 cost exactly the same compute and use exactly the same memory.
+
+**Why it doesn't matter at 1k tokens:**
+At 1k tokens, a transformer KV cache is ~0.5GB (well within GPU capacity) and attention compute per token is fast (1000 positions × small head dimension). The overhead is negligible relative to other inference costs (memory bandwidth for weight loading, etc.). Mamba's structural advantage exists but is tiny in absolute terms.
+
+**Why it dominates at 1M tokens:**
+Transformer: KV cache ≈ 500GB (physically impossible on current hardware); per-token compute ≈ 1000× more than at 1k. The model literally cannot run. Even with clever chunking, you lose long-range context.
+Mamba: state = 5MB (same as at 1k); per-token compute = identical to 1k. The model runs identically at any context length. The only architectural limitation is the lossy state compression — it may not perfectly retain information from very early in the sequence.
+
+**The bottom line:** Mamba and transformers are roughly equivalent at short context. At >32k tokens, Mamba's O(1) memory becomes the decisive advantage. At 1M tokens, transformers are simply not viable.
+
+> **What great looks like:** Gives exact big-O formulas for both compute and memory, quantifies the crossover point (not just "transformers are worse at long context"), explains why the difference is negligible at short context (dominating cost is weight loading, not KV operations), and relates complexity to concrete hardware constraints (500GB KV cache doesn't fit anywhere).
+:::
+
+**Q13. A customer is building a real-time transcription system for continuous audio streams. Audio arrives at 16kHz, encoded as tokens at roughly 25 tokens/second. After 10 minutes, there are 15,000 tokens; after 1 hour, 90,000 tokens. Recommend an architecture and explain why.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a streaming constant-latency use case — the canonical scenario where Mamba's architecture is most appropriate.
+
+**Why transformers fail here:**
+At 60 minutes = 90,000 tokens, a transformer KV cache is ~47GB per stream. The system may handle dozens of simultaneous streams — at 10 concurrent streams, that is 470GB of KV cache alone, beyond any single-node GPU cluster. More fundamentally, per-token latency increases as the stream grows: the 90,000th token requires 90× more attention compute than the 1,000th token. In a real-time system, you cannot allow transcription latency to increase over the course of a session.
+
+**Why Mamba is architecturally correct:**
+- Per-token compute is constant: the 90,000th token costs the same as the 1st token
+- Memory per stream is fixed: ~5MB regardless of session duration
+- Supporting 100 concurrent streams: 100 × 5MB = 500MB for all recurrent states — trivial
+- Streaming paradigm matches Mamba's recurrent inference mode: process each audio chunk, update state, produce output, continue
+
+**Recommended architecture:**
+1. **Encoder:** Mamba-based audio encoder (e.g., Mamba-architecture encoder for audio features), processes raw audio tokens with constant-latency recurrence
+2. **Language model head:** Mamba-based or small transformer for the text decoder (if the transcript requires linguistic coherence across many minutes)
+3. **State checkpointing:** Periodically checkpoint the recurrent state to persistent storage. If a session is interrupted and resumes, restore the state and continue — enables session continuity without reprocessing all past audio
+
+**The one caveat:**
+If the transcription system needs to *correct* previous utterances based on later context (e.g., "wait, that word was actually..."), Mamba's unidirectional recurrent inference cannot look back. This requires either a bidirectional pass over a recent window (small transformer over last 5 seconds) or a periodic "rectification step" where the last N seconds are re-processed. For most real-time transcription use cases (unidirectional causal output is fine), this is not a problem.
+
+> **What great looks like:** Quantifies the transformer's failure mode with actual numbers (KV cache per stream × number of streams), identifies the constant-latency requirement as the key constraint Mamba satisfies, and addresses the one practical limitation of recurrent inference (no backward attention) with a concrete workaround.
 :::

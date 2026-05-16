@@ -4,7 +4,7 @@ project:
 
 book:
   title: "GenAI Interview Prep"
-  subtitle: "A Technical Guide for Entry, Mid-Level & Forward Deployed Engineers"
+  subtitle: "ML Fundamentals to GenAI Systems — Entry, Mid, Senior & Staff Interview Prep"
   author: "Akhilesh Pothuri"
   date: last-modified
   date-format: "MMMM YYYY"
@@ -24,6 +24,13 @@ book:
     style: docked
   chapters:
     - index.qmd
+    - part: "Part 0 — Classical ML Foundations"
+      chapters:
+        - chapters/ml-01-bias-variance.qmd
+        - chapters/ml-02-model-selection.qmd
+        - chapters/ml-03-supervised-learning.qmd
+        - chapters/ml-04-unsupervised-features-eval.qmd
+        - chapters/ml-05-optimization-stats.qmd
     - part: "Part I — Foundations"
       chapters:
         - chapters/01-intro.qmd
@@ -58,6 +65,8 @@ book:
         - chapters/20-ssm-mamba.qmd
         - chapters/21-long-context.qmd
         - chapters/22-speculative-decoding.qmd
+        - chapters/33-distributed-training.qmd
+        - chapters/34-vector-databases.qmd
     - part: "Part VII — Reasoning & Multimodal"
       chapters:
         - chapters/23-reasoning-models.qmd
@@ -74,6 +83,12 @@ book:
         - chapters/30-prompt-optimization.qmd
         - chapters/31-interpretability.qmd
         - chapters/32-observability.qmd
+    - part: "Part X — Interview Practicum"
+      chapters:
+        - chapters/35-system-design.qmd
+        - chapters/36-tokenization.qmd
+        - chapters/37-model-merging.qmd
+        - chapters/38-coding-interview.qmd
   appendices:
     - chapters/appendix-ml-fundamentals.qmd
 

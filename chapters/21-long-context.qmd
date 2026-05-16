@@ -1,3 +1,7 @@
+---
+title: "Long Context & Efficient Attention"
+---
+
 # Long Context & Efficient Attention {#sec-21}
 
 ::: {.callout-note}
@@ -9,49 +13,459 @@
 - Why models fail to extrapolate beyond their training context length and what RoPE extension methods actually do
 - The practical tradeoffs of sparse attention variants: GQA, MQA, sliding window
 - When extending context is the right answer versus chunked retrieval
+- How to evaluate long-context quality and detect "lost in the middle" degradation in production
+:::
+
+## The Context Window Evolution
+
+Context windows have grown dramatically over the past four years:
+
+| Year | Model | Context Window |
+|------|-------|---------------|
+| 2020 | GPT-3 | 2,048 tokens |
+| 2022 | GPT-3.5-Turbo | 4,096 tokens |
+| 2023 | Claude 1 | 8,192 tokens |
+| 2023 | Claude 2 | 100,000 tokens |
+| 2024 | GPT-4o | 128,000 tokens |
+| 2024 | Gemini 1.5 Pro | 1,000,000 tokens |
+| 2025 | Gemini 2.5 Pro | 2,000,000 tokens |
+
+Each jump is not just a slider being moved — it requires solving distinct engineering challenges in memory, positional encoding, and model quality. Understanding which problem each technique addresses tells you which technique to reach for in production.
+
+::: {.callout-warning}
+**Common Misconception:** "The model has a 128k context window, so it reliably uses all 128k tokens."
+
+Wrong. Nominal context length and effective context length are different. A model may technically process 128k tokens without error while systematically ignoring content at positions 20k–100k. Always evaluate actual retrieval quality across the full claimed context window before trusting a vendor's headline number.
 :::
 
 ## The Context Window Problem
 
 Transformer attention is quadratic in sequence length in both time and memory. The raw computation of QK^T produces an n×n matrix requiring O(n²) multiplications and O(n²) storage. At n=4,096 (a typical base context), the attention matrix is ~64M elements — manageable. At n=32,768, it is ~4B elements per head (~8GB at FP16 for a single attention head, times the number of heads times batch size). At n=131,072, storing the attention matrix for a single head in FP16 requires 128GB. Standard attention implementation writes the full n×n matrix to GPU HBM (high-bandwidth memory) for the softmax computation, making long context not just expensive but physically impossible without algorithmic intervention. This is the hard ceiling that all long-context techniques attempt to work around.
 
-The KV cache problem at inference is distinct from but related to the training attention problem. During autoregressive generation, each new token must attend to all previous tokens' keys and values. Those K and V tensors must be stored and retrieved for every generation step. The KV cache size scales as 2 × n × n_layers × n_heads × d_head × precision_bytes. For Llama-3-8B (32 layers, 8 KV heads in GQA, d_head=128, FP16): the KV cache is 2 × n × 32 × 8 × 128 × 2 = 131,072 × n bytes. At n=128k tokens, the KV cache is ~16.7GB for a single sequence. Serving a batch of 8 concurrent 128k-context users requires 134GB of KV cache — exceeding an A100 80GB GPU's total memory. This KV cache pressure is why long-context serving is so expensive and why GQA (grouped-query attention) exists: by reducing the number of KV heads, GQA reduces KV cache size proportionally.
+**Analogy:** Imagine having a conversation where you must read every previous message before deciding what to say next. With 10 messages that's fine. With 10,000 messages, you're doing 100,000,000 comparisons just to respond once. That's the quadratic problem — not the total reading, but the pairwise attention between every message and every other message.
 
-Positional encodings introduce a qualitatively different problem: generalization. A model trained with sinusoidal absolute positional encodings at maximum length n_max simply has no learned representation for positions > n_max. The positional embedding lookup table has no entry beyond position n_max. RoPE (Rotary Position Embedding) and ALiBi (Attention with Linear Biases) handle positions more flexibly, but RoPE's rotational frequencies are calibrated to the training length. Tokens at positions far beyond the training distribution produce rotation angles that the model's attention weights have never been trained to handle — the dot products between query and key vectors become erratic and the softmax distribution degrades. This is the extrapolation problem: even if you can fit the KV cache, the model may produce garbage outputs because its positional reasoning breaks down.
+The KV cache problem at inference is distinct from but related to the training attention problem. During autoregressive generation, each new token must attend to all previous tokens' keys and values. Those K and V tensors must be stored and retrieved for every generation step. The KV cache size scales as:
 
-The gap between a model's nominal context window and its effective context window is practically significant. "Effective context" is the portion of the context from which the model reliably retrieves and uses information. Research on the "lost-in-the-middle" phenomenon demonstrates that long-context transformers, despite supporting up to n_max tokens, show a characteristic retrieval pattern: information at the very start and very end of the context is retrieved accurately, while information in the middle of long contexts is systematically underutilized. For a 128k-token context, relevant information buried in positions 20k–100k may effectively be invisible to the model. This means that a "128k context" model and a model that reliably uses all 128k tokens are not the same thing. When the relevant content will land in the middle of a long context, chunked retrieval can outperform naive long-context stuffing.
+```
+KV cache = 2 × n × n_layers × n_kv_heads × d_head × bytes_per_element
+```
+
+For Llama-3-8B (32 layers, 8 KV heads in GQA, d_head=128, FP16): the KV cache is 2 × n × 32 × 8 × 128 × 2 = 131,072 × n bytes. At n=128k tokens, the KV cache is ~16.7GB for a single sequence. Serving a batch of 8 concurrent 128k-context users requires 134GB of KV cache — exceeding an A100 80GB GPU's total memory. This KV cache pressure is why long-context serving is so expensive and why GQA (grouped-query attention) exists: by reducing the number of KV heads, GQA reduces KV cache size proportionally.
+
+### The Lost-in-the-Middle Problem
+
+Positional encodings introduce a qualitatively different problem: generalization. A model trained with sinusoidal absolute positional encodings at maximum length n_max simply has no learned representation for positions > n_max. The positional embedding lookup table has no entry beyond position n_max.
+
+The gap between a model's nominal context window and its effective context window is practically significant. "Effective context" is the portion of the context from which the model reliably retrieves and uses information. Research on the **"lost-in-the-middle"** phenomenon (Liu et al., 2023) demonstrates a characteristic retrieval pattern: information at the very start and very end of the context is retrieved accurately, while information in the middle of long contexts is systematically underutilized.
+
+**The experimental evidence:** Models were given k documents in context where exactly one document contained the answer to a factual question. The relevant document's position was varied from first to last. Results across GPT-3.5-Turbo, Claude, and others showed a U-shaped accuracy curve: highest accuracy at positions 1-2 and the last 1-2 positions, dropping by 20-30 percentage points at middle positions. For 20 documents at 3k tokens each (~60k total context), middle-position accuracy dropped to near-random-chance levels on some models.
+
+A complementary **needle-in-a-haystack** evaluation (Kamradt, 2023) embedded a specific sentence at random positions in a long filler document and asked the model to retrieve it. Models show characteristic failure bands — rectangular regions of the position × length grid where retrieval accuracy collapses — typically in middle positions at the longest tested lengths.
+
+::: {.callout-warning}
+**Production Gotcha:** Document ordering in RAG is a free quality lever. For retrieval, place the most relevant document **first** in the context, not randomly ordered. This simple heuristic can improve accuracy by 10-20 percentage points on models with documented lost-in-the-middle problems. More important content goes first or last — never buried in the middle.
+:::
+
+### Why the Middle Fails
+
+Two mechanisms drive this:
+
+1. **Recency bias in causal attention:** During training with causal language modeling, the model learns to pay high attention to recent tokens (the last few hundred). This serves well for language modeling but generalizes to over-attending to context endpoints.
+
+2. **Attention diffusion at long context:** When the softmax is computed over 128,000 keys, the resulting distribution is extremely flat. Each token's attention weight is diluted across 128k candidates, reducing the signal-to-noise ratio for any specific position. The model attends diffusely to everything and sharply to nothing.
 
 ## FlashAttention
 
-The standard attention implementation has a memory bottleneck that is not the O(n²) computation itself but the O(n²) HBM reads and writes that computation requires. GPUs have a memory hierarchy: fast on-chip SRAM (shared memory and registers, ~20MB on A100), slow off-chip HBM (the "GPU memory" visible to users, ~80GB on A100), connected by a bandwidth-limited bus (~2 TB/s HBM bandwidth). Standard attention must write the n×n attention matrix S = QK^T/√d to HBM, read it back for softmax, write the softmax result P to HBM, read P back again for the PV multiplication to produce output. Each of these HBM round trips costs precious bandwidth. The actual FLOP arithmetic — matrix multiplications and the softmax — is not the bottleneck; the data movement is. Profiling shows that standard attention is HBM-bandwidth-bound, not compute-bound.
+The standard attention implementation has a memory bottleneck that is not the O(n²) computation itself but the O(n²) HBM reads and writes that computation requires. GPUs have a memory hierarchy: fast on-chip SRAM (shared memory and registers, ~20MB on A100), slow off-chip HBM (the "GPU memory" visible to users, ~80GB on A100), connected by a bandwidth-limited bus (~2 TB/s HBM bandwidth). Standard attention must write the n×n attention matrix S = QK^T/√d to HBM, read it back for softmax, write the softmax result P to HBM, read P back again for the PV multiplication to produce output. Each of these HBM round trips costs precious bandwidth. The actual FLOP arithmetic is not the bottleneck; the data movement is. Profiling shows that standard attention is **HBM-bandwidth-bound**, not compute-bound.
 
-FlashAttention's core algorithmic insight is to compute attention output without ever materializing the full n×n matrix in HBM. The approach is tiling: divide the Q, K, V matrices into blocks that fit in SRAM (~128 or 256 rows at a time). For each tile of Q rows, iterate over tiles of K and V columns, computing partial attention scores, running an online softmax to track the running maximum and normalizer needed for numerically stable softmax, and accumulating partial output sums. When the tile-level loops complete, the running statistics are sufficient to produce the exact same output as standard attention — no approximation. The n×n attention matrix is computed implicitly in tiles and never written to HBM in full. HBM reads/writes are reduced from O(n²) to O(n × d) — reading Q, K, V once and writing the output once, proportional to the total number of elements in the input and output, not their pairwise products.
+**Analogy:** Imagine solving a math problem where every intermediate step requires writing it on a whiteboard at the far end of the building, walking there, reading it, and walking back. The math itself is trivial — the walking is the bottleneck. FlashAttention keeps intermediate work on a sticky note right next to you (SRAM), only making the long trip once to collect inputs and deliver the final answer.
 
-The IO complexity improvement is the key metric. Standard attention performs O(n²) HBM reads/writes regardless of d. FlashAttention performs O(n × d / M) passes over the HBM, where M is the SRAM capacity, but each pass reads O(n × d) total — so the total HBM IO is O(n² d / M × d) which reduces to O(n × d) when M ≥ d. For practical d=128 and M=20MB, the reduction is roughly 100–200× fewer HBM accesses for long sequences. This translates directly to wall-clock speedup: FlashAttention is 2–4× faster than PyTorch's standard attention implementation at n=2k and increasingly faster at longer sequences. The mathematical equivalence to standard attention means no quality degradation — outputs are bitwise identical (up to floating-point associativity differences).
+### How FlashAttention Works
 
-FlashAttention-2 (2023) improved the implementation in three ways: better parallelism by assigning different query blocks to different thread blocks (rather than different KV blocks), reducing synchronization overhead; reduced non-matmul FLOPs in the inner loop, bringing the attention kernel closer to the theoretical peak FLOP efficiency; and improved handling of causal masking to avoid wasteful computation on the lower triangle. The practical result was approximately 2× speedup over FlashAttention-1 and utilization above 70% of A100 peak FLOPS for head dimension 128. FlashAttention-3 (2024, targeting H100) adds asynchronous pipeline execution that overlaps softmax computation (on CUDA cores) with matrix multiplication (on Tensor Cores), exploits H100's FP8 Tensor Cores for the matrix multiplications, and uses a warp-specialization technique to eliminate idle cycles. FlashAttention-3 achieves approximately 740 TFLOPS/s on H100, out of the theoretical peak of 989 TFLOPS/s — 75% utilization.
+FlashAttention's core algorithmic insight is to compute attention output without ever materializing the full n×n matrix in HBM. The approach is **tiling**:
+
+1. Divide Q, K, V matrices into blocks that fit in SRAM (~128 or 256 rows at a time)
+2. For each tile of Q rows, iterate over tiles of K and V columns
+3. Compute partial attention scores: S_tile = Q_tile × K_tile^T / √d (fits in SRAM)
+4. Run an **online softmax** to track the running maximum and normalizer needed for numerically stable softmax
+5. Accumulate partial output sums
+6. After all tiles are processed, finalize outputs using the running statistics
+
+The n×n attention matrix is computed implicitly in tiles and never written to HBM in full. HBM reads/writes are reduced from O(n²) to O(n × d) — reading Q, K, V once and writing the output once.
+
+**Mathematical equivalence:** The tiled algorithm produces bitwise-identical outputs to standard attention (up to floating-point associativity). There is no approximation.
+
+### FlashAttention Versions
+
+| Version | Key Improvement | Speedup vs. Standard |
+|---------|----------------|----------------------|
+| FA-1 (2022) | Tiling, avoid n×n HBM writes | 2-4× at n=2048 |
+| FA-2 (2023) | Better parallelism, reduced non-matmul FLOPs, causal masking | 2× faster than FA-1 |
+| FA-3 (2024, H100) | Async pipeline, FP8 Tensor Cores, warp specialization | ~740 TFLOPS/s, 75% H100 peak |
+
+```python
+# FlashAttention is available via the flash_attn package and is integrated
+# into PyTorch 2.0+ via scaled_dot_product_attention
+
+import torch
+import torch.nn.functional as F
+
+# Standard attention (materializes n×n matrix, memory intensive)
+def standard_attention(q, k, v, mask=None):
+    """
+    q, k, v: (batch, heads, seq_len, head_dim)
+    """
+    d_k = q.size(-1)
+    scores = torch.matmul(q, k.transpose(-2, -1)) / (d_k ** 0.5)  # (B, H, n, n)
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, float('-inf'))
+    attn = F.softmax(scores, dim=-1)  # n×n matrix materialized in HBM
+    return torch.matmul(attn, v)
+
+# FlashAttention via PyTorch 2.0+ (same result, avoids n×n materialization)
+def flash_attention(q, k, v, is_causal=True):
+    """
+    Calls FlashAttention kernel under the hood when available.
+    q, k, v: (batch, heads, seq_len, head_dim)
+    """
+    with torch.backends.cuda.sdp_kernel(
+        enable_flash=True,
+        enable_math=False,   # disable standard math attention
+        enable_mem_efficient=False
+    ):
+        return F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+
+# Memory comparison at various sequence lengths
+def estimate_attention_memory(seq_len, n_heads=32, d_head=128, dtype_bytes=2):
+    """Estimate peak HBM usage for standard vs. FlashAttention."""
+    # Standard: must store n×n attention matrix per head
+    standard_gb = (seq_len ** 2) * n_heads * dtype_bytes / (1024**3)
+    # FlashAttention: only stores Q, K, V, O (all n×d)
+    flash_gb = 4 * seq_len * n_heads * d_head * dtype_bytes / (1024**3)
+    return {
+        "seq_len": seq_len,
+        "standard_attention_gb": round(standard_gb, 2),
+        "flash_attention_gb": round(flash_gb, 4),
+        "reduction_factor": round(standard_gb / flash_gb, 1)
+    }
+
+for n in [4096, 16384, 65536, 131072]:
+    print(estimate_attention_memory(n))
+```
+
+Expected output:
+```
+{'seq_len': 4096,   'standard_attention_gb': 1.0,   'flash_attention_gb': 0.0625, 'reduction_factor': 16.0}
+{'seq_len': 16384,  'standard_attention_gb': 16.0,  'flash_attention_gb': 0.25,   'reduction_factor': 64.0}
+{'seq_len': 65536,  'standard_attention_gb': 256.0, 'flash_attention_gb': 1.0,    'reduction_factor': 256.0}
+{'seq_len': 131072, 'standard_attention_gb': 1024.0,'flash_attention_gb': 2.0,    'reduction_factor': 512.0}
+```
+
+::: {.callout-tip}
+**When to use FlashAttention:** Always, for any production Transformer training or inference. It's a pure performance improvement with no quality tradeoff. PyTorch 2.0+ includes it via `scaled_dot_product_attention`. The only case to disable it: debugging attention outputs where you need to inspect the full n×n matrix for analysis.
+:::
 
 ## Extending Context with RoPE
 
-RoPE (Rotary Position Embedding) encodes position by rotating query and key vectors in pairs of dimensions by angles that depend on position. For position m, the rotation angle for the i-th dimension pair is θ_i = m × b^{-2i/d}, where b is the base (typically 10,000 and d is the head dimension. The dot product Q_m · K_n becomes a function of only the relative position (m-n), giving RoPE relative position semantics without needing to explicitly compute relative position indices. Critically, the angles θ_i span a geometric range: low frequency for large dimension indices (slowly varying, captures long-range position distinctions), high frequency for small indices (rapidly varying, captures fine-grained position distinctions). The high-frequency dimensions cycle many times within the training context length and "know" how to handle positions up to n_max. Beyond n_max, those high-frequency dimensions enter positions they were never trained for, producing anomalous dot products.
+RoPE (Rotary Position Embedding) encodes position by rotating query and key vectors in pairs of dimensions by angles that depend on position. For position m, the rotation angle for the i-th dimension pair is:
 
-Position Interpolation (PI) (Chen et al., 2023) addresses the extrapolation problem by rescaling the position indices before applying RoPE rotations. If the model was trained with n_max=4k and you want to extend to 32k, interpolate positions by dividing all position indices by a scale factor s = 32k/4k = 8. Position index 32,000 is mapped to 32,000/8 = 4,000, which is within the training distribution. The model never sees positions outside [0, n_max] after rescaling. The cost: positions that previously had distinct absolute encodings are now compressed — position 4,000 and position 3,992 map to 500 and 499, much closer together than before. This reduces the model's ability to distinguish nearby positions precisely, which typically requires fine-tuning of a few hundred steps to recover. PI requires fine-tuning on long-context data but dramatically less than training from scratch.
+```
+θ_i = m × b^{-2i/d}
+```
 
-NTK-aware interpolation (Neural Tangent Kernel-aware scaling) improves on PI by recognizing that high-frequency and low-frequency RoPE dimensions have different sensitivity to the scaling. Rather than applying a uniform scaling factor, NTK-aware interpolation changes the base b from 10,000 to a larger value b' = b × s^{d/(d-2)}, where s is the target context extension factor. A larger base stretches the frequency spectrum of all dimensions, preserving high-frequency resolution while naturally extending the effective range. In practice, NTK interpolation requires less fine-tuning than PI to recover quality at long contexts, and often works zero-shot (without any fine-tuning) for moderate extension factors (up to 4–8×). For larger extension factors, fine-tuning on long-context data remains beneficial.
+where b is the base (typically 10,000) and d is the head dimension. The dot product Q_m · K_n becomes a function of only the relative position (m-n), giving RoPE relative position semantics. The angles θ_i span a geometric range: low frequency for large dimension indices (slowly varying, captures long-range position distinctions), high frequency for small indices (rapidly varying, captures fine-grained position distinctions).
 
-YaRN (Yet another RoPE extensioN) combines NTK-aware interpolation with an attention scaling correction. As context length extends and positions interpolate, the attention logit magnitude distribution shifts — token entropy (how spread out the attention softmax distribution is) changes in ways that hurt model performance. YaRN introduces a temperature factor t applied to the attention logits: attention(Q,K,V) = softmax(QK^T/(√d × t)) V. The temperature t is set to compensate for the distribution shift induced by the positional interpolation, keeping the softmax sharpness similar to what the model experienced during training. YaRN also applies dimension-dependent interpolation: high-frequency dimensions get less scaling (they handle short-range structure well already) and low-frequency dimensions get more scaling (they need to extend their range). Llama-3 models use a variant of RoPE extension for their extended context versions, and many open-source long-context models (Qwen2, Mistral NeMo, etc.) use YaRN or similar methods.
+**The extrapolation problem:** Beyond n_max, high-frequency dimensions enter positions they were never trained for, producing anomalous dot products. Even if you can fit the KV cache, the model may produce garbage outputs because its positional reasoning breaks down.
 
-The distinction between "supports 64k context" and "effectively uses 64k context" has practical implications for system design. A model trained on 4k tokens and extended to 64k via RoPE interpolation will show degraded quality on tasks that require retrieving information from positions 40k–60k, even if the model technically runs without error. Proper long-context capability requires either training on data sequences with length up to the target context from the start, or fine-tuning on carefully constructed long-context datasets with retrieval tasks spread across the full target length. Models that advertise 64k or 128k context windows but were extended with only moderate fine-tuning often have the "lost-in-the-middle" problem amplified: the interpolated positions may be attended to even less consistently than the natural positional drift in models trained to their advertised length.
+### Position Interpolation (PI)
+
+Chen et al. (2023) addressed the extrapolation problem by rescaling position indices before applying RoPE rotations. If the model was trained with n_max=4k and you want to extend to 32k, divide all position indices by scale factor s = 32k/4k = 8. Position index 32,000 maps to 32,000/8 = 4,000, which is within the training distribution.
+
+**Cost:** Positions that previously had distinct encodings are now compressed — positions 4,000 and 3,992 map to 500 and 499, much closer together. This reduces the model's ability to distinguish nearby positions precisely. PI requires fine-tuning of a few hundred steps to recover local position discrimination.
+
+### NTK-Aware Interpolation
+
+Rather than applying uniform scaling, NTK-aware interpolation changes the RoPE base b from 10,000 to a larger value:
+
+```
+b' = b × s^{d/(d-2)}
+```
+
+A larger base stretches the frequency spectrum of all dimensions, preserving high-frequency resolution (local position discrimination) while naturally extending the effective range for long-distance positions. In practice, NTK interpolation works **zero-shot** (without any fine-tuning) for moderate extension factors (up to 4–8×). For larger extension factors, fine-tuning on long-context data remains beneficial.
+
+### YaRN
+
+YaRN (Yet another RoPE extensioN) combines NTK-aware interpolation with an attention scaling correction. As context length extends, the attention logit magnitude distribution shifts — token entropy changes in ways that hurt model performance. YaRN introduces a temperature factor t:
+
+```
+attention(Q,K,V) = softmax(QK^T / (√d × t)) × V
+```
+
+The temperature t compensates for distribution shift induced by positional interpolation, keeping softmax sharpness similar to what the model experienced during training. YaRN also applies **dimension-dependent interpolation**: high-frequency dimensions get less scaling, low-frequency dimensions get more.
+
+### RoPE Extension Comparison
+
+| Method | Requires Fine-tuning? | Local Position Quality | Long-range Quality | Used In |
+|--------|----------------------|------------------------|-------------------|---------|
+| Position Interpolation (PI) | Yes (few hundred steps) | Slightly degraded | Good | Research |
+| NTK-aware | No (0-shot) for ≤8× | Preserved | Good | Many OSS models |
+| YaRN | Minimal | Best preserved | Best | Llama-3-extended, Qwen2 |
+| Train from scratch at target length | N/A | Native | Native | GPT-4, Gemini |
+
+::: {.callout-warning}
+**Production Gotcha:** A model claiming "128k context" might have been base-trained at 4k and extended via RoPE interpolation with only moderate fine-tuning. The difference between "technically runs at 128k" and "reliably retrieves information from positions 80k-120k" is enormous. Always run needle-in-a-haystack tests on your specific model before deploying long-context pipelines.
+:::
 
 ## Sparse & Efficient Attention Variants
 
-Sliding window attention (SWA), used in Mistral-7B and Gemma models, restricts each token's attention to a window of the w most recent tokens rather than attending to all previous tokens. A token at position t attends only to positions [t-w, t]. With a window size w=4096, compute per token is O(w × d) instead of O(n × d), and the full forward pass is O(n × w) instead of O(n²). For sequences shorter than w, SWA is equivalent to full attention. For sequences longer than w, SWA is an approximation that can miss long-range dependencies. Mistral-7B (original) uses SWA with a 4096-token window in alternating layers — every other attention layer is full attention, providing some long-range coverage. The KV cache in SWA only needs to store the last w positions, reducing memory proportionally. Mistral-7B-v0.2 and later revisions extended to longer full-attention context.
+### Sliding Window Attention (SWA)
 
-Multi-head attention (MHA), multi-query attention (MQA), and grouped-query attention (GQA) represent a design axis controlling KV cache size versus model quality. Standard MHA has h query heads and h independent key-value head pairs: each head maintains separate K and V projections. The KV cache stores h_kv = h key-value tensors per layer. MQA (Shazeer, 2019) uses a single shared K and V projection across all h query heads: every query head attends to the same K and V, reducing KV cache storage by a factor of h. The quality penalty from MQA is measurable but small — empirically, Falcons and early code models that used MQA maintained competitive benchmark scores. GQA (Ainslie et al., 2023) generalizes: divide h query heads into g groups; each group shares one K and one V head. KV cache scales by factor g/h. Llama-3 uses g=8 KV heads for h=32 query heads — a 4× KV cache reduction with minimal quality penalty. GQA is now the dominant attention variant in production LLMs because it provides most of MQA's memory savings with better quality (the grouping allows some per-group specialization that all-shared MQA cannot).
+Used in Mistral-7B and Gemma models, SWA restricts each token's attention to a window of the w most recent tokens rather than attending to all previous tokens. A token at position t attends only to positions [t-w, t].
 
-The Longformer global+local attention pattern addresses documents where most tokens need local context (sentences, clauses) but a small number of special tokens — document markers, question tokens, summaries — need global attention to every position. Longformer uses sliding window attention for most positions (O(n×w) cost) plus full attention from designated global tokens to all positions (O(n×n_global) cost). For n_global much smaller than n, total cost is O(n×w + n×n_global) ≈ O(n×w). This enables processing very long documents (book-length, up to 32k tokens in the original paper) while retaining the ability for key positions to aggregate global information. The limitation is that the global token designation must be known at inference time — Longformer is most natural for tasks with well-defined global context (QA where the question is a natural "global" token, document classification where a CLS token attends globally).
+- **Compute:** O(n × w) instead of O(n²) — linear in sequence length for long sequences
+- **KV cache:** Only stores the last w positions, reducing memory proportionally
+- **Quality tradeoff:** Cannot directly attend to tokens beyond w positions ago
 
-Practical guidance on when you actually need >32k context: most enterprise tasks that claim to need very long context can be handled with chunked retrieval at 8k–16k chunks, with semantic retrieval selecting the most relevant chunks. The cases where long context genuinely outperforms chunked retrieval are: tasks requiring holistic reasoning across the full document (legal contract analysis where clauses in different sections modify each other, code bases where calling code and callee code are far apart, longitudinal dialogue where early conversation context influences late responses), and tasks where the relevant information is unpredictable ahead of time (you do not know which parts of a 200k-token document will be relevant to a query, so you cannot preselect chunks). For straightforward factual extraction — "what was the revenue in Q3?" — a 4k-chunk semantic retrieval pipeline at 10ms latency beats a 200k-context model at 2000ms latency.
+Mistral-7B uses SWA with a 4096-token window in alternating layers — every other layer is full attention, providing some long-range coverage. The KV cache only needs to store the last w positions, dramatically reducing memory at long context.
+
+**When to use:** Models that need to process very long streams efficiently (code files, book-length documents) where most dependencies are local and only occasional global context is needed.
+
+**When not to use:** Tasks requiring long-range dependency — a question about chapter 1 asked while reading chapter 20 may not be answerable if chapter 1 scrolled out of the window.
+
+### Multi-Head Attention Variants (MHA / MQA / GQA)
+
+MHA, MQA, and GQA represent a design axis controlling KV cache size versus model quality:
+
+**MHA (Multi-Head Attention):** h query heads, h independent KV head pairs. Maximum representational richness. KV cache scales as 2 × n_layers × h × n × d_head × 2 bytes.
+
+**MQA (Multi-Query Attention, Shazeer 2019):** h query heads sharing a single K and V projection. KV cache reduced by factor h. Quality penalty is small for simple tasks, measurable for multi-hop reasoning where different heads need to attend to different information.
+
+**GQA (Grouped Query Attention, Ainslie et al. 2023):** h query heads divided into g groups; each group shares one K and V head. KV cache reduced by factor h/g. Captures most of MQA's memory savings with better quality. **GQA is now the production standard** — used in Llama-3 (g=8 KV heads, h=32 query heads), Gemma, Mistral.
+
+| Variant | KV Heads | KV Cache Size | Quality | Used In |
+|---------|----------|---------------|---------|---------|
+| MHA | h (=query heads) | 100% | Best | GPT-2, early models |
+| MQA | 1 | ~1/h (3%) at h=32 | -5-10% | Early Falcon, PaLM |
+| GQA (g=8) | 8 | ~25% | -1-2% | Llama-3, Gemma, Mistral |
+
+**Practical impact:** At 128k context, switching from MHA to GQA with g=8 reduces KV cache from ~50GB to ~12.5GB for Llama-3-8B, enabling more concurrent users per GPU and longer effective context windows within a fixed memory budget.
+
+### Multi-Head Latent Attention (MLA)
+
+Introduced in DeepSeek-V2, MLA compresses the KV cache even further by caching a compressed latent vector instead of full K and V tensors.
+
+**Mechanism:** Instead of projecting each input hidden state directly into h separate K and V heads, MLA first projects to a low-dimensional latent vector c_t ∈ ℝ^d_c (much smaller than n_heads × d_head). K and V for all heads are reconstructed from c_t at attention time via learned up-projection matrices. Only c_t needs to be stored in the KV cache.
+
+For DeepSeek-V2 with d_c = 512 vs. standard n_heads × d_head = 16,384: **~32× KV cache compression**. At 128k context this reduces KV cache from ~340GB (standard MHA) to ~10GB — making long-context inference practical on a single node.
+
+### Longformer Global+Local Attention
+
+The Longformer addresses documents where most tokens need local context but a small number of special tokens need global attention to every position. Longformer uses:
+
+- **Sliding window** for most positions: O(n×w) cost
+- **Full attention from global tokens** to all positions: O(n×n_global) cost
+
+For n_global << n, total cost is approximately O(n×w). This enables book-length documents (up to 32k tokens) while retaining the ability for key positions (e.g., question tokens in QA) to aggregate global information.
+
+**Limitation:** Global token designation must be known at inference time. Most natural for tasks with well-defined global context (QA where the question is a natural "global" token).
+
+### BigBird: Sparse Random + Local + Global
+
+BigBird combines three attention patterns:
+1. Random attention: each token attends to r randomly selected tokens
+2. Local sliding window attention: w local positions
+3. Global tokens: g tokens with full attention
+
+This combination is theoretically universal (Turing complete) and provides O(n) complexity. In practice, implementing true random attention efficiently on GPUs is non-trivial, and the constant factors make it slower than FlashAttention-based full attention at the sequence lengths most commonly encountered in practice.
+
+## Needle-in-a-Haystack Evaluation
+
+The needle-in-a-haystack (NIAH) test is the standard method for evaluating long-context retrieval quality. It measures whether a model can retrieve a specific piece of information from anywhere in a long document.
+
+```python
+import anthropic
+import random
+import string
+import re
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class NIAHResult:
+    context_length: int
+    needle_position: float  # 0.0 = start, 1.0 = end
+    success: bool
+    retrieved_text: Optional[str]
+
+def generate_filler_text(target_tokens: int) -> str:
+    """Generate innocuous filler text to pad context."""
+    # A simple repeating story passage — diverse enough to not confuse models
+    paragraph = (
+        "The city of Ashford had grown considerably in the past decade. "
+        "New buildings lined the once-empty waterfront, and the central park "
+        "bustled with activity on weekday afternoons. Commuters filled the train "
+        "platforms at rush hour, and the markets opened early to serve the crowds. "
+        "Weather patterns had shifted too, bringing more rain in winter and drier summers. "
+    )
+    # Rough token estimate: ~1 token per 4 chars
+    chars_needed = target_tokens * 4
+    repetitions = (chars_needed // len(paragraph)) + 1
+    return (paragraph * repetitions)[:chars_needed]
+
+NEEDLE = "The secret password is: XKCD-7734-PURPLE."
+NEEDLE_QUESTION = "What is the secret password mentioned in the text?"
+
+def run_niah_test(
+    client: anthropic.Anthropic,
+    context_length_tokens: int,
+    needle_position: float,  # 0.0 to 1.0
+    model: str = "claude-3-5-sonnet-20241022",
+) -> NIAHResult:
+    """
+    Embed the needle at the specified position fraction of the context,
+    then ask the model to retrieve it.
+    """
+    # Generate filler text
+    filler = generate_filler_text(context_length_tokens - 50)  # leave room for needle
+
+    # Insert needle at the specified position
+    insert_pos = int(len(filler) * needle_position)
+    context = filler[:insert_pos] + "\n\n" + NEEDLE + "\n\n" + filler[insert_pos:]
+
+    prompt = f"""Below is a long document. Read it carefully and answer the question.
+
+Document:
+{context}
+
+Question: {NEEDLE_QUESTION}
+Answer:"""
+
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        answer = response.content[0].text.strip()
+        success = "XKCD-7734-PURPLE" in answer
+        return NIAHResult(
+            context_length=context_length_tokens,
+            needle_position=needle_position,
+            success=success,
+            retrieved_text=answer
+        )
+    except Exception as e:
+        return NIAHResult(
+            context_length=context_length_tokens,
+            needle_position=needle_position,
+            success=False,
+            retrieved_text=f"Error: {e}"
+        )
+
+def run_niah_sweep(
+    client: anthropic.Anthropic,
+    context_lengths: list[int],
+    positions: list[float],
+    model: str = "claude-3-5-sonnet-20241022",
+) -> list[NIAHResult]:
+    """
+    Run the full NIAH grid: all (context_length, position) combinations.
+    Returns results that can be plotted as a heatmap.
+    """
+    results = []
+    total = len(context_lengths) * len(positions)
+    done = 0
+
+    for length in context_lengths:
+        for pos in positions:
+            result = run_niah_test(client, length, pos, model)
+            results.append(result)
+            done += 1
+            status = "PASS" if result.success else "FAIL"
+            print(f"[{done}/{total}] {length}k tokens, pos={pos:.0%}: {status}")
+
+    return results
+
+def print_niah_heatmap(results: list[NIAHResult]):
+    """Print ASCII heatmap of NIAH results."""
+    context_lengths = sorted(set(r.context_length for r in results))
+    positions = sorted(set(r.needle_position for r in results))
+
+    print("\nNIAH Heatmap (P=pass, F=fail):")
+    print(f"{'':>8}", end="")
+    for pos in positions:
+        print(f"  {pos:.0%}", end="")
+    print()
+
+    for length in context_lengths:
+        print(f"{length:>6}k:", end="")
+        for pos in positions:
+            match = next((r for r in results
+                          if r.context_length == length and r.needle_position == pos), None)
+            if match:
+                symbol = " P  " if match.success else " F  "
+                print(symbol, end="")
+        print()
+
+# Example usage:
+# client = anthropic.Anthropic()
+# results = run_niah_sweep(
+#     client,
+#     context_lengths=[8, 32, 64, 128],   # tokens in thousands (approx)
+#     positions=[0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0],
+#     model="claude-3-5-sonnet-20241022"
+# )
+# print_niah_heatmap(results)
+```
+
+## RAG vs. Long Context: How to Decide
+
+This is the most common production decision in this space. There is no universal answer — it depends on query type, document structure, latency requirements, and cost tolerance.
+
+```
+Decision Framework:
+─────────────────────────────────────────────────────
+USE LONG CONTEXT when:
+  □ Holistic reasoning required (cross-document dependencies)
+  □ Relevant information is unpredictable (can't pre-select chunks)
+  □ Queries require understanding the full document structure
+  □ Documents are <32k tokens and latency tolerance >5s
+  □ High accuracy is worth 10-100× cost premium
+
+USE RAG when:
+  □ Targeted factual retrieval ("what was Q3 revenue?")
+  □ Documents are large (>50k tokens) and queries are focused
+  □ Latency target <1s
+  □ High query volume (cost-sensitive)
+  □ Relevant passages are identifiable by semantic similarity
+─────────────────────────────────────────────────────
+```
+
+| Dimension | RAG (8k context) | Long Context (128k) |
+|-----------|-----------------|---------------------|
+| Latency | 200-500ms | 15-60s |
+| Cost per query | $0.002-0.03 | $0.50-2.00 |
+| Quality on targeted retrieval | High (with good chunking) | Same or worse |
+| Quality on cross-document reasoning | Lower (misses cross-chunk links) | Higher |
+| Scales to 1M token documents | Yes (with retrieval) | No |
+| Easy to implement | Yes | Yes |
+
+**Hybrid approach (recommended for most production systems):** Use semantic retrieval to select top-k chunks, then assemble a focused context of 8k-32k tokens with only the most relevant chunks. This captures most of the quality benefit of long context (by including enough relevant material) at a fraction of the cost.
+
+::: {.callout-warning}
+**Production Gotcha:** Many engineering teams default to "just use long context" when they encounter document processing tasks. Before deploying a 128k context solution, benchmark it against a well-implemented RAG pipeline on your actual workload. In the majority of enterprise use cases, a properly chunked RAG system with 8k context outperforms naive long-context stuffing in both quality and cost. Long context is the right answer for specific task types — not a general replacement for retrieval.
+:::
+
+## RULER Benchmark
+
+RULER (Realistic Universal Long-context Evaluation and Ranking) is the current standard benchmark for measuring long-context capability beyond needle-in-a-haystack. RULER includes:
+
+- **NIAH variants:** Single and multi-needle retrieval at varying positions and densities
+- **Variable tracking:** Track a value assigned in one part of the document through reassignments to find its final value
+- **Common words extraction:** Identify most frequent words in a long document
+- **Question answering:** Answer questions from information spread across document sections
+
+RULER scores reveal significant divergence between models' claimed context windows and their actual performance. On RULER at 128k tokens, top models in 2024 achieved 60-80% accuracy — far below the near-100% accuracy seen at 4k tokens.
 
 ## Interview Questions
 
@@ -61,9 +475,9 @@ Practical guidance on when you actually need >32k context: most enterprise tasks
 ::: {.callout-note collapse="true" title="Model Answer"}
 Transformer attention scales quadratically in time and memory with sequence length. Going from 10k to 100k tokens (a 10× increase in length) increases attention computation by 100× (10² = 100), not 10×. The attention mechanism computes pairwise relationships between every position pair: for a 10k-token sequence, that is 100M pairs; for 100k tokens, it is 10B pairs — 100 times more computation.
 
-Memory scales the same way. The attention matrix for 100k tokens at FP16 requires approximately 40GB per attention head — far exceeding what fits in GPU memory for standard attention. Even with FlashAttention (which avoids storing the full matrix), the KV cache that accumulates during generation grows linearly: at 100k tokens for a 32-layer model with 32 KV heads, the KV cache alone is roughly 50GB per sequence. This limits how many concurrent users can be served on a given GPU cluster and dramatically increases inference cost.
+Memory scales the same way. The attention matrix for 100k tokens at FP16 requires approximately 40GB per attention head for standard attention. Even with FlashAttention (which avoids storing the full matrix), the KV cache that accumulates during generation grows linearly: at 100k tokens for a 32-layer model with 32 KV heads, the KV cache alone is roughly 50GB per sequence. This limits concurrent users on a GPU and dramatically increases inference cost.
 
-In practice, doubling context from 64k to 128k roughly quadruples the attention compute cost (for full attention) and roughly doubles the KV cache memory requirement (since KV cache is linear in n). The combined effect on dollar-cost-per-query is typically a 5–10× increase from 8k to 128k context for the same model.
+In practice, doubling context from 64k to 128k roughly quadruples the attention compute cost (for full attention) and doubles the KV cache memory requirement (since KV cache is linear in n). The combined effect on dollar-cost-per-query is typically a 5–10× increase from 8k to 128k context for the same model.
 :::
 :::
 
@@ -73,100 +487,257 @@ In practice, doubling context from 64k to 128k roughly quadruples the attention 
 ::: {.callout-note collapse="true" title="Model Answer"}
 FlashAttention is an attention algorithm that computes the exact same output as standard attention but reorganizes computation to avoid writing the n×n attention matrix to GPU memory, making attention much faster and more memory-efficient at long sequence lengths.
 
-Standard attention must write the n×n matrix (QK^T / √d) to GPU HBM (the main GPU memory), read it back for softmax, write the softmax probabilities, and read them again for the weighted sum of values. These HBM read-write operations are slow — GPU HBM bandwidth is limited to ~2 TB/s while on-chip SRAM runs at ~20 TB/s. For long sequences, the attention implementation becomes bottlenecked by this data movement, not by the actual arithmetic.
+Standard attention must write the n×n matrix (QK^T / √d) to GPU HBM (main GPU memory), read it back for softmax, write the softmax probabilities, and read them again for the weighted sum of values. These HBM read-write operations are slow — GPU HBM bandwidth is ~2 TB/s while on-chip SRAM runs at ~20 TB/s. For long sequences, the attention implementation becomes bottlenecked by this data movement, not by the actual arithmetic.
 
-FlashAttention tiles the computation: it processes small blocks of Q, K, V that fit in on-chip SRAM (the fast memory), maintains running softmax statistics per tile, and accumulates the output incrementally. The full n×n matrix is never written to HBM. Total HBM traffic drops from O(n²) to O(n × d), which for long sequences is a 10–100× reduction. The result: 2–4× faster attention at n=2048 and increasingly faster at longer sequences. Since the mathematical result is identical to standard attention, there is no quality tradeoff — FlashAttention is a pure performance optimization.
+FlashAttention tiles the computation: it processes small blocks of Q, K, V that fit in on-chip SRAM, maintains running softmax statistics per tile, and accumulates the output incrementally. The full n×n matrix is never written to HBM. Total HBM traffic drops from O(n²) to O(n × d), which for long sequences is a 10–100× reduction. The result: 2–4× faster attention at n=2048 and increasingly faster at longer sequences. Since the mathematical result is identical to standard attention, there is no quality tradeoff.
 :::
 :::
 
 ::: {.callout-tip title="Entry Level"}
-**Q3. What is the "lost in the middle" problem and why does it matter?**
+**Q3. What is the "lost in the middle" problem and why does it matter for production systems?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The "lost in the middle" problem refers to a systematic failure in long-context LLMs where the model reliably uses information at the beginning and end of a long context but significantly underperforms when the relevant information is located in the middle section. In experiments, models given 20 documents in context (where the answer is in one of them) show highest accuracy when the answer document is the first or last in the list, and worst accuracy when it is document 10 or 11.
+The "lost in the middle" problem refers to a systematic failure in long-context LLMs where the model reliably uses information at the beginning and end of a long context but significantly underperforms when the relevant information is in the middle. In Liu et al. (2023), models given 20 documents in context showed highest accuracy when the answer was in document 1 or 20, and worst accuracy (sometimes 20-30 percentage points lower) when the answer was in document 10 or 11.
 
-The problem arises from how transformers handle long sequences. Attention naturally has a recency bias (the last few tokens tend to have high attention weights in causal models) and a primacy bias (the first tokens set context strongly). Middle positions compete with many other positions for attention weight and often receive proportionally less attention, especially in long contexts where the softmax distribution spreads across many options. Fine-tuning on long-context tasks helps, but does not fully eliminate the effect.
+The problem arises from attention bias: causal transformers naturally focus heavily on recent tokens (recency bias) and strongly on early context-setting tokens (primacy bias). Middle positions compete with many other positions for attention weight and often receive less, especially in long contexts where the softmax distribution spreads across thousands of candidates.
 
-It matters practically because when you stuff a 64k-token context window with documents, the ordering of those documents affects answer quality — an important document buried in the middle may effectively be invisible to the model. For RAG and long-document tasks, placing the most relevant content at the beginning or end of the context is a simple heuristic that consistently improves quality. More broadly, it is a reminder that a model's nominal context window is not the same as its effective context: "supports 128k tokens" does not mean "reliably uses all 128k tokens equally."
+It matters practically for several reasons:
+- Document ordering in RAG pipelines directly affects quality — placing the most relevant document first is a free quality lever
+- A model's stated 128k context window does not mean it reliably uses all 128k tokens equally — chunks in positions 20k–100k may be systematically underutilized
+- For critical production tasks (legal, financial), stuffing a long context and hoping the model finds the relevant passage is a risky strategy compared to targeted chunking
+
+Mitigation: place critical content at context boundaries (first or last), use hierarchical summarization to bring key points to the top, and always evaluate NIAH quality across the full context length before trusting a model for long-context production use.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q4. What is GQA and why did it become the standard attention variant in production LLMs?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Grouped Query Attention (GQA) is a variant of multi-head attention that reduces KV cache memory while preserving most of the model quality of standard multi-head attention.
+
+In standard MHA, each of the h query heads has its own K and V projection — the KV cache stores h key-value pairs per position per layer. In MQA (the extreme case), all query heads share a single K and V projection, reducing KV cache by a factor of h but slightly hurting quality. GQA is in between: h query heads are divided into g groups (g < h), and each group shares one K and V head. With g=8 and h=32, the KV cache is 4× smaller than MHA, with minimal quality degradation.
+
+The practical reason GQA became standard: at long contexts, KV cache is a primary bottleneck for serving cost and concurrency. Llama-3-8B with 128k context and MHA would require ~50GB KV cache per sequence — exceeding an A100 80GB GPU's capacity for even a single user. With GQA (g=8), the KV cache shrinks to ~12.5GB, enabling multiple concurrent long-context users per GPU. The quality penalty is small enough to be essentially unnoticeable in benchmarks. It's a near-free 4× serving capacity improvement.
+:::
+:::
+
+::: {.callout-tip title="Entry Level"}
+**Q5. What is the difference between training context length and effective context length?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Training context length is the maximum sequence length used during model training — the longest sequence the model has seen and learned positional encodings for. Effective context length is the portion of the context from which the model reliably retrieves and uses information in practice.
+
+These are often significantly different. A model trained at 4k tokens and extended to 128k via RoPE interpolation technically runs at 128k without crashing, but its positional encodings for positions 80k–128k may be poorly calibrated (they were never properly trained at those positions) and its attention patterns may not reliably attend to content at those positions.
+
+Even for models trained natively at their advertised context length, the lost-in-the-middle problem means that content at positions 20%–80% of the context is systematically underutilized compared to the endpoints.
+
+The practical implication: before trusting a model's advertised context length for a production use case, run needle-in-a-haystack tests across the full length and at multiple positions. If accuracy drops significantly in the middle or at long lengths, you have a smaller effective context window than the nominal one, and you should design your system accordingly.
 :::
 :::
 
 ::: {.callout-warning title="Mid Level"}
-**Q4. Walk through why standard attention requires O(n²) memory and how FlashAttention avoids materializing the full attention matrix.**
+**Q6. Walk through why standard attention requires O(n²) memory and how FlashAttention avoids materializing the full attention matrix.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 Standard attention computes: S = QK^T / √d (shape n×n), P = softmax(S) (shape n×n), O = PV (shape n×d). The bottleneck is the intermediate S and P matrices of shape n×n. At n=32,768 and FP16, that is 32768² × 2 bytes ≈ 4GB per head — and the model has many heads. Standard PyTorch writes S and P to HBM because they exceed on-chip SRAM capacity, then reads them back for subsequent operations. This O(n²) HBM traffic is the binding bottleneck for long sequences.
 
-FlashAttention avoids materializing S and P by tiling Q into blocks of size B_r rows and iterating over tiles of K and V of size B_c columns. For each (Q_tile, K_tile) pair, compute partial scores S_tile = Q_tile × K_tile^T / √d (shape B_r × B_c, fits in SRAM). Use an online softmax update: maintain running row-wise maximum m_i and normalizer l_i for each query row. For each new K tile, update m_i = max(m_i, row_max(S_tile)) and l_i = e^{m_i_old - m_i_new} × l_i + row_sum(exp(S_tile - m_i)), then update the output accumulator O_i = e^{m_i_old - m_i_new} × O_i + exp(S_tile - m_i) × V_tile. After all K/V tiles are processed, finalize each output row as O_i / l_i.
+FlashAttention avoids materializing S and P by tiling Q into blocks of size B_r rows and iterating over tiles of K and V of size B_c columns. For each (Q_tile, K_tile) pair, compute partial scores S_tile = Q_tile × K_tile^T / √d (shape B_r × B_c, fits in SRAM). Use an online softmax update: maintain running row-wise maximum m_i and normalizer l_i for each query row. For each new K tile, update:
+- m_i = max(m_i, row_max(S_tile))
+- l_i = e^{m_i_old - m_i_new} × l_i + row_sum(exp(S_tile - m_i))
+- O_i = e^{m_i_old - m_i_new} × O_i + exp(S_tile - m_i) × V_tile
 
-This algorithm computes the exact softmax without storing the full S or P matrices — only B_r × B_c tiles ever exist simultaneously, and they live in SRAM. HBM reads: Q, K, V once each — O(nd). HBM writes: O once — O(nd). The n×n dependency is computed through tile loops but never stored. Memory complexity drops from O(n²) to O(n), and HBM traffic from O(n²d) to O(nd), at identical arithmetic output.
+After all K/V tiles, finalize: O_i / l_i.
+
+This algorithm computes exact softmax without storing the full S or P — only B_r × B_c tiles ever exist simultaneously, in SRAM. HBM reads: Q, K, V once each — O(nd). HBM writes: O once — O(nd). Memory complexity drops from O(n²) to O(n), HBM traffic from O(n²d) to O(nd), at identical arithmetic output.
+
+The speedup is not from fewer FLOPs (same arithmetic) but from fewer HBM accesses, which are the binding bottleneck. At n=32k, FlashAttention can be 4-8× faster than standard attention for this reason.
 :::
 :::
 
 ::: {.callout-warning title="Mid Level"}
-**Q5. Explain RoPE position interpolation — why does a model trained at 4k context struggle with 32k without fine-tuning?**
+**Q7. Explain RoPE position interpolation — why does a model trained at 4k context struggle with 32k without fine-tuning?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 RoPE encodes position m by rotating query and key vectors by angles θ_i^{(m)} = m × b^{-2i/d} for each dimension pair i. These angles span a geometric range: the lowest frequency dimension has angle that cycles once over the full training length, while the highest frequency dimension cycles many more times. The model's attention weights learned during training capture the meaningful range of angle differences Δθ = (m-n) × b^{-2i/d} for |m-n| ≤ n_max.
 
 At position m > n_max (e.g., m = 20,000 in a model trained to n_max = 4,096), high-frequency dimension pairs produce rotation angles far outside any difference they were trained to handle. A query at position 20,000 and a key at position 19,990 (relative distance 10) should have a small, familiar angle difference. But the absolute rotation angles at those positions are enormous and were never seen during training. The dot product Q_m · K_n depends on the cosine of the angle difference: if the frequencies and phases are within training distribution, the model handles them correctly. Outside that distribution, dot products become erratic — sometimes too large, sometimes near zero — degrading the attention pattern and producing incoherent outputs.
 
-Position Interpolation fixes this by scaling all position indices by n_max / n_target before applying RoPE: position 20,000 in a 32k extension maps to 20,000 × (4096/32768) = 2,500, which is well within the training distribution. Every position the model sees is now in [0, n_max] regardless of the actual sequence length. The compression of position encodings (two nearby tokens get closer position angles) slightly degrades local position discrimination, which is why fine-tuning for a few hundred steps on long-context data recovers nearly all the quality.
+Position Interpolation fixes this by scaling all position indices by n_max / n_target before applying RoPE: position 20,000 in a 32k extension maps to 20,000 × (4096/32768) = 2,500, which is well within the training distribution. Every position the model sees is in [0, n_max] regardless of actual sequence length. The compression of position encodings slightly degrades local position discrimination, which is why fine-tuning for a few hundred steps on long-context data recovers nearly all the quality.
+
+NTK-aware interpolation improves on this by changing the base frequency instead of uniformly compressing indices, preserving high-frequency (local) position resolution while extending low-frequency (long-range) range — often working zero-shot for up to 8× extension.
 :::
 :::
 
 ::: {.callout-warning title="Mid Level"}
-**Q6. Compare GQA vs MQA vs MHA: what does each optimize and at what cost?**
+**Q8. Compare GQA, MQA, and MLA — what does each optimize and what are the production tradeoffs?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-All three variants represent different points on the KV cache size vs. representation quality tradeoff for the attention mechanism's key-value projections.
+All three variants are KV cache reduction techniques, but they attack the problem differently.
 
-MHA (Multi-Head Attention): h query heads, h key-value head pairs. Each head learns independent Q, K, V projections. KV cache size: 2 × n_layers × h × n × d_head × 2 bytes. Maximum representational richness — each head can attend to different aspects independently. Baseline for quality comparisons.
+**MHA (baseline):** h query heads, h independent KV head pairs. Maximum representational richness. KV cache: 2 × n_layers × h × n × d_head × 2 bytes. No quality compromise but highest memory cost.
 
-MQA (Multi-Query Attention): h query heads, but all share a single K and V projection. KV cache size: 2 × n_layers × 1 × n × d_head × 2 bytes — reduced by factor h compared to MHA. Quality penalty: measurable on complex multi-hop reasoning (where different heads attending to different information sources is important), small for simpler tasks. Inference speedup comes from reduced KV cache bandwidth — at long context, fetching the KV cache from HBM per decode step is a bandwidth bottleneck; smaller cache = faster decode. Used in: early Falcon models, some Google models.
+**MQA (Multi-Query Attention, Shazeer 2019):** h query heads, single shared K and V. KV cache reduced by factor h (~32× for h=32). Quality penalty measurable on multi-hop reasoning; small for simpler tasks. Inference speedup from reduced KV cache bandwidth fetch at long context. Used in early Falcon, some Google models.
 
-GQA (Grouped Query Attention): h query heads divided into g groups (g < h), each group shares one K and one V head. KV cache size: 2 × n_layers × g × n × d_head × 2 bytes — reduced by factor h/g. Each group of h/g query heads attends to shared K/V for that group. With g=8 and h=32, KV cache is 4× smaller than MHA; each group of 4 heads shares K/V. Quality is between MHA and MQA: small groups mean some independence between head groups. Used in: Llama-3 (h=32, g=8), Gemma, Mistral. GQA is now the standard — it captures most of MQA's memory/speed benefit with minimal quality penalty over MHA.
+**GQA (Grouped Query Attention, Ainslie et al. 2023):** h query heads split into g groups; each group shares one K and V. KV cache reduced by h/g. At g=8, h=32: 4× smaller KV cache than MHA, quality penalty ~1-2% on benchmarks. Dominant production choice: Llama-3, Gemma, Mistral. The "sweet spot" — captures most of MQA's memory savings with near-MHA quality.
 
-Practical implication: at 128k context, switching from MHA to GQA with g=8 reduces KV cache from ~50GB to ~12.5GB for Llama-3-8B, enabling more concurrent users per GPU and longer effective context windows within a fixed memory budget.
+**MLA (Multi-Head Latent Attention, DeepSeek 2024):** Caches a compressed latent vector c_t ∈ ℝ^d_c instead of full K and V tensors. K, V reconstructed at attention time via up-projections. Compression ratio ~32× for DeepSeek-V2 (d_c=512 vs. 16,384 for MHA). Allows 128k-context inference on a single node. Small reconstruction compute overhead per step. Used in DeepSeek-V2, V3.
+
+Practical implication at 128k context:
+- MHA: ~50GB KV cache for 8B model → impossible on A100
+- GQA (g=8): ~12.5GB → feasible, ~4 concurrent users per A100
+- MLA: ~1.5GB → 30+ concurrent users per A100
+
+For new model design in 2025, GQA or MLA depending on serving cost priorities. GQA is simpler; MLA is more aggressive on memory savings.
+:::
+:::
+
+::: {.callout-warning title="Mid Level"}
+**Q9. You need to evaluate whether a model's claimed 128k context window is actually usable at 100k tokens. Design an evaluation protocol.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A single number ("passes needle-in-a-haystack") is insufficient — you need a 2D quality map over (context length, needle position) plus task-specific evaluation.
+
+**Step 1: Needle-in-a-Haystack sweep.** Use the NIAH framework: embed a specific retrievable fact at positions [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] × 100k for context lengths [8k, 16k, 32k, 64k, 100k]. Plot as a heatmap. A capable model should show >90% retrieval accuracy across all cells. Typical failure patterns: bands of failure at middle positions, degradation at maximum context length.
+
+**Step 2: Multi-needle retrieval.** Embed 5 different facts at 5 different positions in a 100k context and ask the model to retrieve all 5. Single-fact retrieval can succeed via shortcuts; multi-fact retrieval tests real long-context attention.
+
+**Step 3: Cross-passage reasoning.** Create 5-10 questions that require combining information from two passages placed at different positions in the context (e.g., one passage at 20k, one at 80k). The model must read both to answer correctly.
+
+**Step 4: Distractors.** Include near-miss facts (wrong passwords, similar but different dates) spread throughout the document. A model using long context properly should retrieve the correct one; a model relying on shortcuts may retrieve the most recent or most prominent near-miss.
+
+**Step 5: Benchmark against 4k context.** For each evaluation question, also run the model with only the relevant 4k-token window. This sets a quality ceiling. If 100k context performance is significantly below 4k context performance on the same questions, the model's long-context utilization is degraded.
+
+**Metrics:** Exact-match retrieval accuracy, position-stratified (not just aggregate). A model with 90% average but 40% at middle positions is functionally impaired for uncontrolled document QA.
 :::
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-**Q7. A customer's RAG system uses 8k context windows but their contracts are 50k tokens. Should you extend context or chunk?**
+**Q10. A customer wants to process 200-page contracts (~100k tokens). RAG vs. long context — how do you decide?**
+
+> 🎯 **What great looks like:** A structured decision framework that maps contract query types to the appropriate architecture, with specific cost/latency numbers, a hybrid recommendation, and clear escalation criteria.
+
+> ⚠️ **Common Mistake:** Defaulting immediately to "use long context" because the contract exceeds typical RAG chunk sizes. This ignores that most contract queries are targeted (finding specific clauses), that long-context models have lost-in-the-middle problems exactly in the middle of a 100k-token document, and that a 100k-token context call costs $1-2 per query vs. $0.01-0.05 for a well-implemented RAG call.
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The right answer depends on the query types, but for legal contracts, chunked retrieval with careful chunking strategy is usually better than naive 50k context extension, while a hybrid approach often works best.
+The right answer depends on the query types, but the decision is not binary — a hybrid approach typically wins.
 
-For contracts, the key question is: does the customer need holistic cross-document reasoning (e.g., "does clause 7 conflict with clause 23?") or targeted factual retrieval ("what is the governing law?"). For targeted retrieval, semantic chunking + embedding-based retrieval at 8k context outperforms 50k context because the relevant passage is small and easily retrievable, while 50k context adds cost and latency without quality benefit. For holistic reasoning, long context is genuinely needed — cross-clause dependencies cannot be resolved by any retrieval system that never sees both clauses simultaneously.
+**First, classify the contract query types:**
 
-Practical recommendation:
-1. Implement hierarchical chunking: chunk at the section level (typically 500-2k tokens per section), embed section summaries plus full text. For simple factual queries, retrieve relevant sections and answer at 8k context.
-2. For cross-clause reasoning queries, use a 32k or 50k context model (Llama-3-70B supports 128k, Gemini 1.5 Pro supports 1M). The cost per query is higher but these queries are less frequent.
-3. Identify query types in advance: a classifier at the router level can direct simple queries to the cheap RAG path and complex cross-document queries to the expensive long-context path.
-4. Do NOT upgrade the entire system to 50k context to handle the 10% of queries that need it — 10x cost increase for the whole system is unjustifiable. Use tiered routing.
+1. **Targeted factual extraction** ("What is the governing law clause?", "What is the termination notice period?"): ~70% of typical contract queries. A named entity or specific clause is being retrieved. Semantic chunking at section level (500-2k tokens/section) + embedding retrieval handles this excellently. No need for long context. Cost: $0.01-0.03/query, latency 200-500ms.
 
-For the 50k context model choice: at 50k tokens, attention compute is 2,500× more expensive than at 1k tokens. First-token latency on a well-optimized 8B model will be 5–15 seconds on a single A100. Ensure the customer's use case can tolerate this latency before committing.
+2. **Cross-clause reasoning** ("Does clause 7's indemnification limit conflict with clause 23's liability cap?", "Are there any provisions that could be triggered by the force majeure clause in section 12?"): ~20% of queries. These genuinely need both clauses visible simultaneously. A RAG system that retrieves clause 7 will miss the implicit dependency on clause 23. Long context (32k-100k) is the right call here.
+
+3. **Holistic document analysis** ("Identify all provisions favorable to the counterparty", "Summarize all risk factors for our company"): ~10% of queries. Requires reading the full document. Long context, or hierarchical summarization (section-level summaries assembled into a map).
+
+**Recommended architecture — tiered routing:**
+
+```
+Query → Query Classifier (GPT-4o-mini, ~$0.001)
+           │
+           ├── Simple extraction → RAG pipeline, 8k context ($0.02, 500ms)
+           │
+           ├── Cross-clause → Identify relevant sections, 32k context ($0.20, 5s)
+           │
+           └── Holistic analysis → Map-reduce over sections or 100k context ($1.50, 30s)
+```
+
+For the 100k path, use Gemini 1.5 Pro or Claude 3.5 Sonnet (native long context, not RoPE-extended), and position the most cited/relevant sections near context boundaries (not buried in the middle).
+
+**Cost comparison at 1000 queries/day:**
+- All-long-context: ~$1,000-1,500/day
+- Tiered routing: ~$80-150/day
+- Savings: 7-10× cost reduction while preserving quality on cross-clause queries that need it
+
+**Before implementing, always run NIAH tests on the specific long-context model** you intend to use at 100k tokens — many models degrade significantly at this length even when they claim to support it.
 :::
 :::
 
 ::: {.callout-important title="Forward Deployed Engineer"}
-**Q8. What are the real-world latency and cost implications of using a 128k context model vs. a chunked RAG pipeline?**
+**Q11. A customer's 128k-context model gives worse answers on 80k-token documents than on 8k-token documents. Diagnose and fix without switching models.**
+
+> 🎯 **What great looks like:** Identifying three specific mechanisms (lost-in-the-middle, RoPE extension quality, attention entropy) with a targeted fix for each, plus a fallback architectural solution.
+
+> ⚠️ **Common Mistake:** Assuming the model is broken and recommending a model switch immediately. Three separate mechanisms may each be fixable with prompt engineering, document reordering, or context restructuring — before any infrastructure change.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Three mechanisms are almost certainly contributing simultaneously, each with a targeted fix.
+
+**Mechanism 1: Lost-in-the-middle degradation**
+
+At 80k tokens, content in positions 10k–70k is systematically underattended. If the relevant information for queries is scattered throughout the document, most of it is effectively invisible.
+
+Fix: Run a lightweight BM25 or embedding-based pass to identify the 5-10 most relevant sections for each query, and reorder the context so those sections appear near the beginning. This is a prompt-level fix, no infrastructure change required. Can improve accuracy by 15-25 percentage points on models with documented lost-in-the-middle issues.
+
+**Mechanism 2: Insufficient long-context fine-tuning**
+
+Many "128k context" models are extended from shorter base models using RoPE interpolation with limited long-context fine-tuning data. Positions in the 8k–100k range may not have been adequately trained. The symptom: queries that would be answered correctly if the document were truncated to 8k fail at 80k even when the relevant passage is at position 5k.
+
+Fix: Check the model documentation for what context lengths were actually used in fine-tuning. If the model was primarily fine-tuned on ≤16k sequences, its quality at 80k is legitimately limited. Consider switching to a model with documented native 128k training (Claude 3.5, Gemini 1.5 Pro) rather than extended models.
+
+**Mechanism 3: Attention entropy collapse at long context**
+
+At 80k keys, the softmax over 80k key vectors produces a very flat distribution — the model attends diffusely to everything and sharply to nothing. Some models mitigate this with scaled attention (temperature adjustment).
+
+Fix: If the serving framework allows it, apply an attention temperature adjustment (logit scaling) to sharpen attention at long context. This is a serving-layer configuration change.
+
+**Immediate architectural fallback: map-reduce**
+
+Split the 80k document into 4k segments. For each segment, extract a summary + key facts (~200 tokens). Concatenate the summaries into a ~4k "map" context and run the final query against the map. This hierarchical approach avoids long-context degradation entirely while staying on the same model. Works well for summarization and factual extraction; less effective for cross-passage reasoning.
+
+**Debugging sequence:** First, verify which mechanism dominates by testing: (a) reorder the document so relevant content is first and re-run — if accuracy improves significantly, mechanism 1 is primary; (b) truncate the document to 8k with only the relevant section and test — if it passes, the base model is fine and only the long-context path is broken; (c) test at 16k, 32k, 48k, 64k, 80k to find where quality starts degrading.
+:::
+:::
+
+::: {.callout-important title="Forward Deployed Engineer"}
+**Q12. What are the real-world latency and cost implications of using a 128k context model vs. a chunked RAG pipeline?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 The latency and cost gap between these approaches is significant and often underestimated when teams prototype with small document sets.
 
-Latency comparison at 128k context vs. 8k RAG pipeline on identical hardware (single A100 80GB):
+**Latency comparison at 128k context vs. 8k RAG pipeline on a single A100 80GB:**
 - 128k context prefill (filling the context with the document): 15–45 seconds for a 7-8B model. This is the dominant latency term. FlashAttention helps but O(n²) prefill compute at 128k is fundamentally slow.
-- 8k RAG pipeline prefill (embedding lookup + retrieval + 8k context model): 200-500ms total including embedding inference, vector search, and the model prefill. A 100× latency reduction.
+- 8k RAG pipeline (embedding lookup + retrieval + 8k context model): 200-500ms total including embedding inference, vector search, and model prefill. A 100× latency reduction.
 - Decode (generating the answer, typically 200-500 tokens) is similar for both — decode is token-count-bound, not context-length-bound once prefill is complete.
 
-Cost comparison on AWS, approximate:
-- 128k context via API (GPT-4o or Claude 3.5): $10–15 per 128k-token context at standard input token pricing. At 1000 queries/day: $10,000–$15,000/day.
-- 8k RAG pipeline via API: $0.15–0.30 per query (embedding + 8k context model query). At 1000 queries/day: $150–$300/day.
-- Cost ratio: 50–100× in favor of chunked RAG for the same throughput.
+**Cost comparison via API:**
+- 128k context (GPT-4o or Claude 3.5): $0.50-2.00 per query at standard input token pricing
+- 8k RAG pipeline: $0.005-0.03 per query (embedding + 8k context model query)
+- Cost ratio: 30-100× in favor of chunked RAG for the same throughput
 
-Self-hosted comparison: 128k context requires 2× A100 80GB minimum (KV cache + weights). 8k context can run on 1× A100 40GB. Infrastructure cost per GPU is ~$3/hour on reserved instances; 128k context uses 2 GPUs vs. 1 GPU for 8k, plus lower throughput per GPU due to longer prefill.
+**Self-hosted comparison:** 128k context requires 2× A100 80GB minimum (KV cache + weights). 8k context runs on 1× A100 40GB. Infrastructure cost ~$3/hour on reserved instances; 128k context uses 2 GPUs vs. 1 GPU for 8k, plus lower throughput per GPU due to longer prefill.
 
-Recommendation: reserve 128k context for genuinely irreducible long-context tasks. For everything else, chunked RAG with 8k context windows provides 50–100× cost reduction and 10–50× latency reduction with comparable or better quality (since relevant chunks are selected, not buried in a long context suffering from lost-in-the-middle degradation).
+**Quality comparison:**
+- For targeted retrieval: RAG wins or ties (relevant chunk is identified and focused on)
+- For cross-document reasoning: long context wins
+- For documents with unpredictable relevance: long context wins
+- For 200k+ token documents: RAG wins (nothing runs natively at that scale cheaply)
+
+**Recommendation:** Reserve 128k context for genuinely irreducible long-context tasks. For everything else, a properly chunked RAG system with 8k context provides 30–100× cost reduction and 10–50× latency reduction with comparable or better quality. Use long context strategically at the edges — where retrieval genuinely fails.
 :::
 :::
+
+---
+
+## Long Context Cheat Sheet
+
+- **O(n²) attention:** Both compute and memory scale quadratically with sequence length; doubling context length quadruples attention cost
+- **KV cache is linear:** KV cache grows linearly with sequence length; at 128k tokens a single 8B model sequence consumes ~17GB
+- **FlashAttention:** Tiled algorithm that avoids writing the n×n attention matrix to HBM; 2-4× faster, same output, pure win — use always
+- **HBM vs. SRAM:** Standard attention is bandwidth-bound (HBM bottleneck), not compute-bound; FlashAttention fixes this by keeping tiles in fast SRAM
+- **Lost in the middle:** Models systematically underperform on content at middle positions in long contexts; U-shaped accuracy curve is well-documented
+- **Document ordering matters:** Place most relevant content first or last in context — this is a free quality lever
+- **Nominal ≠ effective context:** "Supports 128k" does not mean "reliably uses all 128k"; always test NIAH across full length before production deployment
+- **RoPE extrapolation fails:** Models trained at n_max cannot extrapolate beyond n_max reliably; positions beyond training distribution produce erratic attention
+- **Position Interpolation (PI):** Rescales position indices to stay within training distribution; requires fine-tuning to recover local position discrimination
+- **NTK-aware interpolation:** Changes RoPE base frequency instead of scaling indices; preserves local resolution; often works zero-shot for up to 8× extension
+- **YaRN:** Combines NTK with attention temperature correction; best zero-shot long-context extension quality; used in Qwen2, extended Llama-3
+- **GQA is the production standard:** 4× KV cache reduction vs. MHA with ~1-2% quality penalty; used in Llama-3, Gemma, Mistral
+- **MLA (DeepSeek):** ~32× KV cache compression by caching a latent vector instead of full K/V; enables 128k-context inference on a single node
+- **Sliding window attention:** O(n×w) complexity; only attends to last w tokens; used in alternating layers in Mistral-7B
+- **RAG vs. long context:** RAG wins for targeted retrieval (30-100× cheaper, 100× faster); long context wins for holistic cross-document reasoning
+- **Hybrid is usually right:** Semantic retrieval selects relevant chunks, focused 8k-32k context answers the question; best of both worlds
+- **RULER benchmark:** Realistic long-context evaluation beyond NIAH; includes variable tracking, multi-needle, cross-passage QA; reveals real capability gaps
+- **Attention entropy collapse:** At very long contexts, softmax over n keys produces near-uniform distribution; attention becomes diffuse; temperature scaling can help
+- **Cost at 128k API:** $0.50-2.00 per query; vs. $0.005-0.03 for RAG; 30-100× cost premium is the real number to show customers
+- **Prefill latency at 128k:** 15-45 seconds on A100 for a 7-8B model; this is the dominant latency term for long-context workloads

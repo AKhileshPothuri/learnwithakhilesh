@@ -5,177 +5,943 @@
 **What you'll be able to answer after reading this:**
 
 - The mathematical mechanism diffusion models use to learn data distributions
-- Why latent diffusion is faster than pixel-space diffusion and what the VAE does
-- Classifier-free guidance: training setup, inference formula, and the scale tradeoff
-- Flow matching vs. DDPM/DDIM: what each optimizes and why flow matching is winning
-- Practical inference choices: samplers, ControlNet, LoRA, and negative prompts
+- DDPM forward/reverse process and why ε-prediction is the standard training objective
+- Why latent diffusion (Stable Diffusion) is so much more efficient than pixel-space diffusion
+- Classifier-free guidance: training setup, inference formula, and what happens at different scales
+- DDIM vs. DDPM vs. flow matching as sampling approaches
+- U-Net vs. DiT architecture: what changed and why DiT is now dominant
+- Fine-tuning: DreamBooth, LoRA, ControlNet — what each solves and when to use each
 - How to reason through build-vs-buy and fine-tuning decisions for production image generation
 :::
 
-## The Core Mechanism — Noise and Denoising
+## The Diffusion Intuition
 
-Diffusion models learn to generate data by learning the reverse of a well-defined destruction process. The **forward process** systematically adds Gaussian noise to a training image over T discrete timesteps until, at step T, the image is indistinguishable from pure Gaussian noise. Each step adds a small amount of noise controlled by a variance schedule (β₁, β₂, ..., βT). Because Gaussian noise is additive, the noisy image at any arbitrary timestep t can be computed directly from the original image and a single Gaussian draw using the closed-form:
+**One sentence:** Diffusion models learn to generate data by learning to reverse a well-defined noise-adding process — training them to progressively clean up corrupted images until, starting from pure noise, they produce a realistic sample.
+
+Think of a photograph being sandblasted. Each blast adds a small layer of random noise. After 1,000 blasts, the photo is indistinguishable from pure static. A diffusion model watches thousands of photographs being sandblasted at each stage, and learns: "given a photo at this noise level, what noise was just added?" Once it can predict the noise at every level, you can run the process in reverse — starting from pure static and progressively denoising until a coherent image emerges.
+
+**What makes this powerful:** Unlike GANs (which require adversarial training with mode collapse problems) or VAEs (which optimize a blurry reconstruction loss), diffusion models have a stable, well-defined training objective, scale predictably with data and model size, and produce high-diversity, high-fidelity samples. This is why the field converged on them so quickly after DDPM (2020).
+
+**Real-world analogy:** You hire someone who has never sculpted to restore a marble statue that has been buried under rubble. You don't show them the final statue — you show them thousands of statues at varying levels of damage (a little chipped, heavily damaged, completely buried) and train them to identify: "given THIS level of damage, what specific piece of rubble was most recently added?" After training, they can work backward — given pure rubble, progressively remove the most recently-added pieces until the original statue re-emerges.
+
+::: {.callout-caution title="Common Misconception"}
+**"Diffusion models look up or store training images."** Wrong. Diffusion models learn a parametric model of the *distribution* of real images — essentially the "shape" of what real images look like at every noise level. They generate new samples by navigating that learned distribution. They do not memorize or retrieve training images (though memorization of very frequently repeated images is a real failure mode at scale, distinct from normal generation).
+:::
+
+---
+
+## The Forward Process (Noise Addition)
+
+**One sentence:** The forward process is a fixed (non-learned) Markov chain that progressively destroys an image by adding small amounts of Gaussian noise at each of T steps, following a variance schedule.
+
+Formally, the forward process defines a conditional distribution:
+
+$$q(x_t | x_{t-1}) = \mathcal{N}(x_t; \sqrt{1-\beta_t}\, x_{t-1},\, \beta_t I)$$
+
+where β_t is the noise variance at step t, and t runs from 1 to T (typically T=1000). At each step, the image is scaled slightly toward zero (the $\sqrt{1-\beta_t}$ factor) and corrupted with fresh Gaussian noise.
+
+The critical property is the **closed-form marginal**: because each step is Gaussian, we can jump directly to any noise level t without simulating T sequential steps:
 
 $$x_t = \sqrt{\bar{\alpha}_t}\, x_0 + \sqrt{1 - \bar{\alpha}_t}\, \varepsilon, \quad \varepsilon \sim \mathcal{N}(0, I)$$
 
-where ᾱ_t is the cumulative product of (1-β) up to step t. This closed form means you do not need to simulate T sequential noise-addition steps during training — you can jump directly to any noise level in one step, which makes data sampling for training efficient.
+where $\bar{\alpha}_t = \prod_{s=1}^{t}(1 - \beta_s)$ is the cumulative noise product. This is enormously useful for training: to generate a training example at timestep t, you simply sample noise ε and apply this formula to x_0 in one step. No T-step simulation required.
 
-The **reverse process** is what the model learns: given a noisy image x_t at timestep t, predict and remove the noise to recover a cleaner image x_{t-1}. The neural network ε_θ(x_t, t) is trained to predict ε — the specific noise that was added to create x_t — rather than predicting x_0 directly. This ε-prediction formulation (introduced in DDPM) is more stable to train than x_0 prediction because the noise prediction targets are well-scaled across all timesteps. The training loss is simply mean squared error between the predicted noise and the actual noise: L = E[||ε - ε_θ(x_t, t)||²].
+The **variance schedule** (β_1, ..., β_T) controls how quickly noise accumulates. A linear schedule (DDPM) goes from β_1 ≈ 0.0001 to β_T ≈ 0.02. A cosine schedule (improved DDPM) ramps more slowly at the extremes. At T=1000 with a well-tuned schedule, $\bar{\alpha}_T \approx 0$ — the image is essentially pure Gaussian noise.
 
-The **score matching** interpretation frames diffusion models as learning the score function ∇_x log p(x) — the gradient of the log data density — at each noise level. This connects diffusion to a broader family of energy-based and score-based generative models. Intuitively, the score function points "uphill" toward higher-probability regions of the data distribution. By learning to follow this gradient at each noise level, the reverse process walks from a noisy sample back toward the data manifold. This interpretation, developed by Song et al., provides the theoretical grounding for why diffusion models are principled generative models rather than just noise-removal filters.
+```python
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
 
-## Architecture
+def make_beta_schedule(T: int = 1000, schedule: str = "linear") -> torch.Tensor:
+    """
+    Create the beta variance schedule.
+    - linear: DDPM original
+    - cosine: improved DDPM (Nichol & Dhariwal 2021)
+    """
+    if schedule == "linear":
+        beta_start, beta_end = 1e-4, 0.02
+        return torch.linspace(beta_start, beta_end, T)
+    elif schedule == "cosine":
+        s = 0.008
+        t = torch.linspace(0, T, T + 1) / T
+        alphas_cumprod = torch.cos((t + s) / (1 + s) * torch.pi / 2) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return betas.clamp(0, 0.999)
 
-The original Stable Diffusion uses a **U-Net** as the denoising network. The U-Net is an encoder-decoder architecture with skip connections: the encoder progressively downsamples the spatial resolution while increasing channel depth, and the decoder upsamples back to the original spatial resolution. The skip connections preserve fine-grained spatial information that would be lost through the bottleneck. Critically, the U-Net incorporates **cross-attention layers** that condition the denoising process on text embeddings: at each U-Net layer, the spatial features attend over the text embedding sequence via standard multi-head cross-attention. This is how the text prompt shapes what is generated — the text embeddings modulate which directions in the image representation are denoised toward.
+def forward_process(x0: torch.Tensor, t: int, betas: torch.Tensor) -> tuple:
+    """
+    Apply forward process: jump directly to timestep t using closed-form.
+    x0: clean image [B, C, H, W], normalized to [-1, 1]
+    t: target noise level
+    returns: (x_t noisy image, epsilon noise that was added)
+    """
+    alphas = 1.0 - betas
+    alphas_cumprod = torch.cumprod(alphas, dim=0)
 
-The text conditioning comes from a **text encoder**, typically a frozen CLIP text encoder or a larger T5 encoder. The text encoder converts the user's prompt into a sequence of text embeddings, which are injected into every cross-attention layer of the U-Net. The quality of the text encoder is a ceiling on how precisely the generated image can match complex prompts — this is why SD 1.5 (CLIP ViT-L) and SDXL (dual CLIP encoders) differ significantly in prompt fidelity.
+    sqrt_alpha_bar = alphas_cumprod[t].sqrt()
+    sqrt_one_minus_alpha_bar = (1 - alphas_cumprod[t]).sqrt()
 
-The **Diffusion Transformer (DiT)** architecture replaces the U-Net with a pure transformer applied to a grid of image patches — conceptually the same patch tokenization used in ViT. Each patch becomes a token; the transformer processes all patches with full self-attention at each layer. DiT eliminates the inductive bias of convolutional U-Net design and scales more predictably with model size. Stable Diffusion 3, FLUX, and Sora all use DiT-based architectures. The tradeoff is that full self-attention over all patches is O(n²) in the number of patches, making high-resolution generation expensive without efficient attention approximations.
+    epsilon = torch.randn_like(x0)  # the noise to predict
+    x_t = sqrt_alpha_bar * x0 + sqrt_one_minus_alpha_bar * epsilon
+
+    return x_t, epsilon
+
+# Visualize noise levels
+def visualize_forward_process(image: torch.Tensor, T: int = 1000):
+    betas = make_beta_schedule(T, schedule="cosine")
+    timesteps_to_show = [0, 100, 250, 500, 750, 999]
+
+    fig, axes = plt.subplots(1, len(timesteps_to_show), figsize=(15, 2.5))
+    for ax, t in zip(axes, timesteps_to_show):
+        x_t, _ = forward_process(image.unsqueeze(0), t, betas)
+        img = ((x_t.squeeze().permute(1, 2, 0) + 1) / 2).clamp(0, 1)
+        ax.imshow(img.numpy())
+        ax.set_title(f"t={t}")
+        ax.axis("off")
+    plt.tight_layout()
+    plt.savefig("forward_process.png", dpi=150)
+```
+
+---
+
+## The Reverse Process (Denoising)
+
+**One sentence:** The reverse process is a neural network that, given a noisy image x_t at timestep t, predicts the noise ε that was added — allowing it to compute a slightly cleaner image x_{t-1}.
+
+The model ε_θ(x_t, t) is trained to predict the noise ε that was added to create x_t from x_0. The training loss is simply mean squared error:
+
+$$\mathcal{L} = \mathbb{E}_{t, x_0, \varepsilon}\left[\|\varepsilon - \varepsilon_\theta(x_t, t)\|^2\right]$$
+
+Why predict ε (the noise) instead of x_0 directly? **ε-prediction** provides better-conditioned training targets: the noise ε is always drawn from N(0,I), so it has consistent scale across all timesteps. x_0 prediction targets vary widely in scale and complexity. DDPM showed empirically that ε-prediction produces better samples; this has remained the standard.
+
+The **score matching** interpretation connects diffusion to energy-based models: the model implicitly learns ∇_x log p_t(x_t) — the gradient of the log-probability density at each noise level. Following this gradient at each denoising step walks the sample from the noise distribution back toward the data manifold.
+
+### Training the Denoising Network
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SimpleDDPMTrainer:
+    """
+    Minimal DDPM training loop (illustrative — not production).
+    In practice, use diffusers library for full implementation.
+    """
+    def __init__(self, model: nn.Module, T: int = 1000):
+        self.model = model
+        self.T = T
+        self.betas = make_beta_schedule(T, schedule="cosine")
+        self.alphas = 1.0 - self.betas
+        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
+
+    def training_step(self, x0: torch.Tensor) -> torch.Tensor:
+        """
+        One training step on a batch of clean images.
+        x0: [B, C, H, W] clean images, normalized to [-1, 1]
+        """
+        B = x0.shape[0]
+        device = x0.device
+
+        # 1. Sample random timesteps (one per image in batch)
+        t = torch.randint(0, self.T, (B,), device=device)
+
+        # 2. Sample noise
+        epsilon = torch.randn_like(x0)
+
+        # 3. Create noisy images at timestep t (closed-form)
+        sqrt_alpha_bar = self.alphas_cumprod[t].sqrt().view(B, 1, 1, 1)
+        sqrt_one_minus = (1 - self.alphas_cumprod[t]).sqrt().view(B, 1, 1, 1)
+        x_t = sqrt_alpha_bar * x0 + sqrt_one_minus * epsilon
+
+        # 4. Predict the noise
+        epsilon_pred = self.model(x_t, t)
+
+        # 5. MSE loss between predicted and actual noise
+        loss = F.mse_loss(epsilon_pred, epsilon)
+        return loss
+
+    @torch.no_grad()
+    def ddpm_sample(self, shape: tuple, device: str = "cuda") -> torch.Tensor:
+        """
+        DDPM stochastic sampling: 1000 steps.
+        """
+        x = torch.randn(shape, device=device)  # start from pure noise
+
+        for t in reversed(range(self.T)):
+            t_batch = torch.full((shape[0],), t, device=device, dtype=torch.long)
+
+            # Predict noise
+            eps_pred = self.model(x, t_batch)
+
+            # DDPM reverse step (includes stochastic noise addition)
+            alpha = self.alphas[t]
+            alpha_bar = self.alphas_cumprod[t]
+            beta = self.betas[t]
+
+            # Compute predicted x0
+            x0_pred = (x - (1 - alpha_bar).sqrt() * eps_pred) / alpha_bar.sqrt()
+            x0_pred = x0_pred.clamp(-1, 1)
+
+            # Posterior mean
+            x_prev_mean = (
+                (alpha.sqrt() * (1 - alpha_bar / alpha)) / (1 - alpha_bar) * x
+                + (alpha_bar / alpha).sqrt() * beta / (1 - alpha_bar) * x0_pred
+            )
+
+            if t > 0:
+                noise = torch.randn_like(x)
+                x = x_prev_mean + beta.sqrt() * noise
+            else:
+                x = x_prev_mean
+
+        return x
+```
+
+---
+
+## DDPM vs. DDIM vs. Flow Matching
+
+**One sentence:** DDPM is stochastic and needs 1000 steps; DDIM is deterministic and works in 50 steps; flow matching learns straight-line paths that need only 4-20 steps.
+
+| Dimension | DDPM | DDIM | Flow Matching (Rectified Flow) |
+|---|---|---|---|
+| Trajectory type | Curved, stochastic | Curved, deterministic | Straight, deterministic |
+| Steps needed | 500-1000 | 20-50 | 4-20 |
+| Deterministic? | No | Yes | Yes |
+| Same seed → same image? | No | Yes | Yes |
+| Training objective | Predict ε | Same as DDPM | Predict velocity (x_0 - ε) |
+| Training stability | Moderate | Same as DDPM | Better (lower variance) |
+| Models using it | Early SD, original DDPM | SD 1.x default | SD3, FLUX, Sora |
+| Image editing support | Weak | Good (noise inversion) | Good |
+
+### Why Flow Matching Is Winning
+
+Flow matching (specifically *rectified flow*) defines the forward process as a straight-line interpolation:
+
+$$x_t = (1-t)\, x_0 + t\, \varepsilon, \quad t \in [0, 1]$$
+
+The model learns the velocity field v_t(x) = dx/dt = (x_0 - ε) — a constant vector along the straight-line path. Because the velocity is constant, Euler integration is exact regardless of step size. A 4-step Euler solver on a straight path produces results comparable to 1000-step DDPM sampling.
+
+Additionally, flow matching training has lower gradient variance (the target velocity x_0 - ε is constant along each trajectory, versus DDPM's timestep-dependent noise targets that vary in scale), leading to faster convergence.
+
+---
+
+## Latent Diffusion — Why Stable Diffusion Is Efficient
+
+**One sentence:** Instead of diffusing in pixel space, Stable Diffusion first compresses images 8x spatially into a latent space using a VAE, then runs the entire diffusion process on those compact latents — reducing computation per denoising step by ~64x.
+
+Pixel-space diffusion runs the denoising network directly on the full image at native resolution. For a 512×512 RGB image, that is 786,432 values processed at every one of the 1000 steps. The computational cost is prohibitive for interactive use.
+
+**The key insight from Rombach et al. (2022):** Most of the information about semantic content is redundant at pixel resolution — adjacent pixels are highly correlated. A VAE can compress a 512×512 image into a 64×64×4 latent tensor while preserving essentially all semantic information. The diffusion model then operates on this 4,096-dimensional latent (vs. the 786,432-dimensional pixel space). Each denoising step is ~64-192x cheaper, depending on how U-Net compute scales with spatial resolution.
+
+```
+Pixel-space diffusion:  512×512×3 = 786,432 values per step × 1000 steps
+Latent diffusion:        64×64×4  =  16,384 values per step × 50 steps
+Compute ratio:           786,432 × 1000 / (16,384 × 50) ≈ 960x fewer operations
+```
+
+### The VAE's Role
+
+```python
+# Using Stable Diffusion's VAE directly (via diffusers)
+import torch
+from diffusers import AutoencoderKL
+from PIL import Image
+import torchvision.transforms as T
+
+vae = AutoencoderKL.from_pretrained(
+    "stabilityai/stable-diffusion-2-1",
+    subfolder="vae"
+).to("cuda").half()
+
+# Encode: pixel space → latent space
+def encode_image(pil_image: Image.Image) -> torch.Tensor:
+    transform = T.Compose([
+        T.Resize((512, 512)),
+        T.ToTensor(),
+        T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])  # [-1, 1]
+    ])
+    img_tensor = transform(pil_image).unsqueeze(0).cuda().half()
+
+    with torch.no_grad():
+        # VAE encoder outputs a distribution; we take the mean
+        latent_dist = vae.encode(img_tensor).latent_dist
+        latent = latent_dist.mean  # [1, 4, 64, 64]
+
+    # SD scales latents by a constant before passing to U-Net
+    latent = latent * vae.config.scaling_factor
+    return latent  # [1, 4, 64, 64]
+
+# Decode: latent space → pixel space
+def decode_latent(latent: torch.Tensor) -> Image.Image:
+    latent = latent / vae.config.scaling_factor
+    with torch.no_grad():
+        image = vae.decode(latent).sample  # [1, 3, 512, 512], range [-1, 1]
+
+    # Denormalize and convert to PIL
+    image = ((image + 1) / 2).clamp(0, 1)
+    image = (image.squeeze().permute(1, 2, 0).cpu().float().numpy() * 255).astype("uint8")
+    return Image.fromarray(image)
+```
+
+**What happens if the VAE is lossy:** The VAE decoder is the last step in the quality chain. Its reconstruction quality sets an upper bound on final image quality. Common artifacts from a lossy VAE:
+- **Blurring** of high-frequency detail (hair, fine textures, small text)
+- **Tiling artifacts**: 8×8 pixel grid patterns on smooth surfaces (convolutional decoder boundary effects)
+- **Color desaturation**: color information compressed more aggressively than luminance
+- **Face/hand distortion**: fine spatial details (eyes, teeth, finger boundaries) are high-frequency features that lossy VAEs compress poorly
+
+SD 3.5's improved VAE reduced these artifacts significantly vs. SD 1.5.
+
+---
+
+## Architecture: U-Net → DiT
+
+### U-Net (SD 1.x through SDXL)
+
+The original Stable Diffusion uses a U-Net as the denoising network:
+- **Encoder:** progressively downsamples spatial resolution while increasing channel depth
+- **Decoder:** upsamples back to original spatial resolution
+- **Skip connections:** connect encoder and decoder at matching resolutions, preserving fine-grained spatial information lost through the bottleneck
+- **Cross-attention layers:** at each U-Net layer, spatial features attend over text embeddings via multi-head cross-attention — this is how the text prompt shapes generation
+- **Time embedding:** sinusoidal position encoding of timestep t, injected into every residual block via AdaLayerNorm or linear projection
+
+```python
+# Simplified U-Net block structure (conceptual)
+class UNetBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, time_dim: int, text_dim: int):
+        super().__init__()
+        self.resnet = ResNetBlock(in_channels, out_channels, time_dim)
+        self.cross_attn = CrossAttention(out_channels, context_dim=text_dim)
+        self.self_attn = SelfAttention(out_channels)
+
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, text_emb: torch.Tensor):
+        # 1. Residual block with time conditioning
+        x = self.resnet(x, t_emb)
+
+        # 2. Self-attention for spatial coherence
+        x = self.self_attn(x)
+
+        # 3. Cross-attention to inject text conditioning
+        # text_emb: [B, seq_len, text_dim] from CLIP/T5
+        x = self.cross_attn(x, context=text_emb)
+
+        return x
+```
+
+### DiT (Diffusion Transformer) — SD3, FLUX, DALL-E 3, Sora
+
+DiT replaces the U-Net with a pure transformer applied to image patches:
+1. Divide the (latent) image into patches (e.g., 2×2 patches of the 64×64 latent = 1024 tokens)
+2. Each patch becomes a token via linear projection
+3. Full self-attention across all patches at each transformer layer
+4. Time and text conditioning injected via adaptive layer norm (adaLN)
+
+| Dimension | U-Net | DiT |
+|---|---|---|
+| Core operation | Convolution + local attention | Full self-attention on patch tokens |
+| Skip connections | Yes (encoder-decoder) | No (pure transformer) |
+| Inductive bias | Spatial locality (CNNs are translation-equivariant) | None — learns from data |
+| Scaling behavior | Harder to scale predictably | Scales like LLMs with model size |
+| Compute cost (high res) | Manageable (downsampling reduces cost) | O(n²) in patch count — expensive at high res |
+| Used in | SD 1.5, SD 2.1, SDXL | SD3, FLUX, DALL-E 3, Sora |
+
+**Why DiT won:** U-Net's convolutional inductive biases were useful at small scales but became limitations as models grew larger. DiT's attention mechanism can model long-range spatial dependencies (the relationship between an object in the top-left and its shadow in the bottom-right) that U-Net's local convolutions cannot capture efficiently. DiT also scales predictably with model depth and width, following transformer scaling laws.
+
+---
+
+## Text Conditioning and CLIP
+
+The text encoder converts the user's prompt into a sequence of text embeddings, which are injected into every cross-attention layer of the U-Net (or adaLN layers of DiT). The quality of the text encoder directly limits how precisely the generated image can match complex prompts.
+
+| Model | Text Encoder | Max Token Length | Prompt Fidelity |
+|---|---|---|---|
+| SD 1.5 | CLIP ViT-L/14 | 77 tokens | Limited — CLIP truncates complex prompts |
+| SD 2.1 | OpenCLIP ViT-H | 77 tokens | Better, but still limited |
+| SDXL | Dual CLIP (ViT-L + ViT-bigG) | 77×2 tokens | Significantly improved |
+| SD3 / FLUX | T5-XXL + CLIP | 77 / 512 tokens | State-of-the-art text fidelity |
+| DALL-E 3 | GPT-4 for prompt rewriting + CLIP | — | Best at complex prompts via LLM recaption |
+
+**The DALL-E 3 insight:** Instead of hoping the diffusion model learns to handle complex prompts directly, DALL-E 3 uses GPT-4 to *rewrite* the user's prompt into a more detailed, descriptive caption before passing it to the diffusion model. This sidesteps text encoder limitations entirely for complex multi-subject scenes.
+
+---
 
 ## Classifier-Free Guidance (CFG)
 
-Training a conditional diffusion model naively — always providing the text condition — produces images that match the text but lack sharpness and specificity, because the model learns to average over the distribution of images matching the prompt rather than committing to a specific high-probability sample. Classifier-Free Guidance solves this by training the model to function as both a conditional and unconditional generator.
+**One sentence:** CFG trades generation diversity for prompt adherence by combining the model's conditional and unconditional noise predictions — pushing generation more strongly in the direction the prompt specifies.
 
-During training, with some probability p_uncond (typically 10-20%), the text condition is replaced with a null embedding (an empty string or a learned null token). The model therefore learns to denoise both conditioned on a prompt and conditioned on nothing. No separate classifier model is needed — the same U-Net/DiT handles both.
+Training a conditional diffusion model naively produces images that match the text but lack sharpness, because the model learns to average over the distribution of images matching the prompt rather than committing to a specific high-probability sample.
 
-At inference, the conditional and unconditional noise predictions are combined:
+### How CFG Works
+
+**Training:** With probability p_uncond (typically 10-20%), replace the text condition with a null embedding. The model learns to function as both a conditional and unconditional generator within the same weights.
+
+**Inference:** Run the denoising model twice per step:
+1. Conditional: ε_cond(x_t, text_emb)
+2. Unconditional: ε_uncond(x_t, null_emb)
+
+Combine via:
 
 $$\hat{\varepsilon} = \varepsilon_\text{uncond}(x_t) + s \cdot (\varepsilon_\text{cond}(x_t, c) - \varepsilon_\text{uncond}(x_t))$$
 
-where s is the CFG scale (guidance scale). This formula extrapolates in the direction away from the unconditional prediction and toward the conditional prediction, amplifying the text-conditional signal. With s=1, you get standard conditional generation. With s=7.5 (a common default), the model generates images that are much more strongly aligned with the prompt but may sacrifice diversity and can produce artifact-filled images at very high scales (s>15) because it overshoots the data manifold.
+where s is the CFG scale (guidance scale). This formula *extrapolates* in the direction from unconditional toward conditional, amplifying the text-conditional signal.
 
-The key insight: low CFG scale means the model stays closer to the natural image distribution (more diverse, potentially prompt-inconsistent), while high CFG scale pushes the model to commit to the prompt at the cost of naturalness. The conditioning dropout during training is strictly necessary — without it, the model has no unconditional score to subtract, and CFG cannot be applied at inference.
+### CFG Scale Behavior
 
-## Flow Matching
+| CFG Scale | Effect | When to Use |
+|---|---|---|
+| s = 1 | Pure conditional generation, no amplification | Exploring diversity, style generation |
+| s = 3-5 | Gentle guidance, high diversity | Creative outputs, artistic styles |
+| s = 7-9 | Standard default: clear prompt adherence, good quality | General text-to-image use |
+| s = 10-12 | Strong prompt adherence, reduced diversity | Specific compositional requirements |
+| s = 15+ | Over-amplification: artifacts, oversaturation, distortion | Rarely useful; usually harmful |
 
-Flow matching is a more recent alternative to the DDPM training objective that produces straight-line probability paths between the noise distribution and the data distribution, rather than the curved paths implied by DDPM's noise schedule. In DDPM, the forward process adds noise following a diffusion equation whose probability flow trajectories are curved and require many small steps to trace accurately at inference. In **rectified flow** (the specific flow matching variant used in SD3 and FLUX), the forward process interpolates linearly between the data sample x_0 and the noise sample ε: x_t = (1-t)x_0 + tε. The model learns the velocity field that moves along these straight paths, i.e., it predicts (x_0 - ε).
+**Why s=1 doesn't mean "ignore the prompt":** At s=1, the formula becomes ε̂ = ε_cond — you still get conditional generation. CFG scales below 1 would actually push *away* from the prompt.
 
-Straight paths have two practical advantages. First, they require fewer discretization steps to approximate accurately at inference — a 20-step Euler solver on a straight-line trajectory produces results comparable to 1000-step DDPM sampling. Second, the training objective has lower variance because the velocity field is constant along a straight path, making optimization more stable than fitting the curved score function in DDPM. Third, flow matching generalizes naturally to continuous-time formulations, allowing deterministic inference in very few steps (SD3-Turbo, FLUX-schnell operate at 4 steps).
+**Why high scales produce artifacts:** The CFG formula extrapolates beyond the data manifold the model was trained on. At s=15, the model is pushed into regions of the representation space it has never seen during training, producing unnatural colors and distortions.
 
-The shift toward flow matching across the industry (SD3, FLUX, video models like CogVideoX) reflects this practical convergence: same generation quality as DDPM, faster inference, more stable training.
+```python
+# Stable Diffusion inference with CFG control
+from diffusers import StableDiffusionPipeline
+import torch
 
-## Sampling & Inference
+pipe = StableDiffusionPipeline.from_pretrained(
+    "stabilityai/stable-diffusion-2-1",
+    torch_dtype=torch.float16,
+).to("cuda")
 
-Sampling from a trained diffusion model means iteratively applying the learned denoising function, starting from pure Gaussian noise and stepping toward the data distribution. The sampler determines how this stepping is done, trading off quality, determinism, and number of steps required.
+def generate_with_cfg(
+    prompt: str,
+    negative_prompt: str = "blurry, low quality, artifacts",
+    guidance_scale: float = 7.5,
+    num_inference_steps: int = 50,
+    seed: int = 42,
+) -> "PIL.Image":
+    generator = torch.Generator("cuda").manual_seed(seed)
 
-**DDPM** (Denoising Diffusion Probabilistic Models) uses stochastic sampling — each step adds a controlled amount of noise before denoising, making it a Markov chain. DDPM requires 1000 steps for high-quality samples. **DDIM** (Denoising Diffusion Implicit Models) reformulates sampling as a deterministic ODE, eliminating the stochastic step. This allows aggressive step count reduction (~50 steps) and enables consistent image generation from the same noise seed (useful for image editing and interpolation). **DPM-Solver** and **DPM-Solver++** use higher-order ODE solvers that achieve near-DDIM quality in 20 steps. **LCM (Latent Consistency Models)** and **SD-Turbo** distill the multi-step generation process into 1-4 steps using consistency distillation, enabling near-real-time generation at the cost of some diversity.
+    image = pipe(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        guidance_scale=guidance_scale,
+        num_inference_steps=num_inference_steps,
+        generator=generator,
+    ).images[0]
 
-**Negative prompts** leverage CFG: instead of using an empty string as the unconditional conditioning, you specify a prompt describing what you do not want ("blurry, low quality, extra fingers, watermark"). The CFG formula then pushes the generation away from the negative prompt's subspace. This is a practical tool but not a precise filter — it reduces the probability of the negative prompt attributes without eliminating them.
+    return image
 
-**ControlNet** adds spatial conditioning to a pretrained diffusion model without full retraining. A trainable copy of the U-Net encoder is connected to the original U-Net via zero-initialized convolutions. The copy processes a conditioning image (edge map, depth map, pose skeleton, segmentation mask), and its outputs modulate the main U-Net. ControlNet enables structure-preserving generation: generate a face with specific pose while allowing free variation in appearance, generate an image matching a sketch's composition, or generate a scene consistent with a depth map. Multiple ControlNets can be composed.
+# Compare CFG scales on the same prompt + seed
+prompt = "A photorealistic portrait of a fox wearing a Victorian top hat"
+for scale in [1.0, 5.0, 7.5, 12.0, 15.0]:
+    img = generate_with_cfg(prompt, guidance_scale=scale, seed=42)
+    img.save(f"cfg_scale_{scale:.0f}.png")
+```
 
-**LoRA (Low-Rank Adaptation)** fine-tunes a small set of additional weight matrices inserted into the attention layers of the U-Net or DiT. A LoRA for a diffusion model typically adds <100MB of weights while encoding a specific style, person, or object concept. Multiple LoRAs can be merged at inference with linear interpolation of their weight deltas, enabling style mixing. Training a LoRA typically requires 20-200 example images and 2000-4000 training steps on a single GPU — feasible for production personalization pipelines.
+**Negative prompts:** Instead of using an empty string as the unconditional conditioning, you specify what you *don't* want. The CFG formula then pushes generation away from the negative prompt's subspace. Common production negatives: `"blurry, low quality, low resolution, extra fingers, deformed hands, watermark, text, jpeg artifacts"`. This is a statistical tool — it reduces probability of the negative attributes, it does not eliminate them with certainty.
 
-## Video Generation
+::: {.callout-caution title="Production Gotcha"}
+**CFG requires 2x forward passes per denoising step.** At 50 steps, that is 100 forward passes instead of 50. This doubles inference cost vs. unconditional generation. Many high-throughput pipelines use CFG scale=1 (effectively disabling it) or switch to distilled models (LCM, SDXL-Turbo) that bake guidance into the model via distillation — enabling 1-4 step generation without per-step double-pass overhead.
+:::
 
-Video diffusion extends image diffusion by adding a temporal dimension to the architecture. The simplest approach adds temporal attention layers that attend across the same spatial position in multiple frames: each spatial position in the feature map attends to itself at every sampled timestep in the video clip. The spatial attention layers handle within-frame content; the temporal attention layers handle motion consistency across frames. This factorized attention design (spatial then temporal) is computationally efficient because each attention operation is bounded by a single dimension.
+---
 
-**Sora** and subsequent DiT-based video models treat video as a sequence of spacetime patches — a 3D patch tokenization where each token represents a small volume in height × width × time space. The DiT processes all spacetime patches with full 3D self-attention (within the resource constraints of windowed or factorized attention approximations). This unifies spatial and temporal modeling in a single attention mechanism without explicit factorization, enabling the model to learn complex motion patterns that span spatial and temporal dimensions jointly.
+## Full Stable Diffusion Inference Pipeline
 
-The core challenges in video generation are: **temporal consistency** (objects should maintain identity and appearance across frames, not flicker or drift), **motion quality** (motion should be physically plausible — water flows downward, camera moves smoothly), and **long video coherence** (maintaining narrative and scene continuity over 10-60 second clips). All three remain active research problems. Current models excel at short clips (5-15 seconds) with constrained motion but struggle with long-form generation and precise motion control.
+```python
+# Manual SD inference pipeline (educational — shows each step)
+import torch
+from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
+from transformers import CLIPTextModel, CLIPTokenizer
+
+def stable_diffusion_inference(
+    prompt: str,
+    negative_prompt: str = "",
+    num_steps: int = 50,
+    guidance_scale: float = 7.5,
+    height: int = 512,
+    width: int = 512,
+    seed: int = 42,
+):
+    model_id = "stabilityai/stable-diffusion-2-1"
+    device = "cuda"
+    dtype = torch.float16
+
+    # Load components
+    tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(model_id, subfolder="text_encoder").to(device).half()
+    vae = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).half()
+    unet = UNet2DConditionModel.from_pretrained(model_id, subfolder="unet").to(device).half()
+    scheduler = DDIMScheduler.from_pretrained(model_id, subfolder="scheduler")
+    scheduler.set_timesteps(num_steps)
+
+    # Step 1: Encode text prompts
+    def encode_prompt(text: str) -> torch.Tensor:
+        tokens = tokenizer(text, return_tensors="pt", padding="max_length",
+                           max_length=77, truncation=True).input_ids.to(device)
+        with torch.no_grad():
+            return text_encoder(tokens).last_hidden_state  # [1, 77, 1024]
+
+    cond_emb = encode_prompt(prompt)         # conditional embeddings
+    uncond_emb = encode_prompt(negative_prompt)  # unconditional embeddings
+    text_embeddings = torch.cat([uncond_emb, cond_emb])  # [2, 77, 1024]
+
+    # Step 2: Initialize latent noise
+    generator = torch.Generator(device).manual_seed(seed)
+    latents = torch.randn(
+        (1, 4, height // 8, width // 8),
+        generator=generator,
+        device=device,
+        dtype=dtype
+    )
+    latents *= scheduler.init_noise_sigma  # scale for scheduler
+
+    # Step 3: Denoising loop with CFG
+    for t in scheduler.timesteps:
+        # Duplicate latents for conditional + unconditional (CFG batching)
+        latent_input = torch.cat([latents, latents])
+        latent_input = scheduler.scale_model_input(latent_input, t)
+
+        # Predict noise (2x forward pass for CFG)
+        with torch.no_grad():
+            noise_pred = unet(
+                latent_input,
+                t,
+                encoder_hidden_states=text_embeddings
+            ).sample
+
+        # Split conditional and unconditional predictions
+        noise_uncond, noise_cond = noise_pred.chunk(2)
+
+        # Apply CFG formula
+        noise_pred = noise_uncond + guidance_scale * (noise_cond - noise_uncond)
+
+        # Scheduler step: update latents
+        latents = scheduler.step(noise_pred, t, latents).prev_sample
+
+    # Step 4: Decode latents to pixels
+    latents = latents / vae.config.scaling_factor
+    with torch.no_grad():
+        image = vae.decode(latents).sample
+
+    # Post-process to PIL
+    image = ((image + 1) / 2).clamp(0, 1)
+    image = (image.squeeze().permute(1, 2, 0).cpu().float().numpy() * 255).astype("uint8")
+    from PIL import Image
+    return Image.fromarray(image)
+```
+
+---
+
+## Fine-Tuning: DreamBooth, LoRA, ControlNet
+
+### Comparison Table
+
+| Technique | What It Learns | Data Required | Training Time | Output Size | Solves |
+|---|---|---|---|---|---|
+| DreamBooth | Full model fine-tune for specific subject or style | 5-30 images | 30-50 min on A100 | Full model (~7GB) | Highest-fidelity subject reproduction |
+| LoRA | Low-rank weight deltas on attention layers | 20-200 images | 10-30 min on A100 | ~100MB | Style or subject, composable |
+| ControlNet | Spatial conditioning from structure images | Thousands of pairs | 2-5 days on A100 | ~1GB per type | Composition/structure control |
+| Textual Inversion | New token in embedding space | 5-10 images | 30-60 min | <100KB | Simple concept embedding |
+
+### LoRA for Diffusion Models
+
+LoRA adds trainable low-rank matrices to the attention layers of the U-Net or DiT. For each weight matrix W ∈ R^{m×n}, LoRA adds ΔW = BA where B ∈ R^{m×r}, A ∈ R^{r×n}, with r << min(m,n) (rank 4-16 is typical). Only A and B are trained; the original weights are frozen.
+
+```python
+from diffusers import StableDiffusionPipeline
+from peft import LoraConfig, get_peft_model
+import torch
+
+# Train a style LoRA (simplified training setup)
+def train_style_lora(
+    base_model_id: str,
+    training_images_dir: str,
+    output_dir: str,
+    trigger_word: str = "mystyle",
+    rank: int = 8,
+    learning_rate: float = 1e-4,
+    num_steps: int = 2000,
+):
+    """
+    Simplified LoRA training setup.
+    In production, use the diffusers train_dreambooth_lora.py script.
+    """
+    pipe = StableDiffusionPipeline.from_pretrained(base_model_id, torch_dtype=torch.float32)
+
+    # Configure LoRA on U-Net attention layers
+    lora_config = LoraConfig(
+        r=rank,                     # low-rank dimension
+        lora_alpha=rank,            # scaling factor (alpha/r = 1.0)
+        target_modules=[            # which layers to add LoRA to
+            "to_q", "to_k", "to_v", "to_out.0",  # attention projections
+            "ff.net.0.proj", "ff.net.2",           # feed-forward layers
+        ],
+        lora_dropout=0.0,
+    )
+    pipe.unet = get_peft_model(pipe.unet, lora_config)
+
+    # Training loop: standard diffusion loss with LoRA-adapted U-Net
+    # ... (optimizer, dataloader, training loop omitted for brevity)
+
+    # Save only LoRA weights (~100MB vs. 7GB for full model)
+    pipe.unet.save_pretrained(output_dir)
+    print(f"LoRA saved to {output_dir}")
+
+# Inference with a LoRA
+def generate_with_lora(
+    base_model_id: str,
+    lora_path: str,
+    prompt: str,
+    lora_scale: float = 0.8,  # 0.0 = no LoRA, 1.0 = full LoRA strength
+):
+    pipe = StableDiffusionPipeline.from_pretrained(
+        base_model_id, torch_dtype=torch.float16
+    ).to("cuda")
+
+    # Load and fuse LoRA weights
+    pipe.load_lora_weights(lora_path)
+    pipe.fuse_lora(lora_scale=lora_scale)
+
+    image = pipe(prompt, num_inference_steps=30, guidance_scale=7.5).images[0]
+    return image
+```
+
+### ControlNet
+
+ControlNet adds spatial structure conditioning to a pretrained diffusion model without retraining it. A trainable copy of the U-Net encoder processes a conditioning image (edge map, depth, pose skeleton, segmentation mask). Its outputs modulate the main U-Net via zero-initialized convolutions. Zero initialization ensures that before training, ControlNet has no effect on the main model — training starts from the pretrained baseline, not from scratch.
+
+```python
+from diffusers import StableDiffusionControlNetPipeline, ControlNetModel
+import torch
+from PIL import Image
+import cv2
+import numpy as np
+
+# Load ControlNet with Canny edge conditioning
+controlnet = ControlNetModel.from_pretrained(
+    "lllyasviel/control_v11p_sd15_canny",
+    torch_dtype=torch.float16
+)
+pipe = StableDiffusionControlNetPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    controlnet=controlnet,
+    torch_dtype=torch.float16,
+).to("cuda")
+
+def generate_with_edges(
+    source_image: Image.Image,
+    prompt: str,
+    controlnet_conditioning_scale: float = 1.0,
+):
+    # Extract Canny edges from source image
+    img_array = np.array(source_image.convert("RGB"))
+    edges = cv2.Canny(img_array, threshold1=100, threshold2=200)
+    edge_image = Image.fromarray(edges).convert("RGB")
+
+    # Generate while conforming to the edge structure
+    result = pipe(
+        prompt=prompt,
+        image=edge_image,
+        controlnet_conditioning_scale=controlnet_conditioning_scale,
+        num_inference_steps=30,
+        guidance_scale=7.5,
+    ).images[0]
+
+    return result, edge_image
+```
+
+**ControlNet conditioning scale** controls how strongly the structure constraint is enforced:
+- 0.5: loose structure adherence, more creative freedom
+- 1.0: strong structure adherence (default)
+- 1.5+: rigid structure adherence; may produce stiff outputs
+
+Multiple ControlNets can be composed in the same inference call: simultaneously enforce pose, depth, and edge structure.
+
+---
+
+## Key Model Landscape (2024-2025)
+
+| Model | Architecture | Open? | Strengths | Notes |
+|---|---|---|---|---|
+| SD 1.5 | U-Net + CLIP | Yes | Largest LoRA ecosystem | Legacy; use SDXL or SD3 for new work |
+| SDXL | Dual U-Net + dual CLIP | Yes | High resolution, large LoRA community | Still widely deployed |
+| SD3 / SD3.5 | DiT + T5-XXL + triple CLIP | Yes | Best open prompt fidelity | Flow matching |
+| FLUX.1 Dev | DiT + T5-XXL | Yes (non-commercial) | Best open quality/resolution | Flow matching; 12B params |
+| FLUX.1 Schnell | DiT (distilled) | Yes (Apache 2.0) | 4-step generation | Fastest open model |
+| DALL-E 3 | Unknown + GPT-4 recaption | No (API) | Best complex multi-subject prompts | Prompt rewriting is the key |
+| Midjourney | Unknown | No | Aesthetic quality, artistic styles | No API; Discord-only |
+| Imagen 3 | Cascaded diffusion + T5 | No (API) | Photorealism, text rendering | Google Vertex AI |
+
+---
+
+## Cheat Sheet
+
+- **Forward process:** fixed Markov chain adding Gaussian noise over T steps; closed-form lets you jump to any timestep t directly
+- **Reverse process:** neural network ε_θ(x_t, t) predicts the added noise; MSE loss; runs in learned reverse
+- **Why ε-prediction:** consistent target scale across all timesteps vs. x_0 prediction; empirically better samples
+- **DDPM:** stochastic sampling, 500-1000 steps, high quality, determinism impossible
+- **DDIM:** deterministic ODE, 20-50 steps, same quality as DDPM, enables image inversion and editing
+- **Flow matching / rectified flow:** straight-line paths, 4-20 steps, lower training variance, used in SD3/FLUX
+- **Latent diffusion:** VAE compresses 512×512 to 64×64×4 (8x spatial), running diffusion ~64x cheaper per step
+- **VAE scaling factor:** latents are multiplied by ~0.18215 before passing to U-Net; divide before decoding
+- **U-Net:** conv encoder-decoder with skip connections; cross-attention injects text; sinusoidal time embedding
+- **DiT:** transformer on image patches; full self-attention; scales like LLMs; used in SD3, FLUX, Sora
+- **CFG = 1:** pure conditional generation (no guidance amplification) — NOT "no conditioning"
+- **CFG = 7-9:** standard default; good prompt adherence, minimal artifacts
+- **CFG > 12:** over-amplification; artifacts, oversaturation, anatomical distortions
+- **CFG training:** null-conditioning dropout (10-20%) during training is required for CFG to work at inference
+- **Negative prompts:** replace null embedding with description of what you don't want — statistical, not guaranteed
+- **LoRA:** ~100MB weight delta on attention layers; composable; 20-200 images; fast to train
+- **DreamBooth:** full fine-tune; highest fidelity; 5-30 images; produces full model artifact
+- **ControlNet:** spatial conditioning (edges, depth, pose); zero-initialized to preserve base model quality
+- **DALL-E 3 insight:** GPT-4 prompt rewriting sidesteps text encoder limitations for complex prompts
+- **FLUX.1 Schnell:** 4-step generation with Apache 2.0 license; flow matching distillation
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
-**Q1. Explain diffusion models in plain terms — what is the model actually learning to do?**
+### Entry Level
+
+::: {.callout-tip title="Entry Level — Q1"}
+**Explain diffusion models in plain terms — what is the model actually learning to do?**
+
+::: {.callout-note collapse="true" title="Model Answer — Weak vs. Strong"}
+**Weak answer:** "It adds noise and then removes it to generate images."
+
+**Strong answer:** A diffusion model learns to remove noise. During training, the model is shown thousands of noisy versions of real images — each image with a specific, known amount of Gaussian noise added. The model's job is: given a noisy image and a number telling it how noisy the image is (the timestep), predict the noise that was added. After training, it can subtract the noise it predicts from a noisy image to get a slightly cleaner version.
+
+To generate a new image, you start with pure random noise and repeatedly apply the model to remove a little noise at each step. After 20-1000 steps, you have a clean, realistic image that came entirely from noise. The model has effectively learned the shape of the distribution of real images, and the noise removal process walks from the simple Gaussian noise distribution back to that complex image distribution.
+
+For text-to-image generation, you additionally feed the text prompt into the model at each denoising step. The prompt steers the noise removal process so that the image that emerges matches the description. The model is not "drawing" from scratch — it is repeatedly cleaning up noise in a direction determined by what the prompt describes.
+:::
+:::
+
+::: {.callout-tip title="Entry Level — Q2"}
+**What is classifier-free guidance and how do you control its strength?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-A diffusion model learns to remove noise. During training, the model is shown thousands of noisy versions of real images — each image with a specific, known amount of Gaussian noise added. The model's job is simple: given a noisy image and a number telling it how noisy the image is (the timestep), predict the noise that was added. After training, it can subtract the noise it predicts from a noisy image to get a slightly cleaner version.
+Classifier-free guidance (CFG) is a technique that makes the generated image more closely match the prompt at the cost of some diversity and naturalness. It works by running the denoising model twice at each sampling step: once with the text prompt as conditioning, and once with no conditioning (an empty or null prompt). The two noise predictions are combined: the final prediction is the unconditional prediction plus a scaled-up version of the difference between the conditional and unconditional predictions.
 
-To generate a new image, you start with pure random noise — an image that looks like TV static — and repeatedly apply the model to remove a little noise at each step. After 20-1000 steps (depending on the sampler), you have a clean, realistic image that came entirely from noise. The model has effectively learned the shape of the distribution of real images, and the noise removal process walks from the simple Gaussian noise distribution back to that complex image distribution.
+The guidance scale (CFG scale) controls the strength. A scale of 1 means the formula reduces to pure conditional generation — the output is a natural sample from the model. A scale of 7-9 is typical for general text-to-image use: the image is clearly shaped by the prompt while remaining photorealistic. A scale of 15+ over-amplifies the conditioning, often producing oversaturated, artifact-filled images because the model is pushed outside the region of natural images it was trained on.
 
-For text-to-image generation, you additionally feed the text prompt into the model at each denoising step. The prompt steers the noise removal process so that the image that emerges matches the description. The model is not "drawing" from scratch like a human artist — it is repeatedly cleaning up noise in a direction determined by what the prompt describes.
+Practically: increase the CFG scale when generated images are ignoring key elements of your prompt. Decrease it when images look unnatural, oversaturated, or have artifacts, or when you want more diversity. Most production applications use CFG scales between 6 and 12.
 :::
 :::
 
-::: {.callout-tip title="Entry Level"}
-**Q2. What is classifier-free guidance and how do you control its strength?**
+::: {.callout-tip title="Entry Level — Q3"}
+**Why is latent diffusion faster than pixel-space diffusion?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Classifier-free guidance (CFG) is a technique that makes the generated image more closely match the prompt at the cost of some diversity and naturalness. It works by running the denoising model twice at each sampling step: once with the text prompt as conditioning, and once with no conditioning (an empty prompt). The two noise predictions are combined: the final prediction is the unconditional prediction plus a scaled-up version of the difference between the conditional and unconditional predictions.
+Pixel-space diffusion runs the denoising U-Net directly on the full image at its native pixel resolution. For a 512×512 RGB image, that is 786,432 values per image, processed at every one of the 1000 denoising steps.
 
-The guidance scale (also called CFG scale) controls the strength. A scale of 1 means pure conditional generation — the output is a natural sample from the model. A scale of 7-9 is typical for general text-to-image use: the image is clearly shaped by the prompt while remaining photorealistic. A scale of 15+ over-amplifies the conditioning, often producing oversaturated, artifact-filled images because the model is pushed outside the region of natural images it was trained on.
+Latent diffusion compresses the image into a much smaller latent representation first, using a Variational Autoencoder (VAE). The VAE encoder maps a 512×512 image into a 64×64×4 latent tensor — a spatial compression of 8x in each dimension. This is a 64x reduction in spatial size. The denoising U-Net then operates on this 64×64×4 latent space at every step, not on the full 512×512 image.
 
-Practically: increase the CFG scale when the generated images are ignoring key elements of your prompt. Decrease it when images look unnatural, oversaturated, or have artifacts, or when you want more diversity in outputs from the same prompt. Most production applications use CFG scales between 6 and 12.
+Because the U-Net operates on a 64x smaller spatial grid, each denoising step is roughly 64-192x cheaper in computation. This makes latent diffusion fast enough to run on consumer GPUs for interactive use, whereas pixel-space diffusion at the same image resolution would be prohibitively slow. The image quality is preserved because the VAE learns to compress images nearly losslessly — a perceptual reconstruction loss ensures the decoded images closely match the originals.
 :::
 :::
 
-::: {.callout-tip title="Entry Level"}
-**Q3. Why is latent diffusion faster than pixel-space diffusion?**
+::: {.callout-tip title="Entry Level — Q4"}
+**What happens at CFG scale = 1 vs. 7 vs. 15?**
+
+::: {.callout-note collapse="true" title="Model Answer — Weak vs. Strong"}
+**Weak answer:** "Scale 1 ignores the prompt, 7 follows it, 15 overloads it."
+
+**Strong answer:**
+- **Scale = 1:** The CFG formula reduces to ε̂ = ε_cond — pure conditional generation with no amplification. The model samples from its natural conditional distribution. Outputs are photorealistic and diverse but may only loosely match the prompt, because the model can average over many valid images matching the prompt rather than committing to any one interpretation. Fine detail mentioned in the prompt may be absent.
+
+- **Scale = 7:** The most common default. The conditional direction is amplified 7x, strongly pushing the image toward the prompt. Prompt elements are reliably present. Colors are vivid, compositions are clear. A small sacrifice in diversity and naturalness. This is the empirically optimal range for most text-to-image tasks.
+
+- **Scale = 15+:** Over-amplification. The model is pushed so strongly toward the prompt that it overshoots the natural image manifold. Common artifacts: extreme color saturation, blown-out highlights, "plastic" appearance, anatomical distortions (extra fingers, distorted faces), high-frequency texture noise. Photorealistic styles typically degrade above scale 10-11. If your images look oversaturated or artificial, reduce the CFG scale.
+:::
+:::
+
+::: {.callout-tip title="Entry Level — Q5"}
+**What is the difference between DDPM and DDIM sampling?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Pixel-space diffusion runs the denoising U-Net directly on the full image at its native pixel resolution. For a 512×512 RGB image, that is 786,432 values per image, and the U-Net processes this full-resolution representation at every one of the 1000 denoising steps. The computational cost is enormous.
+DDPM (Denoising Diffusion Probabilistic Models) uses stochastic sampling. At each reverse step, the model predicts the noise, removes it, and then *adds back* a controlled amount of fresh random noise before proceeding to the next step. This stochasticity means the same starting noise seed will produce different images across runs, and requires many steps (500-1000) to converge to high-quality samples.
 
-Latent diffusion compresses the image into a much smaller latent representation first, using a Variational Autoencoder (VAE). The VAE encoder maps a 512×512 image into a 64×64×4 latent tensor — a spatial compression of 8x in each dimension. This is a 64x reduction in spatial size. The denoising U-Net then operates on this 64×64×4 latent space at every step, not on the full 512×512 image. At the end of generation, the VAE decoder upsamples the final latent back to 512×512.
+DDIM (Denoising Diffusion Implicit Models) reformulates the reverse process as a deterministic ODE — no random noise is added at each step. The denoising direction is computed purely from the model's noise prediction, and the trajectory is deterministic. This has two practical benefits: (1) you only need 20-50 steps for similar quality to 1000-step DDPM, and (2) the same initial noise seed always produces the same image. Determinism enables image editing via noise inversion: encode an existing image back to its noise representation, make targeted changes in noise space, and decode back to a modified image.
 
-Because the U-Net operates on a 64x smaller spatial grid, each denoising step is roughly 16-64x cheaper in computation than the equivalent pixel-space step (the savings depend on how U-Net compute scales with spatial resolution). This makes latent diffusion fast enough to run on consumer GPUs for interactive use, whereas pixel-space diffusion at the same image resolution would require much more compute per step. The image quality is preserved because the VAE learns to compress images nearly losslessly — a reconstruction loss ensures the decoded images closely match the originals.
+In most production pipelines today, DDIM or higher-order solvers like DPM-Solver++ are used instead of DDPM because they provide 20-50x speedup with comparable quality.
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q1. Compare DDPM, DDIM, and flow matching as sampling approaches — what does each optimize?**
+---
+
+### Mid Level
+
+::: {.callout-warning title="Mid Level — Q1"}
+**Compare DDPM, DDIM, and flow matching as sampling approaches — what does each optimize?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-**DDPM** defines a stochastic Markov chain reverse process. At each step, the model predicts the noise, removes it, and adds a small amount of fresh noise controlled by the variance schedule. This stochasticity makes DDPM sampling resemble a random walk that converges to the data distribution. The benefit is that the stochasticity allows the sampler to recover from small errors by perturbing and re-denoising. The cost is that you need ~1000 steps for this convergence to produce high-quality images, because each step makes only a small, noisy adjustment.
+**DDPM** defines a stochastic Markov chain reverse process. At each step, the model predicts the noise, removes it, and adds a small amount of fresh noise. The stochasticity allows the sampler to recover from small errors by perturbing and re-denoising. The cost is that you need ~1000 steps for this convergence to produce high-quality images.
 
-**DDIM** eliminates the stochastic noise addition step, reformulating the reverse process as a deterministic ODE. The denoising direction is computed from the model's noise prediction, but no random noise is added back. Because the trajectory is deterministic, the same initial noise seed always produces the same image, which enables image editing via noise inversion. DDIM requires only ~50 steps for similar quality to 1000-step DDPM, because the deterministic trajectory does not need to average out stochastic fluctuations. Higher-order solvers like DPM-Solver reduce this further to 20 steps.
+**DDIM** eliminates the stochastic noise addition step, reformulating the reverse process as a deterministic ODE. Because the trajectory is deterministic, the same initial noise seed always produces the same image, enabling image editing via noise inversion. DDIM requires only ~50 steps for similar quality to 1000-step DDPM. Higher-order solvers like DPM-Solver reduce this further to 20 steps.
 
-**Flow matching (rectified flow)** changes the training objective itself. Instead of learning to denoise along curved DDPM probability paths, the model learns to follow straight-line paths between noise and data. Straight paths can be traced accurately with far fewer steps because there is no curvature to approximate. Flow matching achieves equivalent or better quality than DDIM in 4-20 steps, enables faster training convergence, and generalizes to continuous-time models that unify training and inference. SD3 and FLUX use flow matching; it is the current state-of-the-art for training new diffusion models. The architectural cost is a different model parameterization — instead of predicting ε, the model predicts the velocity field (x_0 - ε).
+**Flow matching (rectified flow)** changes the training objective itself. Instead of learning to denoise along curved DDPM probability paths, the model learns to follow straight-line paths between noise and data. Straight paths can be traced accurately with far fewer steps because there is no curvature to approximate. Flow matching achieves equivalent or better quality than DDIM in 4-20 steps, enables faster training convergence, and generalizes to continuous-time models. SD3 and FLUX use flow matching. The architectural change: instead of predicting ε, the model predicts the velocity field (x_0 - ε).
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q2. Explain the role of the VAE in latent diffusion models — what happens if you skip it?**
+::: {.callout-warning title="Mid Level — Q2"}
+**Explain why latent diffusion (Stable Diffusion) is so much more efficient than pixel-space diffusion.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The VAE (Variational Autoencoder) in latent diffusion has two roles: compression and perceptual quality. The encoder compresses a full-resolution image (e.g., 512×512×3) into a much smaller latent tensor (e.g., 64×64×4) by learning a compact representation that captures the image's structure, color, and texture. The decoder reconstructs the full-resolution image from the latent, trained with a combination of pixel-reconstruction loss and perceptual loss (comparing VGG features of the reconstruction and original) to ensure visual quality rather than just pixel accuracy. The 4 latent channels are learned representations, not RGB — they encode features that are useful for the diffusion model to operate on, not directly interpretable.
+The efficiency gap has three components:
 
-If you skip the VAE and run diffusion directly in pixel space, the computational cost per denoising step grows by approximately 64x for the same image resolution (because the spatial dimensions are 8x larger in each axis, and attention cost scales quadratically). This is prohibitive for interactive use on consumer hardware and is the primary reason pixel-space diffusion models (like the original DALL-E and early DDPM models) could not scale to high resolutions economically.
+**1. Spatial compression.** The VAE compresses a 512×512×3 image to 64×64×4 — an 8x reduction in spatial dimensions in each axis. The denoising network processes a 16,384-dimensional latent instead of a 786,432-dimensional pixel space. For attention-based operations (which scale quadratically with spatial resolution), this is a ~(8²)² = 4096x reduction in attention cost.
 
-There is also a qualitative difference: the latent space the VAE creates is smoother and more structured than raw pixel space, making the diffusion process easier to learn. Diffusion in latent space operates on a compact, semantically organized representation where small changes in the latent correspond to semantically meaningful changes in the image, rather than arbitrary pixel perturbations. However, the VAE introduces a quality ceiling — any information the VAE cannot reconstruct is lost. Poorly trained VAEs produce blurry outputs or tiling artifacts that the diffusion model cannot compensate for, since it only ever generates in latent space and relies entirely on the VAE decoder for the final image.
+**2. Step count reduction.** Latent diffusion models typically use 20-50 DDIM steps, not 1000 DDPM steps. The smoother latent space makes the denoising problem easier, allowing fewer steps.
+
+**3. Semantic structure.** The latent space is not just a compressed pixel space — it is a *semantically structured* representation where nearby latent vectors correspond to perceptually similar images. Diffusion in this space is more efficient because the model is navigating a semantically organized manifold rather than arbitrary pixel correlations.
+
+Combined: the total compute ratio is approximately (pixel steps × pixel space cost) / (latent steps × latent space cost) = (1000 × 786,432) / (50 × 16,384) ≈ 960x. This is what makes SD runnable in seconds on a consumer GPU vs. minutes on a server for pixel-space diffusion.
+
+The quality tradeoff: any information the VAE cannot reconstruct is lost. The VAE introduces a quality ceiling — blurry fine details, tiling artifacts — that the diffusion model cannot compensate for. Improving VAE reconstruction quality is a significant direction in recent SD work (e.g., SD3.5's improved VAE).
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q3. What is CFG dropout training and why is it necessary for classifier-free guidance to work at inference?**
+::: {.callout-warning title="Mid Level — Q3"}
+**What is the role of the VAE in latent diffusion models — what happens if you skip it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-CFG dropout training means randomly replacing the text conditioning with a null embedding (empty string or a learned null token) for a fraction of training examples — typically 10-20%. This forces the model to learn two denoising functions within the same parameters: a conditional one that uses the text prompt, and an unconditional one that ignores it.
+The VAE in latent diffusion has two roles: compression and perceptual quality. The encoder compresses a full-resolution image into a compact latent tensor by learning a representation that captures image structure, color, and texture. The decoder reconstructs the full-resolution image from the latent, trained with a combination of pixel-reconstruction loss and perceptual loss (comparing VGG features of the reconstruction and original) to ensure visual quality rather than just pixel accuracy.
 
-CFG dropout is strictly necessary because classifier-free guidance at inference requires subtracting the unconditional prediction from the conditional prediction: ε_guided = ε_uncond + s × (ε_cond - ε_uncond). If the model was only trained with conditioning, calling it without a condition — or with a null condition — produces undefined behavior because the model has never seen that situation. The null-conditioned prediction would be garbage, making the subtraction meaningless.
+If you skip the VAE and run diffusion directly in pixel space, the computational cost per denoising step grows by approximately 64x for the same image resolution (because the spatial dimensions are 8x larger in each axis, and attention cost scales quadratically). This is prohibitive for interactive use on consumer hardware.
 
-By training with dropout, the model learns what "no guidance" looks like: the unconditional prediction represents the model's best noise estimate without any prompt information, equivalent to generating from the prior distribution over all images. The CFG formula then extrapolates from this prior toward the specific conditional distribution defined by the prompt. The dropout rate controls the strength of the unconditional mode the model learns — too low and the unconditional predictions become weak, degrading CFG at high scales; too high and the conditional predictions become less text-responsive because the model learns to rely less on the text conditioning. 10-20% is empirically well-calibrated for standard models.
+There is also a qualitative difference: the latent space the VAE creates is smoother and more structured than raw pixel space, making the diffusion process easier to learn. However, the VAE introduces a quality ceiling — any information the VAE cannot reconstruct is lost. Poorly trained VAEs produce blurry outputs or tiling artifacts that the diffusion model cannot compensate for, since it only ever generates in latent space and relies entirely on the VAE decoder for the final image.
 :::
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q1. A customer wants to add AI image generation to their product. Walk through the build-vs-buy decision and the key API/self-hosted tradeoffs.**
+::: {.callout-warning title="Mid Level — Q4"}
+**Explain the mathematical difference between DDPM and flow matching — what makes flow matching faster?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
+DDPM defines a forward process that adds Gaussian noise according to a variance schedule β₁, ..., β_T over T=1000 steps. The resulting probability path from data x_0 to noise x_T is curved in probability space. The score function the denoising model must learn, ∇_x log p_t(x_t), varies non-uniformly along this curved path. Approximating the trajectory accurately at inference requires many small steps because the curvature means a large step can deviate significantly from the true path.
+
+Flow matching, specifically rectified flow (SD3 and FLUX), defines a forward process that linearly interpolates between a data sample x_0 and a noise sample ε: x_t = (1-t)x_0 + tε. The probability path is a straight line in sample space. The model learns to predict the velocity field v_t(x) = dx/dt = (x_0 − ε) — a constant vector along the straight-line path. Because the velocity is constant, the trajectory can be approximated accurately with very few Euler integration steps.
+
+The practical consequence: DDPM requires 50-1000 steps because the curved score function demands fine integration. Flow matching requires 4-20 steps because the straight-line velocity field has no curvature to approximate. Additional advantage: flow matching training has lower gradient variance because the velocity target is constant along each trajectory, versus DDPM's timestep-dependent noise prediction targets. Lower variance training translates to faster convergence on the same data.
+:::
+:::
+
+::: {.callout-warning title="Mid Level — Q5"}
+**What is CFG dropout training and why is it necessary for CFG to work at inference?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+CFG dropout training means randomly replacing the text conditioning with a null embedding for a fraction of training examples — typically 10-20%. This forces the model to learn two denoising functions within the same parameters: a conditional one that uses the text prompt, and an unconditional one that ignores it.
+
+CFG dropout is strictly necessary because classifier-free guidance at inference requires calling the model with a null condition to get the unconditional noise prediction: ε_guided = ε_uncond + s × (ε_cond - ε_uncond). If the model was only ever trained with conditioning, calling it without a condition — or with a null condition — produces undefined behavior because the model has never seen that situation. The null-conditioned prediction would be meaningless, making the CFG subtraction meaningless.
+
+By training with dropout, the model learns what "no guidance" looks like: the unconditional prediction represents the model's best noise estimate without any prompt information, equivalent to sampling from the prior distribution over all images. The CFG formula then extrapolates from this prior toward the specific conditional distribution defined by the prompt.
+
+The dropout rate controls the strength of the unconditional mode: too low and unconditional predictions become weak; too high and conditional predictions become less text-responsive. 10-20% is empirically well-calibrated.
+:::
+:::
+
+::: {.callout-warning title="Mid Level — Q6 (Follow-up)"}
+**Follow-up: What is the U-Net architecture in Stable Diffusion and why is it being replaced by DiT?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The U-Net in Stable Diffusion is an encoder-decoder architecture with skip connections. The encoder progressively downsamples the spatial resolution while increasing channel depth, and the decoder upsamples back to the original resolution. Skip connections connect encoder and decoder at matching resolutions, preserving fine-grained spatial information. Cross-attention layers at each block inject text conditioning — spatial features attend over text embeddings. A sinusoidal time embedding, projected into each residual block, informs the model of the current noise level.
+
+The U-Net works well at moderate scales but has limitations: its convolutional inductive bias enforces spatial locality, making it harder to model long-range dependencies (an object in one corner affecting the composition in another). It also has a non-standard architecture that doesn't follow transformer scaling laws, making it harder to predict quality improvements from size increases.
+
+DiT (Diffusion Transformer) replaces the U-Net with a standard transformer applied to image patches. Each patch becomes a token; full self-attention is applied across all patches at every layer. This eliminates the convolutional locality bias, enables modeling of long-range spatial dependencies, and scales predictably with model size following established transformer scaling laws. The tradeoff is O(n²) attention cost over all patches, which becomes expensive at high resolutions without efficient attention approximations. SD3, FLUX, and DALL-E 3 all use DiT-based architectures; it is now the standard for new model development.
+:::
+:::
+
+---
+
+### Senior / Forward Deployed Engineer
+
+::: {.callout-important title="Senior — Q1"}
+**Explain why latent diffusion is so much more efficient than pixel-space diffusion. What would break if you removed the VAE?**
+
+::: {.callout-note collapse="true" title="Model Answer">}
+> 🎯 **What great looks like:** Covers the spatial compression math, step count reduction, and the concrete failure modes of VAE removal — not just "it's faster."
+
+Latent diffusion's efficiency comes from three compounding factors:
+
+**Spatial compression:** The VAE compresses 512×512×3 pixels to 64×64×4 latents — 8x reduction per spatial axis. For attention operations (which scale quadratically with spatial resolution), this is a ~(8×8)² / (1×1)² = 4096x reduction in attention cost within each block. For convolutional operations, it scales ~64x.
+
+**Step count:** The smoother, semantically organized latent space allows the denoising problem to be solved in 20-50 steps instead of 500-1000. The latent space is not just compressed pixels — it's a learned representation where nearby vectors correspond to perceptually similar images, making denoising paths shorter and more predictable.
+
+**Combined effect:** ~(1000 steps × 786k pixel values) / (50 steps × 16k latent values) ≈ 960x total reduction in forward-pass operations. This is the difference between seconds on a consumer GPU vs. minutes on a data center server.
+
+**If you removed the VAE and ran diffusion in pixel space:**
+1. Each denoising step would be 64-192x more expensive (spatial resolution increases quadratically)
+2. You'd need 500-1000 steps instead of 20-50 (curved score function in pixel space requires finer integration)
+3. The denoising network would need to jointly learn high-level semantic structure AND low-level pixel texture — a harder, more poorly-conditioned problem
+4. Effectively impossible to run interactively on consumer hardware at 512×512 resolution
+
+The VAE is not just a speedup — it factorizes the problem: the VAE handles pixel-level fidelity, and the diffusion model handles semantic content generation. Each component can be optimized independently.
+:::
+:::
+
+::: {.callout-important title="Senior — Q2"}
+**What is classifier-free guidance? What happens at CFG scale = 1 vs. 15, and what's the right scale for different use cases?**
+
+::: {.callout-note collapse="true" title="Model Answer">}
+> 🎯 **What great looks like:** Explains the training requirement (null-conditioning dropout), the inference formula, the geometric interpretation, and practical scale selection — not just "higher = more prompt adherence."
+
+**CFG training setup:** During training, the text conditioning is randomly replaced with a null embedding (typically 10-20% of examples). This trains the model to function as both a conditional generator (text in = text-conditioned output) and an unconditional generator (null in = prior distribution over all images) within the same weights. This null-conditioning dropout is strictly necessary — without it, there is no unconditional prediction to subtract at inference.
+
+**CFG inference formula:**
+$$\hat{\varepsilon} = \varepsilon_\text{uncond}(x_t) + s \cdot (\varepsilon_\text{cond}(x_t, c) - \varepsilon_\text{uncond}(x_t))$$
+
+This extrapolates in the direction from the unconditional prediction toward the conditional prediction, amplifying the text-conditional signal. The geometric interpretation: the unconditional prediction points toward "any natural image"; the conditional prediction points toward "natural images matching this prompt"; CFG scales up the vector in the conditional direction.
+
+**Scale = 1:** ε̂ = ε_cond. Pure conditional generation, no amplification. Natural image distribution, diverse outputs, but may only loosely follow complex prompts. Good for artistic exploration, style generation.
+
+**Scale = 7-9:** Strongly prompt-adherent, minimal artifacts. The empirical sweet spot for most text-to-image tasks. Default for Stable Diffusion pipelines.
+
+**Scale = 15+:** Over-amplification beyond the natural image manifold. Artifacts: extreme saturation, blown highlights, "plastic" textures, anatomical distortions. The model is pushed into regions of representation space it never saw during training.
+
+**Practical scale selection:**
+- **s = 3-5:** High diversity, loose prompt adherence — brainstorming, artistic exploration
+- **s = 7-9:** General use — product images, illustrations, realistic portraits
+- **s = 10-12:** Strict prompt adherence — UI mockups, compositional control
+- **s > 12:** Typically harmful unless the specific model is trained to handle it (some SDXL variants)
+
+**Production gotcha:** CFG requires 2x forward passes per step (conditional + unconditional). For cost-sensitive applications, use distilled models (SDXL-Turbo, FLUX-schnell) that bake guidance into the model, allowing 1-4 step generation without the 2x overhead.
+:::
+:::
+
+::: {.callout-important title="Senior — Q3"}
+**A customer wants to generate product images that must match their brand style guide. Compare fine-tuning (DreamBooth/LoRA) vs. ControlNet vs. prompting as solutions.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+These three approaches solve different subproblems of brand consistency, and the right choice depends on what "match the brand style guide" concretely means.
+
+**Prompting alone:** Works when the brand style is expressible in natural language and is not highly distinctive visually. "Minimalist white background, flat lay, cool tones, editorial style" can be reliably evoked through prompt engineering with a good base model. Cost: essentially zero additional effort. Limitations: cannot reliably reproduce proprietary color palettes, cannot enforce exact compositional templates, and results vary between runs. Suitable for brands with simple, conventional aesthetics.
+
+**LoRA fine-tuning:** Works best when the brand has a distinctive visual style (illustration style, unique color treatment, a recurring aesthetic not well-represented in base model training data). Train a style LoRA on 50-200 high-quality brand images. Applying the LoRA at inference reliably injects the brand's aesthetic into any generation. Suitable for: brand illustration style, consistent color grading, specific photographic treatment. Cost: one-time ~2 GPU hours training + ~100MB weight file. Limitation: style LoRA encodes aesthetic but not layout or composition. Multiple LoRAs can be merged with weighted interpolation for style mixing.
+
+**DreamBooth:** Full fine-tuning approach for highest-fidelity style reproduction or specific subject reproduction (specific product, mascot). More expensive to train (10-50 GPU hours) and produces a separate full model artifact to manage. Use when LoRA fidelity is demonstrably insufficient — typically for very distinctive styles or precise subject reproduction.
+
+**ControlNet:** Solves layout consistency, not style. If the brand style guide specifies exact compositional templates ("product in top-right third of frame, brand background, logo placement"), a ControlNet conditioned on segmentation masks or depth maps enforces the composition while the style comes from the base model (plus optional LoRA). Suitable for: brands with strict layout templates, product shots with defined spatial structure.
+
+**My recommendation for a brand style guide use case:** Start with LoRA fine-tuning for the style layer. Layer ControlNet on top when layout templates are required. Use DreamBooth only if LoRA cannot achieve sufficient fidelity after prompt optimization attempts. Evaluate with a brand identity expert reviewing 50 generated images blind vs. 50 existing brand images — their subjective rating is the ground truth for brand consistency, not any automated metric.
+:::
+:::
+
+::: {.callout-important title="Senior — Q4"}
+**A customer wants to add AI image generation to their product. Walk through the build-vs-buy decision and the key API/self-hosted tradeoffs.**
+
+::: {.callout-note collapse="true" title="Model Answer">}
+> 🎯 **What great looks like:** Provides a structured decision framework with concrete cost numbers, identifies the crossover point for self-hosting, and names the middle-ground options.
+
 I frame this as a matrix of three dimensions: control requirements, cost at scale, and content policy constraints.
 
-**APIs (DALL-E 3, Stability AI, Ideogram, Flux API)** are the right starting point for almost every customer. No infrastructure, immediate production readiness, predictable per-image pricing ($0.04-0.12 per image at 1024×1024), SLA-backed uptime. The limitations: you cannot fine-tune the base model, content policy is enforced externally (if you need outputs the API won't produce — e.g., medical anatomical illustrations, explicit content for age-verified platforms — APIs are non-starters), per-image cost becomes prohibitive at scale (1 million images/month = $40,000-120,000/month), and you have no control over model updates changing output behavior.
+**APIs (DALL-E 3, Stability AI, Ideogram, Flux API)** are the right starting point for almost every customer. No infrastructure, immediate production readiness, predictable per-image pricing ($0.04-0.12 per image at 1024×1024), SLA-backed uptime. The limitations: cannot fine-tune the base model, content policy is enforced externally (if you need outputs the API won't produce — medical anatomical illustrations, explicit content for age-verified platforms — APIs are non-starters), per-image cost becomes prohibitive at scale (1M images/month = $40,000-120,000/month), and you have no control over model updates changing output behavior.
 
 **Self-hosted open-source (FLUX.1, SDXL, SD3)** is the path when: the customer generates >500,000 images/month (self-hosting on A100 GPUs pays back within 3-6 months), content policy requirements conflict with public API policies, fine-tuning is required for brand consistency, or latency requirements cannot be met by a third-party API (some API providers have 5-15s latency; self-hosted with an optimized inference stack can hit 1-3s on A100). The costs are GPU infrastructure (A100 80GB ~$2-3/hr on-demand, ~$1/hr reserved), DevOps engineering to manage the inference stack, and model versioning.
 
-**My structured recommendation:** Start with an API for the first 6 months to validate the use case and understand actual generation volume. Use that period to measure whether content policy is a constraint and what fine-tuning would be needed. At 100,000 images/month on an API, the monthly cost (~$5,000-12,000) starts to justify a cost-benefit analysis for self-hosting. At 500,000/month, self-hosting is almost always cheaper. For brand-consistency fine-tuning, the realistic path is: API for general generation + LoRA fine-tuning via a managed fine-tuning API (Replicate, Fal.ai) as a middle ground before full self-hosting.
-:::
-:::
+**Middle ground (Replicate, Fal.ai, Modal):** Managed inference APIs for open-source models. Pay-per-second for GPU time rather than per-image. Allows custom models (LoRA, DreamBooth) without full self-hosting. Good for 50k-500k images/month range.
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q2. A media company wants to generate brand-consistent images using diffusion models — what techniques (fine-tuning, ControlNet, LoRA) would you recommend and why?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Brand consistency in image generation has two distinct requirements: style consistency (color palette, visual aesthetic, illustration style) and subject consistency (specific characters, products, logos appearing correctly). Different techniques solve different parts of this.
-
-**LoRA fine-tuning** is the primary tool for both style and subject consistency. A style LoRA trained on 50-200 images from the brand's existing visual library can encode the brand's color palette, linework style, lighting preferences, and compositional conventions. Generating with this LoRA active ensures outputs share the visual DNA of the brand's existing assets. A subject LoRA trained on 15-50 images of a specific product or character teaches the model to reproduce that specific subject reliably. For a media company with defined mascots or characters, a subject LoRA is the correct approach. Training cost is low (2-4 GPU hours per LoRA); inference cost is negligible (LoRA weights add ~100MB to the model, no inference overhead). Multiple LoRAs can be merged with weighted interpolation at inference.
-
-**ControlNet** is the tool for layout consistency — when the brand needs generated images to conform to a specific composition, spatial structure, or template. If the brand has a content template where the product must appear in the top-right, a person in the bottom-left, and a background occupying 60% of the frame, a depth or segmentation ControlNet enforces that layout while allowing visual variation. ControlNets can also be used with edge maps from existing approved images to generate variations that maintain composition while changing style.
-
-**Full fine-tuning (DreamBooth or full U-Net fine-tuning)** is appropriate when LoRA is insufficient — for very distinctive styles that require deeper adaptation than low-rank adaptation can capture, or for highest-fidelity subject reproduction. Cost is higher (10-50 GPU hours) and the fine-tuned model becomes a separate artifact to maintain.
-
-**My recommendation for the media company:** Start with a style LoRA trained on their 100 best existing brand images. Test it with their prompt library. Add subject LoRAs for their top 3-5 key characters or products. Use ControlNet only if layout templating becomes a requirement. Reserve full DreamBooth fine-tuning for cases where LoRA fidelity is demonstrably insufficient on the character/product after prompt engineering attempts.
+**My structured recommendation:** Start with an API for the first 6 months to validate the use case and understand actual generation volume. At 100,000 images/month on an API, the monthly cost (~$5,000-12,000) starts to justify a cost-benefit analysis for self-hosting. At 500,000/month, self-hosting is almost always cheaper. For brand-consistency fine-tuning, the realistic path is: API for general generation → LoRA fine-tuning via a managed API (Replicate, Fal.ai) as a middle ground → full self-hosting once volume and requirements are stable.
 :::
 :::

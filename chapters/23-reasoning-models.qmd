@@ -8,109 +8,615 @@
 - How extended thinking / chain-of-thought is trained and executed at inference time
 - The mechanics of GRPO, process reward models, and RL-based reasoning training
 - How test-time compute scaling works and when it pays off
+- OpenAI o1/o3 vs. DeepSeek R1: architecture, cost, and capability differences
 - When to deploy reasoning models vs. standard models — and how to justify the cost
+- How to design production routing strategies that minimize reasoning model spend
 :::
 
 ## What Reasoning Models Are
+
+**One sentence:** A reasoning model generates a hidden scratchpad of thousands of tokens before producing its answer, using that scratchpad as working memory to check intermediate steps and explore multiple solution paths.
 
 Standard language models are trained to predict the most probable next token given a context. At inference time, they produce an answer in a single forward-pass sequence — each token conditioned on what came before, but with no structured deliberation step between reading the question and emitting the answer. This works well for tasks where a fluent continuation of the prompt is a correct answer. It breaks down on tasks that require multi-step logical deduction, constraint satisfaction, or long chains of arithmetic where an early error compounds into an entirely wrong final answer.
 
 Reasoning models solve this by inserting a structured thinking phase between input and output. Before producing the visible answer, the model generates thousands of reasoning tokens in a hidden scratchpad — sometimes called an "extended thinking" trace or "chain-of-thought" trace. These tokens are not returned to the user but are consumed by the model itself during generation. The practical effect is that the model has more opportunities to catch its own errors, explore alternative solution paths, and verify intermediate conclusions before committing to an answer.
 
-The key architectural insight is that this is not primarily a model-size phenomenon. A smaller model spending many reasoning tokens can outperform a larger model that answers immediately. This is the test-time compute hypothesis: the amount of compute available at inference time, not just the number of parameters or the quality of pretraining, determines the ceiling of reasoning performance. OpenAI's o1/o3/o4 family, DeepSeek-R1, and Claude 3.7 Sonnet with extended thinking all embody this approach, though they differ in training methodology and how much of the reasoning trace is exposed to users.
+The key architectural insight is that this is not primarily a model-size phenomenon. A smaller model spending many reasoning tokens can outperform a larger model that answers immediately. This is the test-time compute hypothesis: the amount of compute available at inference time, not just the number of parameters or the quality of pretraining, determines the ceiling of reasoning performance.
+
+**Real-world analogy:** Think of a doctor giving a diagnosis. A GP might say "it's probably a cold" in 30 seconds. A specialist sees the same patient, spends 20 minutes reviewing lab results, cross-referencing differential diagnoses, and reconsidering edge cases before delivering a verdict. The specialist isn't smarter in some fixed sense — they're spending more time on deliberation. Reasoning models are the specialist.
+
+::: {.callout-caution title="Common Misconception"}
+**"Reasoning models just have more parameters."** Wrong. The reasoning advantage comes from inference-time compute — more tokens generated in the scratchpad — not from a larger architecture. DeepSeek R1 (671B MoE with ~37B active parameters) outperforms many larger dense models on reasoning benchmarks precisely because of RL-trained thinking behavior, not raw size.
+:::
+
+### The Major Reasoning Models (2024–2025)
+
+| Model | Developer | Weights Open? | Training Method | Reasoning Trace Visible? | Benchmark Highlight |
+|---|---|---|---|---|---|
+| o1 | OpenAI | No | RL + PRM (process supervision) | Hidden | MATH: 94.8% |
+| o3 | OpenAI | No | RL + PRM + search | Hidden | ARC-AGI: 87.5% |
+| o4-mini | OpenAI | No | RL, distilled | Hidden | Cost-efficient o3-class |
+| DeepSeek R1 | DeepSeek | Yes (MIT) | GRPO + SFT warm-start | Exposed (`<think>` tags) | o1-level on MATH/code |
+| Claude 3.7 Sonnet | Anthropic | No | Constitutional AI + extended thinking | Partial streaming | Top-tier on coding |
+| Gemini 2.0 Flash Thinking | Google | No | RL-based | Partial | Fast reasoning tier |
+
+---
 
 ## How It Works — Chain-of-Thought at Inference Scale
 
+**One sentence:** The reasoning trace is generated autoregressively before the final answer, making it causally upstream of the answer — mistakes corrected in the trace do not propagate to the output.
+
 The reasoning trace is not a post-hoc explanation — it is causally upstream of the final answer. The model generates the scratchpad autoregressively, and those scratchpad tokens appear in the context when the final answer tokens are generated. This means a mistake corrected mid-reasoning does not propagate to the answer, which is fundamentally different from a standard model that cannot revisit an implicit intermediate step buried in its hidden states.
 
-Training a reasoning model requires teaching the model to generate useful reasoning traces, not just any verbose output. Two approaches exist for supervising this. An **Outcome Reward Model (ORM)** scores only the final answer — correct answer gets a positive reward, wrong answer gets none or a penalty. ORMs are easy to apply whenever ground-truth answers exist (math problems, code execution results) but they provide no signal about whether the reasoning path was sound. A model can arrive at the right answer through flawed reasoning, and the ORM will reinforce the flawed path.
+There is a probabilistic argument for why longer traces help harder problems. At each reasoning step there is some probability of error. Without correction, errors compound multiplicatively across a long chain. A scratchpad allows the model to notice when sub-results are inconsistent and backtrack, converting what would be a cascade of errors into a local correction.
 
-A **Process Reward Model (PRM)** scores individual reasoning steps. A human annotator (or a trained verifier) labels each step in a chain as correct or incorrect, and the PRM learns to predict these step-level labels. This gives the training signal needed to distinguish "correct answer, wrong reasoning path" from "correct answer, correct reasoning path." PRMs are significantly more expensive to build — they require dense step-level annotation — but they produce more robust and generalizable reasoning behavior. OpenAI's o1 training reportedly relied heavily on process supervision. The tradeoff is annotation cost: step-level labels require mathematical or domain expertise and scale poorly to open-ended tasks.
+**Code — calling reasoning models with extended thinking:**
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+# Claude 3.7 Sonnet with extended thinking
+response = client.messages.create(
+    model="claude-sonnet-4-5",
+    max_tokens=16000,
+    thinking={
+        "type": "enabled",
+        "budget_tokens": 8000  # up to 8k tokens for the scratchpad
+    },
+    messages=[{
+        "role": "user",
+        "content": (
+            "A train leaves Chicago at 9am traveling at 60mph. "
+            "Another train leaves New York at 10am traveling at 80mph. "
+            "The cities are 790 miles apart. At what time do they meet, "
+            "and which train has traveled farther?"
+        )
+    }]
+)
+
+# Separate thinking blocks from text blocks
+for block in response.content:
+    if block.type == "thinking":
+        print(f"[SCRATCHPAD] {block.thinking[:200]}...")  # first 200 chars
+    elif block.type == "text":
+        print(f"[ANSWER] {block.text}")
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+
+# OpenAI o3 with reasoning effort control
+response = client.chat.completions.create(
+    model="o3",
+    reasoning_effort="high",   # low | medium | high
+    messages=[{
+        "role": "user",
+        "content": "Write a Python function that finds all prime factors of n in O(sqrt(n)) time, with proof of correctness."
+    }]
+)
+
+# reasoning tokens are billed but not surfaced in the content
+usage = response.usage
+print(f"Prompt tokens: {usage.prompt_tokens}")
+print(f"Reasoning tokens: {usage.completion_tokens_details.reasoning_tokens}")
+print(f"Output tokens: {usage.completion_tokens}")
+print(response.choices[0].message.content)
+```
+
+```python
+# DeepSeek R1 — reasoning trace is exposed in <think> tags
+import openai  # DeepSeek uses an OpenAI-compatible API
+
+client = openai.OpenAI(
+    api_key="YOUR_DEEPSEEK_KEY",
+    base_url="https://api.deepseek.com"
+)
+
+response = client.chat.completions.create(
+    model="deepseek-reasoner",
+    messages=[{
+        "role": "user",
+        "content": "Prove that sqrt(2) is irrational."
+    }]
+)
+
+# DeepSeek R1 exposes the reasoning as a separate field
+message = response.choices[0].message
+print("Reasoning trace:\n", message.reasoning_content)
+print("\nFinal answer:\n", message.content)
+```
+
+---
+
+## Training Reasoning Models: RL on Verifiable Tasks
+
+**One sentence:** Reasoning models are trained with reinforcement learning where the reward signal comes from automatically verifiable outcomes — correct math answers, passing code tests — not human preference labels.
+
+Training a reasoning model requires teaching the model to generate *useful* reasoning traces, not just verbose output. The core challenge is that "write a good reasoning trace" is not directly supervisable — you cannot easily tell a model which scratchpad paths are better. What you can do is provide reward signals on outcomes that are automatically verifiable.
+
+### Verifiable vs. Unverifiable Tasks
+
+RL-based reasoning training only works robustly on **verifiable tasks** — those where a program can check whether an answer is correct without human judgment. The canonical examples are:
+
+- **Mathematics:** Compare the model's numerical answer to the ground truth
+- **Competitive programming:** Execute submitted code against hidden test cases
+- **Formal proofs:** Run a proof checker (Lean, Coq)
+- **Logic puzzles:** Check if the solution satisfies all stated constraints
+
+**Unverifiable tasks** include open-ended writing, nuanced judgment, creative work, or questions with no single correct answer. You cannot train RL on these robustly because there is no automatic oracle. Attempting to use a trained reward model as the oracle leads to **reward hacking** — the policy learns to exploit the reward model's blind spots.
+
+::: {.callout-caution title="Production Implication"}
+Reasoning models trained primarily on math/code/logic may show weaker instruction-following on formatting-sensitive tasks. They know *how to reason* but may not follow output format constraints reliably, especially when the constraint appears at the end of a long system prompt. Test instruction-following specifically if you need structured JSON or strict templates.
+:::
+
+### Outcome Reward Models (ORMs) vs. Process Reward Models (PRMs)
+
+| Dimension | ORM | PRM |
+|---|---|---|
+| What it scores | Final answer only | Each reasoning step |
+| Annotation cost | Low (one label per problem) | High (one label per step, needs domain expert) |
+| Reward signal quality | Coarse — correct path and flawed path indistinguishable | Fine — isolates where the model goes wrong |
+| Risk | Reinforces lucky-answer paths | Requires reliable step-level annotation |
+| Used in practice | Cheap large-scale signal | High-quality targeted supervision |
+
+**ORM training loop:**
+1. Sample G completions for each math problem
+2. Check each final answer against ground truth
+3. Assign reward +1 for correct, 0 for wrong
+4. Update policy via GRPO or PPO
+
+**PRM training loop:**
+1. For each reasoning chain, human annotators label each step correct/incorrect
+2. Train a separate "step grader" model on these step-level labels
+3. At RL training time, the PRM scores every reasoning step, not just the final answer
+4. This provides dense reward signal that penalizes invalid intermediate steps
+
+OpenAI o1's training reportedly relied heavily on process supervision. DeepSeek R1 used primarily ORMs with automatic answer checking (GRPO), achieving competitive results at dramatically lower annotation cost.
+
+---
 
 ## GRPO & RL-Based Reasoning Training
 
-Training reasoning models requires reinforcement learning because the reward signal (is the final answer correct?) is not differentiable with respect to the model's token-level outputs. The standard approach in RLHF — PPO with a value network — requires training a separate critic model that estimates the expected future reward for each partial sequence. This critic is expensive in memory and compute, must be kept in sync with the policy, and introduces significant training instability.
+**One sentence:** GRPO (Group Relative Policy Optimization) eliminates the memory-hungry critic network of PPO by computing the reward baseline from the model's own group of sampled outputs.
 
-DeepSeek-R1 introduced **Group Relative Policy Optimization (GRPO)** as a lighter alternative. Instead of training a separate value network, GRPO generates a group of G candidate completions for each prompt, computes the reward for each completion (via a verifiable reward: does the math answer match?), and uses the group's average reward as the baseline. The policy gradient update pushes the model toward completions that scored above the group average and away from those that scored below. Because the baseline is computed from the model's own outputs rather than a learned critic, GRPO eliminates the memory and stability costs of PPO's critic while retaining the core optimization signal.
+Training reasoning models requires reinforcement learning because the reward signal (is the final answer correct?) is not differentiable with respect to the model's token-level outputs. Standard gradient descent cannot be applied directly.
 
-The **"aha moment"** refers to an emergent behavior observed during DeepSeek-R1 training: mid-training, the model began spontaneously generating self-correction tokens ("Wait, that's wrong. Let me reconsider...") without being explicitly trained to do so. This suggests that RL training on verifiable reward signals can elicit structured self-reflection from a model that had no explicit supervision for that behavior. The policy simply discovered that backtracking and correcting intermediate steps increased the probability of reaching a correct final answer.
+### PPO vs. GRPO
 
-The **cold-start problem** is the challenge of initializing RL training when the model has no prior behavior resembling structured reasoning. If the initial policy generates random chains that rarely lead to correct answers, the reward signal is too sparse for learning to begin. DeepSeek solved this with a two-phase approach: first, use supervised fine-tuning (SFT) on a small set of human-curated reasoning chain examples to warm-start the model into a regime where it occasionally produces correct multi-step solutions; then apply GRPO to refine and extend that behavior at scale. This SFT warm-up acts as a curriculum that bootstraps the policy into the reward basin.
+**PPO (Proximal Policy Optimization):** Requires a critic network — a separate model that estimates the expected future reward (value function) for each state. The policy gradient update uses the advantage: how much better was this action than the critic expected? Training PPO means running two large models in lockstep. This doubles memory requirements and introduces instability when the critic's value estimates lag behind rapid policy changes.
+
+**GRPO (Group Relative Policy Optimization):** Eliminates the critic by estimating the baseline from the model's own group of outputs. For each prompt:
+1. Generate G candidate completions (typically G=8 or G=16)
+2. Compute reward for each completion (e.g., does the math answer match?)
+3. Group average reward = baseline
+4. Push the policy toward completions that scored above average, away from those below
+
+```python
+# GRPO core logic (pseudocode illustration)
+def grpo_update(policy, prompts, G=8, learning_rate=1e-6):
+    for prompt in prompts:
+        # Step 1: Sample G completions from current policy
+        completions = [policy.generate(prompt) for _ in range(G)]
+
+        # Step 2: Compute rewards (e.g., math answer checker)
+        rewards = [verify_answer(c, ground_truth[prompt]) for c in completions]
+
+        # Step 3: Group-relative advantage — no critic needed
+        mean_reward = sum(rewards) / G
+        advantages = [(r - mean_reward) for r in rewards]
+
+        # Step 4: Policy gradient update with clipping (PPO-style ratio clipping)
+        for completion, advantage in zip(completions, advantages):
+            log_probs = policy.log_prob(completion | prompt)
+            old_log_probs = completion.cached_log_probs  # from generation
+            ratio = (log_probs - old_log_probs).exp()
+            clipped_ratio = ratio.clamp(1 - epsilon, 1 + epsilon)
+            loss = -min(ratio * advantage, clipped_ratio * advantage).mean()
+            loss.backward()
+
+        policy.optimizer.step()
+```
+
+### The "Aha Moment"
+
+During DeepSeek-R1 training, an emergent behavior appeared mid-training: the model began spontaneously generating self-correction tokens ("Wait, that's wrong. Let me reconsider...") without being explicitly supervised to do so. The RL training on verifiable rewards discovered that backtracking and correcting intermediate steps increased the probability of reaching a correct final answer. This self-correction behavior emerged from incentives, not explicit instruction.
+
+### The Cold-Start Problem
+
+**Problem:** If the initial model never generates a correct multi-step solution, the reward signal is always zero, and GRPO has no gradient to learn from. You cannot start RL training from a model that has no reasoning behavior.
+
+**DeepSeek's solution — two-phase curriculum:**
+
+1. **Phase 1 (SFT warm-start):** Curate ~5,000 high-quality long-form reasoning examples with explicit `<think>...</think>` XML formatting. SFT the base model on these to teach the format and baseline reasoning competence.
+2. **Phase 2 (GRPO RL):** Start GRPO from the SFT checkpoint. The warm-started model now occasionally reaches correct answers, providing non-zero reward signal. RL then scales the capability ceiling far beyond what the 5,000 supervised examples alone could achieve.
+
+The two phases are complementary: SFT establishes format and baseline competency; RL explores and reinforces successful strategies that never appeared in the SFT dataset.
+
+---
 
 ## Test-Time Compute Scaling
 
-The conventional scaling law says: more parameters + more training tokens = better model. The test-time compute scaling law says: given a fixed trained model, more inference-time computation can raise performance on hard tasks, and this additional compute can be more cost-effective than training a larger model.
+**One sentence:** Test-time compute scaling means spending more computation *during inference* on a fixed trained model to improve accuracy, rather than training a bigger model.
 
-The simplest form is **Best-of-N sampling**: generate N independent answers and return the one that scores highest according to a verifier (e.g., a math-checking script or an ORM). If each attempt has probability p of being correct, the probability that at least one of N attempts is correct is 1-(1-p)^N. For hard problems with low per-attempt accuracy, this grows quickly. The cost is linear in N.
+The conventional scaling law: more parameters + more training tokens = better model. The test-time compute scaling law: given a fixed trained model, more inference-time computation can raise performance on hard tasks, and this additional compute can be more cost-effective than training a larger model from scratch.
 
-More sophisticated approaches use **tree search over reasoning paths**. At each step in the reasoning chain, the model branches into multiple continuations; a PRM scores the partial traces; branches with low scores are pruned. This concentrates compute on promising reasoning directions rather than independent restarts. Beam search, Monte Carlo Tree Search (MCTS), and best-first search have all been applied in this framing.
+### Three Mechanisms
 
-**Compute-optimal vs. token-optimal inference** is a real engineering tradeoff. Reasoning models are not always the right tool. They excel on tasks with a well-defined correct answer, high sensitivity to intermediate step errors, and where user latency tolerance is high: complex mathematics, multi-step code debugging, constraint satisfaction, legal or financial reasoning with explicit rules. They are overkill — and expensive — for tasks where a standard model is already near-ceiling: factual lookup, simple summarization, conversational replies, or tasks where chain-of-thought doesn't generalize (e.g., common-sense questions where slow deliberation can introduce overthinking artifacts).
+**1. Best-of-N sampling** — Generate N independent answers, return the highest-scoring one.
+- If each attempt has probability p of correctness, P(at least one correct) = 1 - (1-p)^N
+- For p=0.1 and N=10: P = 65%. For p=0.1 and N=50: P = 99.5%
+- Cost: linear in N. No architecture changes required.
 
-## Practical Use
+**2. Sequential reasoning (scratchpad)** — Generate a long reasoning trace before the answer. The trace allows self-correction and intermediate verification. This is what o1/o3/R1 all use. Cost: proportional to reasoning token count.
 
-Reasoning model latency is fundamentally different from standard model latency. A standard `gpt-4o` call generating 200 output tokens might return in 2-3 seconds. An `o3` call on a hard problem might generate 4,000 reasoning tokens before the 200-token answer, adding 30-60 seconds of wait time. This is not a bug — it is the model doing useful work — but it is a deployment reality that must be designed around. Strategies include: showing a "thinking..." spinner with partial reasoning tokens streamed to the user, offloading reasoning-heavy tasks to background jobs, and reserving reasoning models for the subset of queries where the accuracy gain justifies latency.
+**3. Tree search over reasoning paths** — At each step in the reasoning chain, branch into multiple continuations. A PRM scores partial traces. Prune low-scoring branches. Concentrate compute on promising directions. More expensive than sequential reasoning but theoretically optimal for very hard problems.
 
-The OpenAI API exposes a `reasoning_effort` parameter for o3/o4-mini that lets callers trade off latency and cost against accuracy: `low` uses fewer reasoning tokens and responds faster; `high` uses more. This allows applications to tune dynamically — use `high` for a user explicitly requesting deep analysis, `low` for a quick check. Anthropic's extended thinking API for Claude 3.7 exposes a `budget_tokens` parameter that caps reasoning token spend per call. Both designs reflect the same insight: reasoning compute is a knob, not a binary.
+```python
+# Best-of-N sampling with a verifier
+import anthropic
+import re
 
-Cost is significant. Reasoning tokens are billed at the same rate as output tokens, and a single o3 call on a hard problem can generate 5,000–20,000 reasoning tokens. This makes reasoning models 10-100x more expensive per task than calling a standard model with a single pass. Architecture guidance: use reasoning models as a last resort or as an elevated tier triggered by task complexity signals (detected by a cheaper classifier), not as the default handler for every user request.
+client = anthropic.Anthropic()
+
+def solve_with_best_of_n(problem: str, n: int = 8) -> str:
+    """Generate N solutions, return the one that passes verification."""
+    solutions = []
+    for i in range(n):
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": problem}]
+        )
+        solutions.append(response.content[0].text)
+
+    # Attempt to verify each solution (domain-specific logic)
+    for sol in solutions:
+        if verify_solution(sol, problem):
+            return sol
+
+    # Fall back to the first solution if none verify
+    return solutions[0]
+
+def verify_solution(solution: str, problem: str) -> bool:
+    """
+    Example: check that the solution contains a final numerical answer
+    consistent with the problem constraints. In practice, use an ORM
+    or run code in a sandbox.
+    """
+    # Placeholder: look for a boxed answer pattern (LaTeX math convention)
+    return bool(re.search(r'\\boxed\{[^}]+\}', solution))
+```
+
+### Compute-Budget Control in Production
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+def adaptive_reasoning(query: str, complexity: str) -> str:
+    """
+    Route query to appropriate reasoning budget based on detected complexity.
+    complexity: 'low' | 'medium' | 'high'
+    """
+    budgets = {
+        "low": 500,      # simple questions — fast, cheap
+        "medium": 3000,  # multi-step reasoning
+        "high": 10000    # hard math, competitive programming
+    }
+    budget = budgets[complexity]
+
+    response = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=budget + 2000,  # budget + answer tokens
+        thinking={
+            "type": "enabled",
+            "budget_tokens": budget
+        },
+        messages=[{"role": "user", "content": query}]
+    )
+
+    # Extract only the text answer (not thinking blocks)
+    for block in response.content:
+        if block.type == "text":
+            return block.text
+    return ""
+
+# Usage
+simple_answer = adaptive_reasoning("What is the capital of France?", "low")
+hard_answer = adaptive_reasoning(
+    "Prove that for any prime p > 2, p^2 ≡ 1 (mod 8).", "high"
+)
+```
+
+---
+
+## OpenAI o3 vs. DeepSeek R1: A Direct Comparison
+
+::: {.callout-tip title="Senior-level interview topic"}
+This comparison is a common FDE question. Know it cold.
+:::
+
+| Dimension | OpenAI o3 | DeepSeek R1 |
+|---|---|---|
+| Weights | Closed (API only) | Open (MIT license) |
+| Architecture | Unknown (likely dense or MoE) | MoE: 671B total, ~37B active |
+| Training method | RL + heavy process supervision (PRM) | GRPO with verifiable ORMs + SFT warm-start |
+| Reasoning trace | Hidden (not returned to user) | Exposed in `<think>` tags |
+| Cost (API) | ~$10-60 / 1M output tokens | ~$0.55 / 1M tokens (R1) |
+| Latency | 10-120s per hard query | 10-60s per hard query |
+| MATH benchmark | ~97% | ~97% (o1-comparable) |
+| AIME 2024 | ~91% | ~79% |
+| Code (Codeforces) | ~90th percentile | ~96th percentile (Codeforces ELO) |
+| Can self-host? | No | Yes — run on 4x A100 80GB |
+| Best for | Highest accuracy, no infrastructure | Cost-sensitive, open deployment |
+
+**The headline:** DeepSeek R1 achieves o1-level performance on most reasoning benchmarks at roughly 1/50th the API cost, and can be self-hosted. On pure coding benchmarks it arguably surpasses o3. OpenAI o3 leads on ARC-AGI-style abstract reasoning and the absolute frontier of mathematical competition problems.
+
+---
+
+## When Reasoning Models HELP vs. HURT
+
+### Use Reasoning Models For:
+
+| Use case | Why it helps |
+|---|---|
+| Competitive math (AIME, AMC, Olympiad) | Multi-step derivation; errors at step 3 destroy final answer |
+| Competitive programming | Algorithmic design + implementation require planning |
+| Multi-constraint optimization | Many interdependent rules; need to track all simultaneously |
+| Formal verification / proof generation | Step-by-step rigor required |
+| Complex code debugging | Need to trace execution state through many branches |
+| Legal / regulatory reasoning (rule-based) | Rules chain: IF A AND B THEN C UNLESS D... |
+
+### Do NOT Use Reasoning Models For:
+
+| Use case | Why it's overkill or harmful |
+|---|---|
+| Factual lookup ("What year was Paris founded?") | Standard model is near-ceiling. Reasoning adds cost, no accuracy gain |
+| Simple summarization | Fluency task, not reasoning. GPT-4o-mini is fine |
+| Customer service chat | Latency 30-60s is unusable. Reasoning adds no value |
+| Creative writing | No "correct answer." Overthinking introduces hedging and hedged prose |
+| Classification / extraction | Template tasks. Fine-tune a small model instead |
+| High-throughput pipelines (>1000 calls/min) | Token cost explodes. Reasoning tokens 10-100x multiplier on cost |
+
+::: {.callout-caution title="Overthinking Failure Mode"}
+Reasoning models can make *simple* tasks *worse*. On obvious questions, extended deliberation can introduce spurious alternatives and cause the model to hedge an answer that should be direct. This "overthinking" artifact is well-documented. Always benchmark reasoning models against standard models on your specific task before assuming they help.
+:::
+
+---
+
+## Latency & Cost Analysis
+
+**The numbers every engineer should know:**
+
+| Model | Typical reasoning tokens (hard task) | Latency (hard task) | Cost multiplier vs. GPT-4o |
+|---|---|---|---|
+| GPT-4o | 0 (no reasoning) | 2-5s | 1x |
+| o4-mini (low effort) | 500-1000 | 5-15s | 3-5x |
+| o3 (medium effort) | 2000-5000 | 15-45s | 15-30x |
+| o3 (high effort) | 5000-20000 | 30-120s | 30-100x |
+| DeepSeek R1 | 2000-8000 | 10-60s | 0.3x (vs GPT-4o) |
+| Claude 3.7 (budget=8000) | up to 8000 | 20-60s | 10-25x |
+
+**Cost formula:**
+```
+total_cost = (prompt_tokens × input_rate)
+           + (reasoning_tokens × output_rate)
+           + (output_tokens × output_rate)
+
+# Example: o3 on a hard math problem
+# 500 prompt + 8000 reasoning + 300 output tokens @ $10/$30 per 1M
+cost = (500 × 0.000010) + (8000 × 0.000030) + (300 × 0.000030)
+cost = $0.005 + $0.240 + $0.009 = $0.254 per call
+```
+
+**Architecture principle:** Do not use reasoning models as the default handler for every user request. Use them as an elevated tier triggered by complexity signals, or as a batch-processing tool for high-stakes low-volume tasks.
+
+---
+
+## Production Routing Architecture
+
+For production systems with mixed workloads:
+
+```python
+import anthropic
+import openai
+from enum import Enum
+
+class Tier(Enum):
+    FAST = "fast"        # GPT-4o-mini or Claude Haiku
+    STANDARD = "standard"  # Claude Sonnet or GPT-4o
+    REASONING = "reasoning"  # o3 or DeepSeek R1
+
+def classify_query_complexity(query: str) -> Tier:
+    """
+    Lightweight classifier to route queries.
+    In production: fine-tune a small model for this.
+    Here: rule-based heuristic for illustration.
+    """
+    reasoning_keywords = [
+        "prove", "derive", "calculate step by step", "optimize",
+        "if and only if", "algorithm", "complexity", "counterexample"
+    ]
+    math_signals = any(kw in query.lower() for kw in reasoning_keywords)
+    long_query = len(query.split()) > 100
+
+    if math_signals and long_query:
+        return Tier.REASONING
+    elif math_signals or long_query:
+        return Tier.STANDARD
+    else:
+        return Tier.FAST
+
+def route_and_answer(query: str) -> dict:
+    tier = classify_query_complexity(query)
+
+    if tier == Tier.FAST:
+        # GPT-4o-mini: ~$0.0002/call, ~1s
+        client = openai.OpenAI()
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": query}]
+        )
+        return {
+            "tier": tier.value,
+            "answer": resp.choices[0].message.content,
+            "cost_estimate": "$0.0002"
+        }
+
+    elif tier == Tier.STANDARD:
+        # Claude Sonnet: ~$0.003/call, ~3s
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": query}]
+        )
+        return {
+            "tier": tier.value,
+            "answer": resp.content[0].text,
+            "cost_estimate": "$0.003"
+        }
+
+    else:
+        # Claude with extended thinking: ~$0.05-0.25/call, ~30s
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=12000,
+            thinking={"type": "enabled", "budget_tokens": 8000},
+            messages=[{"role": "user", "content": query}]
+        )
+        answer = next(
+            b.text for b in resp.content if b.type == "text"
+        )
+        return {
+            "tier": tier.value,
+            "answer": answer,
+            "cost_estimate": "$0.05-0.25"
+        }
+```
+
+---
+
+## Cheat Sheet
+
+- **Reasoning model:** generates a hidden scratchpad before the answer; scratchpad is causally upstream of the output
+- **Test-time compute scaling:** more inference compute on a fixed model improves hard-task accuracy — the new complement to training-time scaling
+- **ORM:** scores final answer only; cheap, works where ground truth is auto-verifiable
+- **PRM:** scores each reasoning step; expensive (expert annotation), produces more robust reasoning
+- **GRPO:** eliminates PPO's critic by using group average reward as baseline; halves training memory vs. PPO
+- **Cold-start fix:** SFT warm-start on ~5k curated reasoning examples, then RL
+- **DeepSeek R1:** open weights (MIT), GRPO-trained, o1-level on most benchmarks, ~1/50th API cost of o3
+- **o3:** OpenAI's frontier reasoning model, best on ARC-AGI and hardest math competition tasks, closed weights
+- **Hidden vs. visible traces:** o3 hides reasoning entirely; DeepSeek R1 exposes it in `<think>` tags; Claude streams partial thinking
+- **Budget tokens:** Anthropic API param to cap reasoning spend per call; `reasoning_effort` on OpenAI o3/o4
+- **Latency:** 10-120s for hard tasks — always route simple queries to standard models
+- **Cost multiplier:** reasoning models 10-100x more expensive than standard models per task
+- **Don't use for:** customer chat, simple factual Q&A, creative writing, high-throughput pipelines
+- **Do use for:** competitive math, algorithmic programming, multi-constraint planning, formal reasoning
+- **Routing strategy:** classifier (cheap) → standard model (70-80% of traffic) → reasoning model low-budget → reasoning model high-budget
+- **Best-of-N:** simplest test-time scaling; P(correct) = 1 - (1-p)^N; linear cost
+- **"Aha moment":** emergent self-correction in DeepSeek R1 — not supervised, arose from RL incentives
+- **Overthinking:** reasoning models can hurt simple tasks by over-deliberating; always benchmark before assuming they help
+- **Verifiability requirement:** RL-based reasoning training requires tasks with automatic answer checking — math, code, logic; not creative writing
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
-**Q1. What is the difference between a standard LLM and a reasoning model like o1?**
+### Entry Level
 
-::: {.callout-note collapse="true" title="Model Answer"}
-A standard LLM generates an answer token-by-token in a single forward pass, with no explicit deliberation between reading a question and emitting the answer. Each token is conditioned on the prompt and previous outputs, but the model has no mechanism to revisit or correct an intermediate step it has already emitted.
+::: {.callout-tip title="Entry Level — Q1"}
+**What is the difference between a standard LLM and a reasoning model like o1?**
+
+::: {.callout-note collapse="true" title="Model Answer — Weak vs. Strong"}
+**Weak answer:** "Reasoning models are smarter and think before answering."
+
+**Strong answer:** A standard LLM generates an answer token-by-token in a single forward pass, with no explicit deliberation between reading a question and emitting the answer. Each token is conditioned on the prompt and previous outputs, but the model has no mechanism to revisit or correct an intermediate step it has already emitted.
 
 A reasoning model like o1 generates a hidden reasoning trace — sometimes called a scratchpad or "extended thinking" — before producing the visible answer. This trace can be thousands of tokens long and allows the model to try multiple approaches, catch its own errors, and verify intermediate conclusions before committing to a final response.
 
-The practical difference shows up on hard tasks: on complex math or multi-step code problems, a standard GPT-4-class model answers quickly but makes errors at intermediate steps that cascade into wrong final answers. o1 uses the scratchpad to work through the problem step-by-step and self-correct, achieving dramatically higher accuracy at the cost of higher latency and inference cost.
+The practical difference shows up on hard tasks: on complex math or multi-step code problems, a standard GPT-4o-class model answers quickly but makes errors at intermediate steps that cascade into wrong final answers. o1 uses the scratchpad to work through the problem step-by-step and self-correct, achieving dramatically higher accuracy at the cost of higher latency and inference cost.
 
-The key insight is that the improvement comes from compute at inference time, not a larger or differently trained base model.
+The key insight is that the improvement comes from compute at inference time, not a larger or differently-trained base model. A smaller model spending more reasoning tokens can outperform a larger model that answers immediately.
 :::
 :::
 
-::: {.callout-tip title="Entry Level"}
-**Q2. Why does "thinking longer" help a model solve harder problems?**
+::: {.callout-tip title="Entry Level — Q2"}
+**Why does "thinking longer" help a model solve harder problems?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 Each token a model generates becomes part of the context for subsequent tokens. When a model generates a scratchpad before answering, those intermediate tokens serve as working memory — the model can write down sub-results, verify them, and build on them, just as a human working through a math problem on paper can catch a multiplication error before it corrupts the rest of the solution.
 
 Without a scratchpad, a model answering a multi-step problem must compress all intermediate reasoning into its hidden states across a fixed number of transformer layers. For complex problems, the hidden state dimensionality is insufficient to hold all necessary intermediate values accurately. The scratchpad offloads this computation into explicit tokens, where it can be checked and corrected.
 
-There is also a probabilistic argument: harder problems require longer correct reasoning chains. At each step, there is some probability of an error. Longer chains without correction accumulate more errors. A scratchpad allows the model to detect and recover from local errors rather than letting them propagate, so the probability of reaching a correct final answer on a hard problem improves substantially with additional reasoning tokens.
+There is also a probabilistic argument: harder problems require longer correct reasoning chains. At each step, there is some probability of an error. Longer chains without correction accumulate more errors. A scratchpad allows the model to detect and recover from local errors rather than letting them propagate.
 :::
 :::
 
-::: {.callout-tip title="Entry Level"}
-**Q3. What is test-time compute scaling and how does it differ from training-time scaling?**
+::: {.callout-tip title="Entry Level — Q3"}
+**What is test-time compute scaling and how does it differ from training-time scaling?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Training-time scaling means using more parameters, more training data, or more training compute to build a better model. The standard scaling laws (Chinchilla) tell us that model quality improves predictably with model size and training tokens. But after training, the model is fixed — its weights do not change at inference.
+Training-time scaling means using more parameters, more training data, or more training compute to build a better model. The standard scaling laws (Chinchilla) tell us that model quality improves predictably with model size and training tokens. After training, the model is fixed — its weights do not change at inference.
 
 Test-time compute scaling means spending more computation during inference — on a fixed, trained model — to get better answers. The simplest version is generating multiple answers and picking the best (best-of-N). More sophisticated versions generate long reasoning chains, branch into multiple reasoning paths, and use verifiers to prune bad branches. All of this happens at inference time, not training time.
 
-The practical implication is that you can trade latency and inference cost for accuracy on a per-query basis, without retraining anything. A hard problem gets more compute; a simple question gets less. This is fundamentally different from training-time scaling, where you pay the compute cost once but it applies uniformly to all future queries. Test-time scaling is dynamic and query-dependent, which is what makes it useful for production applications with mixed workloads.
+The practical implication is that you can trade latency and inference cost for accuracy on a per-query basis, without retraining anything. A hard problem gets more compute; a simple question gets less. This is fundamentally different from training-time scaling, where you pay the compute cost once but it applies uniformly to all future queries.
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q1. Explain the difference between a Process Reward Model (PRM) and an Outcome Reward Model (ORM) in the context of reasoning model training.**
+::: {.callout-tip title="Entry Level — Q4"}
+**What is a "process reward model" and how does it differ from an outcome reward model?**
+
+::: {.callout-note collapse="true" title="Model Answer — Weak vs. Strong"}
+**Weak answer:** "A PRM checks the process, ORM checks the outcome."
+
+**Strong answer:** An outcome reward model (ORM) scores only the final answer of a reasoning chain — correct answer gets positive reward, wrong answer gets zero or negative. ORMs are easy to apply wherever ground-truth answers are automatically verifiable: math problems, code that can be executed against test cases. The limitation is that ORMs cannot distinguish between a correct answer reached by valid reasoning and one reached by a flawed shortcut. The model can be reinforced for reasoning patterns that happen to work but will generalize poorly.
+
+A process reward model (PRM) scores individual intermediate reasoning steps. Annotators label each step correct, incorrect, or uncertain. The RL training signal rewards step-level correctness, not just final-answer correctness. This forces the model to develop valid reasoning processes, not just answer-finding heuristics.
+
+The tradeoff is annotation cost and complexity. For an ORM, you need one label per problem. For a PRM, you need one label per reasoning step, requiring domain expertise. This is orders of magnitude more expensive. In practice, most production reasoning models use a combination: ORM for cheap large-scale signal, PRM for high-quality targeted supervision on harder problems.
+:::
+:::
+
+::: {.callout-tip title="Entry Level — Q5"}
+**When should you NOT use a reasoning model?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Three clear cases where reasoning models are the wrong choice:
+
+1. **Latency-sensitive applications.** Customer chat, real-time autocomplete, or any UX where users expect sub-3-second responses. Reasoning models generate 30-120 seconds for hard tasks. The latency is the computation, not a bug — but it is fundamentally incompatible with real-time interactive use cases.
+
+2. **High-volume simple tasks.** Classifying support tickets, extracting entities from documents, summarizing short texts. A standard model is at or near accuracy ceiling on these. Routing them to a reasoning model adds 10-100x cost with zero accuracy gain. At 1M calls/day, that cost difference is material.
+
+3. **Creative or open-ended tasks.** Creative writing, brainstorming, brand copy. These tasks have no "correct answer," so there is no optimization target for the reasoning trace to converge on. The model may over-deliberate, producing hedged or overly structured output that lacks the spontaneity of a standard model's generation.
+:::
+:::
+
+---
+
+### Mid Level
+
+::: {.callout-warning title="Mid Level — Q1"}
+**Explain the difference between a PRM and ORM in the context of reasoning model training.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 An Outcome Reward Model scores only the final answer of a reasoning chain. A correct final answer receives a positive reward; incorrect answers receive zero or a penalty. ORMs are cheap to build whenever ground-truth answers are automatically verifiable — math problems have exact numerical answers, code problems can be tested against unit tests. The limitation is that ORMs cannot distinguish between a correct answer reached by valid reasoning and a correct answer reached by a flawed shortcut. The model can be reinforced for reasoning patterns that happen to get right answers but will generalize poorly to harder problems.
 
-A Process Reward Model scores individual steps in the reasoning chain. Annotators — human experts or a separately trained PRM — label each step as correct, incorrect, or uncertain. The RL training signal rewards step-level correctness, not just final-answer correctness. This forces the model to learn valid reasoning processes, not just answer-producing heuristics. PRMs produce more robust reasoning behavior and can identify where in a chain a model goes wrong, which is also useful for debugging.
+A Process Reward Model scores individual steps in the reasoning chain. Annotators label each step as correct, incorrect, or uncertain. The RL training signal rewards step-level correctness, not just final-answer correctness. This forces the model to learn valid reasoning processes, not just answer-producing heuristics. PRMs produce more robust reasoning behavior and can identify where in a chain a model goes wrong, which is useful for debugging.
 
-The tradeoff is cost. Step-level annotation for mathematical proofs or code debugging requires domain expertise and is orders of magnitude more expensive than collecting final-answer labels. PRMs also require defining what constitutes a "step," which is non-trivial for free-form reasoning. In practice, most production reasoning models use a combination: ORM for cheap large-scale training signal and PRM for high-quality fine-grained supervision on a smaller dataset.
+The tradeoff is cost. Step-level annotation for mathematical proofs or code debugging requires domain expertise and is orders of magnitude more expensive than collecting final-answer labels. In practice, most production reasoning models use a combination: ORM for cheap large-scale training signal and PRM for high-quality fine-grained supervision on a smaller dataset.
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q2. How does GRPO differ from PPO and why did DeepSeek choose it for DeepSeek-R1?**
+::: {.callout-warning title="Mid Level — Q2"}
+**How does GRPO differ from PPO and why did DeepSeek choose it for DeepSeek-R1?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 PPO (Proximal Policy Optimization) requires a critic network — a separate model that estimates the expected future reward (value function) for each state in the sequence. The policy gradient update uses the advantage estimate from the critic: how much better was this action than the critic expected? Training PPO means running two large models in lockstep: the policy (the LLM being trained) and the critic (typically as large as the policy). This doubles memory requirements and introduces instability when the critic's value estimates lag behind rapid policy changes.
@@ -121,54 +627,145 @@ DeepSeek chose GRPO for three practical reasons: it halves the GPU memory requir
 :::
 :::
 
-::: {.callout-warning title="Mid Level"}
-**Q3. What are the failure modes of reasoning models — when do they "think" more but get worse?**
+::: {.callout-warning title="Mid Level — Q3"}
+**Explain the cold-start problem and how DeepSeek-R1 solved it.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-**Overthinking on simple tasks.** On tasks with obvious answers, forcing the model into extended reasoning can introduce spurious considerations that shift the answer away from the correct simple response. The model may convince itself that a straightforward factual question has hidden complexity and hedge or overqualify an answer that should be direct.
+The cold-start problem is the challenge of bootstrapping RL training for reasoning when the initial model produces no useful reasoning behavior. GRPO requires a policy that occasionally generates correct multi-step solutions so that the reward signal is non-zero. If the model never arrives at a correct answer in any of the G sampled completions per prompt, the group-level advantage is undefined and no learning occurs. Starting RL training directly from a base language model on hard math problems produces exactly this failure: the base model generates fluent text but not structured multi-step reasoning, almost all sampled completions get zero reward, and training stalls.
 
-**Reasoning trace length mismatch.** If the model is trained primarily on mathematical reasoning, it may not know how to budget reasoning tokens correctly for other task types. It can generate very long reasoning traces that loop or repeat without making progress — a form of "reasoning thrashing" that wastes tokens without improving accuracy.
+DeepSeek-R1 solved this with a two-phase curriculum. In Phase 1, the team manually curated approximately 5,000 examples of high-quality long-form reasoning — problems with detailed step-by-step solutions written in a specific XML format (`<think>...</think>` tags enclosing the reasoning, followed by a clean final answer). These 5,000 examples were used to SFT the base model into the reasoning format.
 
-**Confident wrong conclusions.** A convincing-looking reasoning chain can be internally consistent but built on a wrong premise in the first step. Because the chain appears coherent, the final answer arrives with high apparent confidence. This is more dangerous than a standard model's wrong answer because the reasoning trace can mislead users who try to audit it.
+In Phase 2, GRPO training begins from this SFT checkpoint rather than the raw base model. Because the warm-start model already produces structured reasoning and occasionally reaches correct answers on moderately hard problems, the reward function fires regularly, providing the non-zero gradient signal needed for RL to learn. The RL phase then scales the reasoning quality well beyond what the 5,000 supervised examples alone could achieve.
+:::
+:::
 
-**Instruction following degradation.** Reasoning models trained primarily on problem-solving tasks can show weaker instruction-following behavior on format-sensitive tasks compared to RLHF-tuned standard models. They may ignore formatting requirements or output constraints that appear at the end of the prompt because the reasoning trace has shifted the model's context far from the original instruction.
+::: {.callout-warning title="Mid Level — Q4"}
+**What is "budget forcing" and how does it let you trade tokens for accuracy?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Budget forcing is the mechanism by which you control how many reasoning tokens a model uses per query, allowing you to trade inference cost and latency for answer accuracy on a per-call basis.
+
+The Anthropic API for Claude with extended thinking exposes a `budget_tokens` parameter: setting `budget_tokens=1000` caps the reasoning trace at 1,000 tokens; setting `budget_tokens=10000` allows up to 10,000. The OpenAI API for o3/o4 exposes a `reasoning_effort` parameter with values `low`, `medium`, and `high`, which maps to approximate token budgets.
+
+Why does more budget improve accuracy? Reasoning models are trained to use additional tokens when needed to catch errors and explore alternative paths. A problem that requires 5 distinct sub-proofs to verify can only be answered correctly if the model has enough token budget to complete all 5. Cutting the budget midway forces the model to answer before it has finished verifying. Empirically, accuracy on MATH competition problems and AIME benchmarks scales log-linearly with reasoning token count across several orders of magnitude.
+
+The practical engineering value is that budget forcing makes test-time compute a deployable knob. Route simple queries to low budget (fast, cheap); route complex queries to high budget (slow, accurate). A well-tuned routing strategy can reduce average reasoning token spend by 5-10x compared to using maximum budget for all queries, while preserving accuracy on the hard fraction that needs it.
+:::
+:::
+
+::: {.callout-warning title="Mid Level — Q5"}
+**What are the failure modes of reasoning models — when do they "think" more but get worse?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Overthinking on simple tasks.** On tasks with obvious answers, forcing the model into extended reasoning can introduce spurious considerations that shift the answer away from the correct simple response. The model may convince itself that a straightforward factual question has hidden complexity.
+
+**Reasoning trace length mismatch.** If the model is trained primarily on mathematical reasoning, it may not know how to budget reasoning tokens correctly for other task types. It can generate very long reasoning traces that loop or repeat without making progress — "reasoning thrashing" that wastes tokens without improving accuracy.
+
+**Confident wrong conclusions.** A convincing-looking reasoning chain can be internally consistent but built on a wrong premise in the first step. Because the chain appears coherent, the final answer arrives with high apparent confidence. This is more dangerous than a standard model's wrong answer because the trace can mislead users who try to audit it.
+
+**Instruction following degradation.** Reasoning models trained primarily on problem-solving tasks can show weaker instruction-following on format-sensitive tasks. They may ignore formatting requirements or output constraints that appear at the end of a long system prompt.
 
 **Cost explosion on easy workloads.** Applying reasoning models to a mixed workload that includes many simple queries generates reasoning traces that add latency and cost without accuracy benefit on the simple queries.
 :::
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q1. A customer needs to solve complex multi-step financial calculations — when would you recommend o3 vs. Claude Sonnet vs. a fine-tuned smaller model?**
+::: {.callout-warning title="Mid Level — Q6 (Follow-up)"}
+**Follow-up: How would you detect in production when a reasoning model is "overthinking"?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Three signals in production:
+
+1. **Reasoning token count vs. task difficulty mismatch.** Log reasoning token count per request. Segment by task type. If factual lookup queries are consuming 2,000+ reasoning tokens with no accuracy improvement over a standard model baseline, that is overthinking. Set alerts when reasoning tokens exceed a threshold for query classes you've classified as "simple."
+
+2. **Answer flip rate.** Compare the "first answer" that appears in the reasoning trace vs. the "final answer" in the output. If the model frequently changes its answer late in a long trace, it may be genuinely self-correcting (good) or oscillating without convergence (overthinking). High oscillation rate on simple tasks is a diagnostic signal.
+
+3. **A/B accuracy test.** Run the same queries through the reasoning model and a standard model. On simple task categories, if accuracy is within noise and reasoning model latency is 10x higher, redirect that category to the standard model.
+:::
+:::
+
+---
+
+### Senior / Forward Deployed Engineer
+
+::: {.callout-important title="Senior — Q1"}
+**When should you NOT use a reasoning model in production? Give 3 concrete scenarios with justification.**
+
+::: {.callout-note collapse="true" title="Model Answer">}
+> 🎯 **What great looks like:** Concrete scenarios with latency/cost/accuracy analysis, not just "simple tasks are too cheap."
+
+**Scenario 1 — Real-time customer support chat.**
+A support chatbot must respond within 2-3 seconds to maintain user engagement. Reasoning models generate 30-120 seconds on hard queries. Even if the task occasionally requires multi-step troubleshooting, the latency SLA is incompatible with synchronous use. Solution: Use Claude Sonnet or GPT-4o for all synchronous replies. If the query is complex, acknowledge receipt and trigger an async reasoning job that emails/pushes the detailed answer within minutes.
+
+**Scenario 2 — High-volume classification pipeline (100k+ calls/day).**
+A content moderation pipeline classifying posts as policy-violating or safe. This is a single-label classification task — a fine-tuned BERT or GPT-4o-mini call at $0.0001/call is at accuracy ceiling. Switching to o3 at $0.25/call = $25,000/day at 100k daily calls vs. $10/day with mini. Reasoning provides zero accuracy gain on a binary classification task but 2,500x cost increase. The correct solution is a fine-tuned small model.
+
+**Scenario 3 — Creative brainstorming / brand copy generation.**
+A marketing team uses AI to generate campaign tagline options. There is no "correct" tagline — the task is generative and evaluated subjectively. Reasoning models over-deliberate on creative tasks, often producing hedged or over-structured outputs that lack creative spontaneity. They add latency and cost while often *reducing* output quality by forcing a deliberative structure onto a task that benefits from probabilistic diversity. A standard model with high temperature is a better fit.
+:::
+:::
+
+::: {.callout-important title="Senior — Q2"}
+**Compare OpenAI o3 vs. DeepSeek R1 — architecturally and from a cost/quality/latency perspective.**
+
+::: {.callout-note collapse="true" title="Model Answer">}
+> 🎯 **What great looks like:** Goes beyond "DeepSeek is cheaper" to cover deployment considerations, reasoning trace visibility, self-hosting implications, and when each is actually the right choice.
+
+**Architecture:**
+- o3: closed weights, architecture undisclosed, likely large dense or MoE transformer, trained with heavy process supervision (PRM) + RL at scale
+- DeepSeek R1: open weights (MIT), 671B MoE (37B active per token), trained with GRPO + SFT warm-start, reasoning trace exposed in `<think>` XML tags
+
+**Cost:**
+- o3 API: ~$10-60/M output tokens, reasoning tokens billed at output rate
+- DeepSeek R1 API: ~$0.55/M tokens — roughly 1/50th the cost
+- DeepSeek self-hosted: 4x A100 80GB (or 8x H100 40GB), eliminates per-token cost entirely at scale
+
+**Quality:**
+- Near-identical on MATH (both ~97%), HumanEval coding (~90%+)
+- o3 meaningfully leads on ARC-AGI abstract reasoning and hardest math competitions (AIME: o3 ~91% vs. R1 ~79%)
+- R1 leads slightly on competitive programming (Codeforces ELO ~2029 vs. o3 ~2727 — o3 leads again here by some benchmarks; this remains contested)
+
+**Reasoning trace visibility:**
+- o3: hidden — you cannot inspect the chain of thought. This is a limitation for auditing, debugging, and trust in regulated industries.
+- R1: exposed — you can build UIs that show users the thinking process, audit reasoning steps for compliance, and debug where the model goes wrong
+
+**Deployment considerations:**
+- o3: for teams needing frontier accuracy with no infrastructure ownership, and for use cases where the closed model's safety alignment is a requirement
+- R1: for teams with cost sensitivity, open-weight requirements (on-prem, air-gapped), or need to inspect/modify reasoning behavior. The open weights also allow further fine-tuning and distillation.
+
+**My recommendation framework:** Start with DeepSeek R1 API for cost-sensitivity or auditability requirements. Move to o3 only if R1 demonstrably fails on your specific task category — which, for most production reasoning tasks, it will not.
+:::
+:::
+
+::: {.callout-important title="Senior — Q3"}
+**A customer is using o3 for every query in their app, spending 10x more than budgeted. Design a routing strategy that uses reasoning models only when needed.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a cost optimization problem with an accuracy constraint. The goal is a tiered routing architecture that sends easy queries to cheap fast models and hard queries to expensive reasoning models, while maintaining overall accuracy.
+
+**Tier 1 — Classifier (fast, cheap):** Train or prompt a small model (GPT-4o-mini or a fine-tuned classifier) to categorize each incoming query as easy, medium, or hard. Features for classification: query length, presence of mathematical notation or multi-step signal words ("calculate," "prove," "step by step," "if and only if"), detected domain (factual lookup vs. reasoning), user-set priority. This classifier should itself be cheap — a single API call at $0.0001 or less.
+
+**Tier 2 — Standard model (Claude Sonnet or GPT-4o):** Route easy queries here. These are: factual questions, simple summarization, conversational replies, template filling. Latency ~1-3s, cost ~$0.003/1k tokens. Expected to handle 70-80% of queries.
+
+**Tier 3 — Reasoning model with low budget (o3 or o4-mini with `reasoning_effort=low`):** Route medium complexity queries here. These are: multi-step calculations, code debugging, logical inference. Low budget caps reasoning tokens at ~500-1000, reducing cost by 3-5x compared to high-effort. Expected to handle 15-20% of queries.
+
+**Tier 4 — Reasoning model with high budget:** Reserve for genuinely hard queries: complex proofs, multi-constraint optimization, queries where the user explicitly requests "think carefully." Expected to handle 5% of queries.
+
+**Implementation:** Instrument each tier with accuracy metrics on a held-out test set stratified by tier. Track accuracy-per-tier vs. cost-per-tier in production. Iteratively tune the classifier thresholds to find the Pareto-optimal cost/accuracy frontier. A well-tuned routing strategy typically achieves 90-95% of full-o3 accuracy at 20-30% of full-o3 cost.
+:::
+:::
+
+::: {.callout-important title="Senior — Q4"}
+**A customer needs to solve complex multi-step financial calculations. When would you recommend o3 vs. Claude Sonnet vs. a fine-tuned smaller model?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
 The decision turns on three factors: accuracy requirements, latency tolerance, and call volume/cost.
 
-**Use o3** when the calculations are genuinely multi-step with compounding dependencies — think portfolio risk calculations requiring dozens of sequential formula applications, or regulatory capital calculations with nested conditional rules. o3's extended reasoning excels when an error at step 3 would make the final answer wrong and there's no short-circuit to the answer. Accept the latency (10-60s per call) and cost (~$15-60 per million output tokens for reasoning tokens). For low-volume high-stakes decisions — end-of-day risk reports, not real-time pricing — this is the right call.
+**Use o3** when the calculations are genuinely multi-step with compounding dependencies — portfolio risk calculations requiring dozens of sequential formula applications, or regulatory capital calculations with nested conditional rules. o3's extended reasoning excels when an error at step 3 would make the final answer wrong and there's no short-circuit to the answer. Accept the latency (10-60s per call) and cost. For low-volume high-stakes decisions — end-of-day risk reports, not real-time pricing — this is the right call.
 
 **Use Claude Sonnet or GPT-4o** when calculations are structured but not deeply chained — filling a financial model template, extracting and transforming data from documents, or questions where a correct formula applied once gives the answer. These models are 10-20x cheaper, 10x faster, and near-ceiling accurate on well-structured financial tasks. Most enterprise financial automation falls in this bucket.
 
-**Fine-tune a smaller model** (e.g., Llama 3.1 8B or Mistral) when you have a narrow, well-defined calculation type (e.g., loan amortization schedules, specific regulatory ratio formulas), high call volume (millions/day), and strict latency or cost constraints. The fine-tuned model can match or exceed larger models on its specific task while running on much cheaper infrastructure. The risk is brittleness — it will fail on edge cases outside its training distribution.
+**Fine-tune a smaller model** (e.g., Llama 3.1 8B or Mistral) when you have a narrow, well-defined calculation type (loan amortization schedules, specific regulatory ratio formulas), high call volume (millions/day), and strict latency or cost constraints. The fine-tuned model can match or exceed larger models on its specific task while running on much cheaper infrastructure. The risk is brittleness — it will fail on edge cases outside its training distribution.
 
-My recommendation for a new customer: prototype with Claude Sonnet, measure accuracy on their real test cases, escalate only the failing cases to o3, and benchmark whether a fine-tuned model can replace o3 at scale once you understand the failure modes.
-:::
-:::
-
-::: {.callout-important title="Forward Deployed Engineer"}
-**Q2. A customer is shocked by the latency of reasoning models. How do you explain the latency tradeoff and what alternatives do you propose?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-The framing I use: reasoning model latency is not wasted time — it is the model doing the work that a human expert would do before answering a hard question. A human financial analyst doesn't answer "what is our regulatory capital requirement?" in two seconds; they spend time checking formulas, looking up rules, and verifying their arithmetic. The reasoning model is doing the same thing in its scratchpad. The latency is the computation, not the wait.
-
-That said, there are concrete alternatives depending on what the customer actually needs:
-
-**Async / background processing:** For queries that don't need a real-time response — batch document analysis, overnight reports, analysis runs — reasoning model latency is irrelevant. Move these to background jobs with a webhook or polling mechanism. The user submits a request and gets notified when results are ready.
-
-**Routing:** Use a cheap fast classifier (GPT-4o-mini or a fine-tuned classifier) to distinguish easy from hard queries. Route easy queries to Claude Sonnet (1-3s); only route genuinely hard queries to o3 (30-60s). This gives the customer fast responses on 80-90% of queries.
-
-**Streaming reasoning tokens:** OpenAI and Anthropic both support streaming reasoning traces. Show the customer a "thinking..." indicator with partial reasoning steps. Perceived latency is dramatically lower when users see progress versus staring at a spinner. For many users, watching the model reason is itself informative.
-
-**Reasoning effort tuning:** Use `reasoning_effort=low` or a lower `budget_tokens` cap for queries where near-perfect accuracy isn't critical. This can cut latency 3-5x with modest accuracy reduction.
-
-**Model-level alternative:** If the accuracy gap between o3 and Sonnet is acceptable for the use case, move back to a standard model. Always start with empirical accuracy benchmarking on the customer's actual workload — many customers discover Sonnet is sufficient once they measure it properly.
+**My recommendation for a new customer:** Prototype with Claude Sonnet, measure accuracy on their real test cases, escalate only the failing cases to o3, and benchmark whether a fine-tuned model can replace o3 at scale once you understand the failure modes.
 :::
 :::

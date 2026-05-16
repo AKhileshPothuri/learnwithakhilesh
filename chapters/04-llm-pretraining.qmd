@@ -1,184 +1,731 @@
-# LLM Pretraining — Data, Scale, and Paradigms
+---
+title: "LLM Pre-Training — Data, Scale, and Paradigms"
+---
 
 ::: {.callout-note}
-**Who this chapter is for:** Entry → Mid Level
+**Who this chapter is for:** Entry → Senior / FDE
 **What you'll be able to answer after reading this:**
 
-- How tokenization works and why it matters (BPE, WordPiece, SentencePiece)
-- The causal language modeling objective and why it enables few-shot generalization
-- Scaling laws: how compute, data, and parameters interact
-- The difference between GPT-style and BERT-style pretraining
+- The causal language modeling objective and why next-token prediction produces general intelligence
+- Masked Language Modeling (BERT) vs Causal LM: when each architecture wins
+- Pre-training data: sources, quality filters, deduplication, and why FineWeb beats raw Common Crawl
+- Training at scale: BF16 mixed precision, gradient checkpointing, ZeRO optimizer stages
+- Chinchilla scaling laws: the 20 tokens/parameter rule and its real-world implications
+- Emergent capabilities: what they are, why they appear, and why they're controversial
+- Dense vs. MoE pre-training tradeoffs
 :::
 
-## Tokenization
+## The Pre-Training Objective
 
-Large language models do not process text as a stream of characters or a sequence of dictionary words — they process tokens. Understanding what a token is, how they are constructed, and what the implications are for model behavior is essential for anyone working with LLMs in production. The choice of tokenization scheme is a fundamental design decision made at training time, and it shapes everything from model quality to API cost to multilingual performance.
+Pre-training is the large-scale, self-supervised phase where a model learns from raw text before any human feedback or task-specific fine-tuning. It is where the model acquires language, facts, reasoning patterns, and world knowledge. Everything downstream — fine-tuning, RLHF, RAG — builds on the foundation established here.
 
-A token is the atomic unit of text that the model processes. Roughly speaking, one token corresponds to about four characters of English text, or approximately three-quarters of a word. The exact mapping depends on the tokenizer. A sentence like "The cat sat on the mat" might tokenize to seven tokens corresponding roughly to individual words. But "unconstitutionality" might become three tokens: ["un", "constitutional", "ity"]. And "ChatGPT" might be three tokens as well. Prices for LLM API calls are quoted per token, not per word or character, which means understanding tokenization directly affects cost estimation.
+### Causal Language Modeling (CLM)
 
-The reason models do not operate on individual characters is efficiency: characters are too fine-grained. English has 26 lowercase letters plus punctuation, but a model operating on single characters would need to make hundreds of predictions to generate a single sentence, with correspondingly longer sequences, more attention computations, and weaker long-range dependencies. Raw words are the other extreme: a word-level vocabulary would need hundreds of thousands of entries to cover English, and would entirely fail on inflected forms it has not seen ("COVID-related"), proper nouns, and code. Subword tokenization algorithms find the middle ground: a vocabulary of 32,000 to 100,000 tokens that covers common words as single tokens, decomposes rare words into meaningful subword pieces, and can represent any input without out-of-vocabulary failures.
+Every production LLM you interact with today — GPT-4, Claude, Gemini, LLaMA, Mistral — was pre-trained with **causal language modeling**: given the sequence of tokens seen so far, predict the probability distribution over the vocabulary for the next token.
 
-Byte-Pair Encoding (BPE), originally a data compression algorithm, was adapted for NLP by Sennrich et al. (2016) and became the tokenization method for GPT-2 and GPT-3. The algorithm is elegant: start with a vocabulary of individual bytes (or characters), giving you a baseline that can encode any UTF-8 text. Then iteratively find the most frequent adjacent pair in the training corpus and merge them into a single new token. Repeat until the vocabulary reaches its target size (e.g., 50,000 tokens). The result is a vocabulary where common English words and subwords appear as single tokens, and rare words are decomposed into their most frequent subword constituents. "unhappy" might be one token if it appeared frequently enough during training, or it might be ["un", "happy"] if "unhappy" as a unit was rare.
+Formally, the training objective is to maximize:
 
-WordPiece, developed at Google and used in BERT and its derivatives, is similar to BPE but uses a likelihood-based merge criterion rather than frequency. Instead of always merging the most frequent pair, it merges the pair that maximizes the likelihood of the training data under the language model. This produces slightly different vocabulary distributions but broadly similar behavior. SentencePiece, developed by Kudo and Richardson (2018) and used in T5, LLaMA, and many multilingual models, is distinctive because it treats the input as a stream of raw Unicode characters rather than pre-tokenized words. This makes it language-agnostic — it doesn't require a whitespace-based word tokenizer as a preprocessing step, which is critical for languages like Japanese, Chinese, or Thai that don't use spaces between words.
+$$\mathcal{L}_\text{CLM} = \sum_{t=1}^{T} \log P(x_t \mid x_1, x_2, \ldots, x_{t-1})$$
 
-The practical implications of tokenization are non-trivial. Code is tokenized inefficiently: indentation (multiple spaces or tabs) often becomes multiple tokens, and special characters like `{`, `}`, `;` each take their own token. A Python function that would take 100 words in English prose might take 200 tokens as source code. Multilingual models are systematically cheaper at English than at other languages: English subwords are common enough to be single tokens, but morphologically rich languages (Turkish, Finnish, Hungarian) or languages with non-Latin scripts (Arabic, Hindi) require more tokens per semantic unit, effectively making the model "compute more" to process the same amount of information. Models also struggle with character-level operations — asking an LLM to count letters in a word or reverse a string is famously unreliable because those operations require reasoning about the internal character structure of tokens, which the model does not have direct access to.
+summed over every token in the training corpus. "Causal" means the model can only attend to past tokens — a lower-triangular attention mask prevents position $t$ from attending to positions $t+1, \ldots, T$. This is identical to the generation setup at inference time: you produce tokens left to right, each conditioned only on what came before.
 
-## The Pretraining Objective
+**Why does predicting text tokens produce general intelligence?** This is the most surprising empirical finding in modern ML. The explanation: next-token prediction is a uniquely general compression task. To accurately predict the next word across physics papers, Python tutorials, legal briefs, novels, and Wikipedia — you must have implicitly learned the grammar, vocabulary, facts, and reasoning patterns of every domain in the corpus. To predict the next line of a Python function, you must know Python syntax and library semantics. To predict the continuation of a mathematical proof, you must follow the logical argument. None of these capabilities are explicitly taught — they emerge as the most efficient strategy for minimizing cross-entropy loss across a sufficiently diverse corpus at sufficient scale.
 
-The pretraining objective is the task a model is trained to perform during its initial large-scale training run, before any task-specific fine-tuning. The choice of pretraining objective is perhaps the most consequential architectural decision in LLM development, because it determines what the model learns from the data and what capabilities emerge from that training.
+**Analogy:** Imagine training for a trivia championship by reading everything ever written and predicting the next sentence of every paragraph. You would naturally internalize geography, history, science, culture, and argumentation — not because you were taught those subjects, but because accurate prediction required it.
 
-GPT-style models (GPT-2, GPT-3, GPT-4, Claude, LLaMA, and virtually every modern production LLM) are trained on causal language modeling (CLM): given a sequence of tokens $x_1, x_2, \ldots, x_{t-1}$, predict the probability distribution over the vocabulary for the next token $x_t$. Formally, the training objective is to maximize the log-likelihood of the observed sequence: $\mathcal{L}_\text{CLM} = \sum_{t=1}^{T} \log P(x_t \mid x_1, \ldots, x_{t-1})$, summed over all tokens in the training corpus. This is called "causal" because the model is only allowed to attend to past tokens — a causal (lower-triangular) attention mask prevents any position from attending to future positions. The model predicts each token without seeing what comes next.
+::: {.callout-tip}
+**When CLM is the right choice:** Any application requiring open-ended text generation — chatbots, code completion, summarization, question answering via prompting, agents. This is ~95% of production LLM use cases in 2025.
+:::
 
-Why does a model trained to predict text tokens become capable of answering questions, writing code, reasoning through problems, and following complex instructions? This is one of the most surprising empirical findings in the history of machine learning. The explanation is that next-token prediction is a uniquely general task: the only way to accurately predict the next word across the full diversity of web text, books, code, scientific papers, and legal documents is to have implicitly learned the grammar, vocabulary, facts, and reasoning patterns of every domain in that corpus. To predict the next word in a Python tutorial, you must know Python syntax. To predict the next sentence in a physics textbook, you must know physics. To predict the continuation of a logical argument, you must be able to follow the argument. The model is not explicitly taught any of these things — they emerge as the most efficient strategy for minimizing cross-entropy loss on a sufficiently diverse corpus at sufficient scale.
+::: {.callout-warning}
+**Common Misconception:** "The model is just autocomplete — it doesn't understand anything."
 
-BERT (Devlin et al., 2018) introduced an alternative pretraining objective: masked language modeling (MLM). During pretraining, 15% of tokens in each input sequence are randomly masked (replaced with a [MASK] token), and the model is trained to predict the original token at each masked position. Unlike causal LM, BERT uses a bidirectional transformer encoder: every position can attend to every other position in the sequence, including positions that come after it. The [MASK] at position $t$ can attend to all unmasked tokens both before and after $t$, giving the model full context in both directions for each prediction. BERT also uses a second pretraining task: Next Sentence Prediction (NSP), where the model predicts whether two sentences were adjacent in the original document or randomly paired. NSP was later shown to be less important than MLM and dropped in RoBERTa (Liu et al., 2019).
+Understanding is ill-defined, but the capabilities are real and useful. A model that predicts mathematical proofs with high accuracy has operationally learned to "follow" mathematical logic. Whether that constitutes understanding is a philosophical question; whether it solves engineering problems is not.
+:::
 
-The practical difference between CLM and MLM pretraining is decisive for most applications. BERT produces rich bidirectional representations — every position's embedding reflects context from both directions — making it excellent for tasks that require understanding a fixed input: text classification, named entity recognition, question answering given a passage. But BERT fundamentally cannot generate text: it needs to see the full sequence (including [MASK] tokens) to make predictions, so it cannot extend a sequence autoregressively. GPT-style causal LMs are slightly weaker at pure understanding tasks (because they can only use left-context) but can generate arbitrary-length sequences by repeatedly predicting the next token. When GPT-3 demonstrated that large causal LMs could perform bidirectional-understanding tasks via few-shot prompting without any fine-tuning, and when RLHF enabled instruction-following, the balance shifted decisively toward causal LMs for general-purpose use.
+### Masked Language Modeling (MLM)
+
+BERT (Devlin et al., 2018) introduced a different pre-training objective: randomly mask 15% of input tokens and train the model to predict the original token from bidirectional context.
+
+$$\mathcal{L}_\text{MLM} = \sum_{i \in \mathcal{M}} \log P(x_i \mid x_1, \ldots, x_{i-1}, [\text{MASK}], x_{i+1}, \ldots, x_T)$$
+
+where $\mathcal{M}$ is the set of masked positions. Unlike CLM, BERT uses a **bidirectional transformer encoder**: every position can attend to every other position, in both directions. The [MASK] token at position $i$ benefits from context both before and after it.
+
+**The key tradeoff:**
+
+| Property | Causal LM (GPT) | Masked LM (BERT) |
+|---|---|---|
+| Attention direction | Left-to-right only | Bidirectional |
+| Can generate text | Yes | No |
+| Per-token representation | Left context only | Full context |
+| RLHF compatible | Yes (naturally) | No |
+| Best use case | Generation, instruction following | Classification, NER, extractive QA |
+| Production status (2025) | Dominant | Niche (task-specific fine-tuning) |
+
+**When did GPT-style win?** When RLHF demonstrated that autoregressive generation could be aligned to human preferences, and when GPT-3 showed that large causal LMs could perform BERT-style understanding tasks via few-shot prompting without any fine-tuning, the balance shifted decisively. In 2025, essentially all production foundation models are decoder-only.
+
+::: {.callout-tip}
+**When BERT-style still makes sense:** You need a lightweight classifier or NER model embedded in a latency-sensitive pipeline (not generation), and you have labeled data to fine-tune. DistilBERT (66M parameters) is faster and cheaper than any decoder model for pure classification.
+:::
+
+### Prefix LM and Encoder-Decoder Variants
+
+For completeness: **prefix LM** (used in PaLM, some GLM variants) allows bidirectional attention over a "prefix" portion of the input and causal attention over the generated output. **Encoder-decoder** models (T5, BART) use a bidirectional encoder and a causal decoder with cross-attention. These remain in production for specific tasks (translation, structured summarization) but have largely been superseded by decoder-only models for general-purpose applications.
+
+---
+
+## Pre-Training Data
+
+A model can only be as good as its training data. Data quality is now widely acknowledged to matter more than data quantity — the FineWeb paper (Penedo et al., 2024) demonstrated this conclusively by showing that careful curation of 15T tokens outperforms naive collection of 100T tokens on downstream benchmarks.
+
+### Primary Data Sources
+
+**Common Crawl** is the backbone of every major LLM training corpus. It provides hundreds of terabytes of raw HTML crawled from the open web since 2008 — but raw Common Crawl is roughly 60% noise (spam, boilerplate, duplicates, non-natural-language content). It requires heavy filtering before it is useful.
+
+**Books** (BookCorpus, Project Gutenberg, licensed collections) provide long-form, coherent prose that teaches models extended discourse structure, narrative reasoning, and argument construction. Book-length text is underrepresented in web crawls but disproportionately valuable for coherence.
+
+**Code** (GitHub, StackOverflow, documentation) is strongly associated with improved reasoning, structured output, and instruction following — even on non-code tasks. The hypothesis is that code training instills a habit of precise, step-by-step reasoning. LLaMA 3 training data included a significantly higher fraction of code than earlier models.
+
+**Wikipedia** provides high-quality, factual, encyclopedic text across hundreds of languages and domains. It is small relative to web crawls (~20GB vs terabytes) but extremely high quality.
+
+**Scientific papers** (arXiv, PubMed, Semantic Scholar) provide technical vocabulary, mathematical reasoning, and citation patterns critical for science-adjacent tasks.
+
+**Typical mixing ratios** (approximate, varies by model family):
+
+| Source | Fraction in Training Mix |
+|---|---|
+| Filtered web (Common Crawl) | 60–80% |
+| Code | 5–15% |
+| Books | 5–15% |
+| Wikipedia + encyclopedic | 3–8% |
+| Scientific papers | 2–5% |
+| Other (legal, forums, etc.) | remainder |
+
+::: {.callout-warning}
+**Production Gotcha:** Changing the mixing ratio changes model personality, not just capability. Increasing code data improves coding and reasoning but can make prose less natural. Increasing Wikipedia increases factual accuracy but may reduce creative flexibility. Mixing ratios are a hyperparameter with domain-level effects.
+:::
+
+### Data Quality Over Quantity: FineWeb and DCLM
+
+The 2024 shift in the field: **FineWeb** (HuggingFace, 2024) curated 15 trillion tokens from Common Crawl using aggressive quality filtering and demonstrated that models trained on FineWeb outperform models trained on 5× more raw data on most downstream benchmarks. Key insight: **a smaller high-quality dataset trains a better model than a larger low-quality one**.
+
+**DCLM** (DataComp for Language Models, 2024) went further: it ran controlled experiments varying data curation strategies while keeping model architecture and compute fixed. Results showed that targeted quality filtering (English-language detection, deduplication, perplexity filtering with a reference model, content classification) is the single most impactful lever for downstream task performance.
+
+### The Data Pipeline
+
+Raw web text goes through five mandatory stages before it becomes training data:
+
+**1. Language identification** — remove or route non-target-language content. Most English-focused models apply a hard filter; multilingual models apply language-specific sampling.
+
+**2. Quality filtering** — heuristic and model-based filters to remove:
+- Documents below minimum length (< 100 tokens)
+- Non-natural-language (forms, encoded binaries, spam)
+- Text with abnormally low alphabetic character fraction
+- Perplexity outliers (very high perplexity = likely gibberish; very low = duplicated boilerplate)
+- Documents with high fraction of lines that are bullet points or URLs only
+
+**3. Deduplication** — critical. Common Crawl contains millions of copies of popular pages. Training on duplicated data causes models to memorize verbatim passages (copyright risk) and overfits to duplicated content rather than generalizing. MinHash LSH scales to billions of documents for near-duplicate detection. Suffix array deduplication detects repeated n-gram spans within and across documents.
+
+**4. PII scrubbing** — regex and NER-based removal of email addresses, phone numbers, SSNs, credit card numbers, and named individuals in sensitive contexts. Required for GDPR/CCPA compliance and reduces model tendency to memorize and regurgitate personal data.
+
+**5. Toxic content filtering** — classifier-based removal of hate speech, explicit content, and targeted harassment. Reduces harmful output and protects the training distribution from over-representing low-quality web content.
+
+```python
+#| label: data-pipeline-example
+#| eval: false
+"""
+Minimal sketch of a production-style pre-training data pipeline stage.
+Real pipelines use Apache Beam, Datatrove, or custom distributed processing.
+"""
+import hashlib
+from datasketch import MinHash, MinHashLSH
+from langdetect import detect
+
+def quality_filter(doc: str, min_tokens: int = 100) -> bool:
+    """Heuristic quality filter — returns True if document passes."""
+    tokens = doc.split()
+    if len(tokens) < min_tokens:
+        return False
+
+    # Alphabetic character fraction
+    alpha_frac = sum(c.isalpha() for c in doc) / max(len(doc), 1)
+    if alpha_frac < 0.65:
+        return False
+
+    # Language check (only English in this example)
+    try:
+        if detect(doc) != "en":
+            return False
+    except Exception:
+        return False
+
+    return True
+
+
+def get_minhash(doc: str, num_perm: int = 128) -> MinHash:
+    """Compute MinHash signature for near-duplicate detection."""
+    m = MinHash(num_perm=num_perm)
+    # Shingle at word level (5-grams)
+    words = doc.lower().split()
+    for i in range(max(1, len(words) - 4)):
+        shingle = " ".join(words[i : i + 5])
+        m.update(shingle.encode("utf8"))
+    return m
+
+
+def deduplicate_corpus(documents: list[str], threshold: float = 0.8) -> list[str]:
+    """
+    LSH-based near-duplicate removal.
+    threshold=0.8 means documents >80% similar (Jaccard) are considered duplicates.
+    """
+    lsh = MinHashLSH(threshold=threshold, num_perm=128)
+    unique_docs = []
+
+    for idx, doc in enumerate(documents):
+        mh = get_minhash(doc)
+        result = lsh.query(mh)
+        if not result:  # No near-duplicate found
+            lsh.insert(f"doc_{idx}", mh)
+            unique_docs.append(doc)
+
+    return unique_docs
+
+
+# --- Pipeline orchestration ---
+raw_docs = ["... lots of web-crawled text ..."]
+filtered = [d for d in raw_docs if quality_filter(d)]
+deduplicated = deduplicate_corpus(filtered)
+print(f"After filtering: {len(filtered)} / {len(raw_docs)}")
+print(f"After dedup: {len(deduplicated)} / {len(filtered)}")
+```
+
+---
+
+## Training at Scale
+
+Pre-training frontier models requires careful systems engineering. A 70B parameter model on 2T tokens involves ~$10^{23}$ FLOPs — comparable to the total compute used in all AI research before 2020.
+
+### Mixed Precision Training (BF16)
+
+Modern pre-training runs in **BF16** (Brain Float 16), not FP32. BF16 has the same 8-bit exponent range as FP32 (so it handles the same dynamic range without overflow) but only 7 mantissa bits (vs 23 for FP32), giving ~2× memory reduction and ~2× throughput on modern GPUs/TPUs.
+
+**Why BF16 over FP16?** FP16 has a smaller exponent range and overflows on the large gradient values that appear during LLM training. FP16 training requires careful loss scaling to prevent underflow. BF16 eliminates this instability while providing similar memory savings.
+
+In practice: forward and backward passes use BF16. A FP32 "master copy" of weights is maintained in the optimizer for precision in weight updates. This is called **mixed precision training** (not pure BF16).
+
+```python
+#| label: mixed-precision-setup
+#| eval: false
+import torch
+from torch.cuda.amp import autocast, GradScaler
+
+# BF16 is preferred for modern hardware (A100, H100)
+# FP16 requires a GradScaler; BF16 generally does not
+model = model.to(torch.bfloat16)
+
+# Training loop with autocast
+for batch in dataloader:
+    optimizer.zero_grad()
+    with autocast(dtype=torch.bfloat16):
+        loss = model(**batch).loss
+    loss.backward()
+    # Gradient clipping — standard for LLM stability
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    optimizer.step()
+```
+
+### Gradient Checkpointing
+
+During a standard backward pass, all intermediate activations from the forward pass must be kept in memory to compute gradients. For a transformer with $L$ layers and sequence length $T$, this is $O(L \cdot T \cdot d_\text{model})$ memory — enormous for large models and long sequences.
+
+**Gradient checkpointing** (also called activation checkpointing) trades memory for compute: instead of storing all activations, discard them after the forward pass and **recompute** them during the backward pass. This reduces activation memory from $O(L)$ to $O(\sqrt{L})$ at the cost of ~30% more forward compute. At 70B+ parameters with 4K+ sequence lengths, this tradeoff is almost always worth it.
+
+### ZeRO Optimizer Stages
+
+**ZeRO** (Zero Redundancy Optimizer, Rajbhandari et al., 2020) is Microsoft DeepSpeed's memory optimization that distributes optimizer state, gradients, and parameters across GPUs instead of replicating them.
+
+Training a 70B model in FP32 requires ~1.2TB of memory for optimizer states alone (Adam stores first and second moment estimates = 2× parameter count × 4 bytes = 560GB). No single GPU has this. ZeRO solves this with three stages:
+
+| ZeRO Stage | What is Partitioned | Memory Reduction |
+|---|---|---|
+| Stage 1 | Optimizer states (Adam moments) | ~4× |
+| Stage 2 | Optimizer states + gradients | ~8× |
+| Stage 3 | Optimizer states + gradients + parameters | ~$N_\text{GPU}$× |
+
+With ZeRO-3 across 512 H100s, the 70B model's 280GB of parameters are split across GPUs — each GPU holds only 280GB / 512 ≈ 550MB of parameters. Communication overhead is the cost.
+
+**Related: FSDP** (Fully Sharded Data Parallel) is PyTorch's native implementation of ZeRO-3, now the standard for multi-GPU training in the open-source ecosystem.
+
+::: {.callout-warning}
+**Production Gotcha:** ZeRO-3 introduces all-gather communication before each forward pass (reassembling full parameter shards). On poorly configured networking, communication can dominate compute time. Always profile communication vs. compute ratio before assuming ZeRO-3 is the right stage.
+:::
+
+---
 
 ## Scaling Laws
 
-One of the most significant empirical discoveries in deep learning research is that model performance on language modeling — measured as validation loss — improves predictably and smoothly as a power law function of model size, dataset size, and training compute. Kaplan et al. (2020) at OpenAI published the foundational scaling laws paper showing: $L(N) \propto N^{-\alpha_N}$, $L(D) \propto D^{-\alpha_D}$, and $L(C) \propto C^{-\alpha_C}$, where $N$ is the number of model parameters, $D$ is the number of training tokens, $C$ is the total training compute in FLOPs, and $\alpha$ values are empirically measured exponents around 0.05-0.1. Crucially, these laws appear to hold across multiple orders of magnitude — from small models on small datasets all the way to frontier-scale training runs.
+### Kaplan et al. (2020): The Power Laws
 
-The significance of predictable scaling cannot be overstated. It means that a research lab can train a series of small models at low cost, measure where they fall on the scaling curve, and extrapolate to predict the performance of a 10× or 100× larger model before spending the compute to train it. This transforms large-scale training from a blind bet into a principled engineering process. The Kaplan et al. paper also showed that for a given compute budget, the returns diminish first from data, then from parameters, with the optimal allocation shifting toward more parameters relative to data as compute increases.
+Kaplan et al. at OpenAI published the foundational finding: LLM validation loss improves as a smooth **power law** function of model size $N$ (parameters), dataset size $D$ (tokens), and compute $C$ (FLOPs):
 
-The Chinchilla paper (Hoffmann et al., 2022, "Training Compute-Optimal Large Language Models") substantially revised these findings. Hoffmann et al. showed that the Kaplan et al. recommendations over-weighted model size relative to data. By carefully designing a scaling law experiment that varied both $N$ and $D$ at fixed compute, they found that the optimal allocation is: for a compute budget of $C$ FLOPs, train a model with $N \propto C^{0.5}$ parameters on $D \propto C^{0.5}$ tokens. This implies that parameters and tokens should be scaled in equal proportion. The concrete finding: to train a compute-optimal model, you should use roughly 20 training tokens per model parameter. For a 70B parameter model, that implies 1.4 trillion training tokens.
+$$L(N) \propto N^{-\alpha_N}, \quad L(D) \propto D^{-\alpha_D}, \quad L(C) \propto C^{-\alpha_C}$$
 
-The practical implication of Chinchilla was striking: GPT-3 (175B parameters, ~300B training tokens) and Gopher (280B parameters, ~300B tokens) were undertrained given their parameter counts. Chinchilla (70B parameters, 1.4T tokens) was trained compute-optimally and matched or outperformed these larger models on most benchmarks despite having fewer parameters. Smaller, more thoroughly trained models can outperform larger, undertrained models at the same compute cost — and are cheaper to run at inference time. The Llama model family (Meta, 2023) took this further: by training smaller models on far more tokens than Chinchilla-optimal, they produced inference-efficient models that are competitive at deployment time even if not compute-optimal at training time. This "inference-time compute efficiency" consideration — that models will be run millions of times after training, so smaller inference cost matters more than training cost — is now a standard part of the design decision.
+where $\alpha$ values are empirically measured at ~0.05–0.1. These laws hold across multiple orders of magnitude — from 100K parameter models to 100B+ models.
 
-## GPT vs. BERT: Two Paradigms
+**Significance:** Predictable scaling turns frontier training from a blind bet into an engineering discipline. You can train cheap small models, measure their position on the scaling curve, and extrapolate to predict what a 100× larger model achieves before spending the compute to train it.
 
-The period from 2018 to 2022 saw a genuine paradigm competition in NLP between encoder-based (BERT-style) and decoder-based (GPT-style) models. Understanding this competition is essential context for understanding why the current LLM landscape looks the way it does.
+### Chinchilla (2022): Revising the Tradeoff
 
-BERT (2018) used a bidirectional transformer encoder pretrained with masked language modeling and fine-tuned for specific downstream tasks. The recipe: pretrain BERT on MLM, then fine-tune the full model on each target task (sentiment analysis, question answering, NER) with a task-specific classification head. BERT immediately dominated every GLUE and SuperGLUE benchmark, outperforming all previous models by large margins. The bidirectional context produced representations so rich that fine-tuning a small task head on top required very little labeled data. BERT and its variants (RoBERTa, ALBERT, DeBERTa, DistilBERT) became the standard approach for NLP through 2020.
+Hoffmann et al. (DeepMind, 2022) showed that Kaplan's recommendations **over-weighted model size relative to data**. By systematically varying both $N$ and $D$ at fixed compute, they found:
 
-GPT-2 (2019) demonstrated that large autoregressive language models could produce surprisingly coherent long-form text, but it was treated primarily as a demonstration rather than a practical tool — OpenAI withheld the full model release due to concerns about misuse, ironically giving it more attention than the technical results alone would have generated. GPT-3 (2020) was the inflection point: at 175 billion parameters trained on ~300 billion tokens, it demonstrated that a single model could perform competitively on GLUE tasks, translation, summarization, and question answering without any task-specific fine-tuning, purely through few-shot prompting. This was qualitatively new behavior: the model could be "programmed" through its input context rather than through gradient updates.
+$$\text{Compute-optimal:} \quad N^* \propto C^{0.5}, \quad D^* \propto C^{0.5}$$
 
-The GPT paradigm ultimately won for several interconnected reasons. First, generation: BERT cannot generate text, period. As generative applications (writing assistance, code completion, conversational AI) emerged as the most commercially valuable use cases, BERT's inability to generate was a fundamental limitation. Second, RLHF compatibility: the Reinforcement Learning from Human Feedback paradigm (Stiennon et al., 2020; Ouyang et al., 2022) — which is how ChatGPT and Claude are aligned — works naturally with autoregressive generation. You generate a response, get human preference feedback, and update the generator. BERT's architecture is not naturally suited to this loop. Third, scalability: the scaling law benefits in the Kaplan et al. and Chinchilla work apply most clearly to causal LMs. Fourth, the unified model advantage: a single GPT-style model can handle any text-in, text-out task without task-specific fine-tuning heads, dramatically simplifying deployment architecture. The trend toward encoder-decoder hybrids (T5, BART) and then purely toward decoder-only models reflects this convergence. In 2024-2025, essentially all production foundation models are decoder-only.
+In plain English: **for a given compute budget, scale model size and training data in equal proportion.** The concrete rule of thumb: **~20 training tokens per model parameter**.
 
-## Data Pipelines at Scale
+| Model | Parameters | Training Tokens | Tokens/Param | Status |
+|---|---|---|---|---|
+| GPT-3 | 175B | 300B | 1.7 | Undertrained (~12× below optimal) |
+| Gopher | 280B | 300B | 1.1 | Undertrained |
+| Chinchilla | 70B | 1.4T | 20 | Compute-optimal |
+| LLaMA 3 (8B) | 8B | 15T | ~1,875 | Over-trained for inference efficiency |
+| LLaMA 3 (70B) | 70B | 15T | ~214 | Over-trained for inference efficiency |
 
-Training a frontier LLM requires not just a large volume of text but a carefully curated, cleaned, and mixed dataset. The data pipeline is as important as the model architecture, and mistakes in data curation propagate into the final model in ways that are often difficult to fix after the fact.
+**The LLaMA insight:** Chinchilla defines compute-optimal training — but inference is run millions of times, while training happens once. Training a smaller model on more tokens than Chinchilla prescribes produces a model that is slower to train but **much cheaper to serve**. This "inference-time compute efficiency" tradeoff is now a standard part of model design.
 
-The primary sources of LLM training data are: web crawls (Common Crawl provides hundreds of terabytes of raw HTML crawled from the web since 2008, and is the backbone of virtually every LLM training corpus); books (BookCorpus, Project Gutenberg, and licensed book collections provide long-form coherent text that helps models learn extended discourse structure); code (GitHub provides billions of lines of code across dozens of programming languages, and code training data is highly associated with improved reasoning and instruction-following even on non-code tasks); Wikipedia (high-quality, factual, encyclopedic text in many languages); and scientific papers (arXiv, PubMed, and Semantic Scholar provide scientific writing). The mixing ratios between these sources are themselves a major research and engineering problem: too much code improves coding but may degrade prose quality; too much Wikipedia produces models that are good at fact recall but poor at creative tasks.
+```python
+#| label: chinchilla-scaling-calculator
+#| eval: false
+"""
+Chinchilla scaling law calculator.
+Given a compute budget (in FLOPs), compute optimal N and D.
+Based on Hoffmann et al. (2022), Table 3 coefficients.
+"""
 
-Raw web data is unusable without extensive preprocessing. The key pipeline stages are: deduplication, quality filtering, PII removal, and toxic content removal. Deduplication is critical because Common Crawl contains millions of copies of popular web pages — training on duplicated data wastes compute and can cause models to memorize and regurgitate verbatim passages. MinHash locality-sensitive hashing allows approximate deduplication at web scale; exact URL and content hashing catches exact duplicates. Quality filtering removes low-quality content: spam, automatically generated text, non-natural-language content, and very short documents. Perplexity filtering — using a small reference language model to score each document and removing documents with unusually high perplexity — is effective at identifying non-natural-language text. Heuristic filters check for minimum length, fraction of alphabetic characters, and language identification. PII scrubbing removes email addresses, phone numbers, social security numbers, and other personally identifiable information using regex patterns and named entity recognition. Toxic content removal uses classifier-based filtering to reduce hate speech, explicit content, and other harmful material in the training set.
+def chinchilla_optimal(
+    compute_budget_flops: float,
+    a: float = 6.8,   # coefficient from Hoffmann et al.
+    b: float = 1.3e9, # min compute for 1-param-model training
+) -> dict:
+    """
+    Returns compute-optimal N (parameters) and D (tokens).
 
-The resulting curated datasets are openly published by some organizations: The Pile (EleutherAI, 825GB, 2021) was an early comprehensive multilingual dataset mixing 22 diverse text sources. RedPajama (Together AI, 2023) replicated and openly released the approximate data composition of LLaMA. Dolma (Allen AI, 2023) is a 3-trillion-token open dataset with detailed documentation of its processing pipeline. These open datasets have been critical for academic research on LLM training and for organizations that want to train models without relying on proprietary data. Understanding these datasets — their composition, known biases, and filtering choices — is important context for explaining why models behave as they do on different domains and for diagnosing model weaknesses.
+    From Hoffmann et al.:
+      N_opt = (C / (6 * a * b)) ^ 0.5   [simplified]
+      D_opt = C / (6 * N_opt)
+
+    The factor of 6 comes from: each token requires
+    ~6 * N FLOPs per forward+backward pass.
+    """
+    # Simplified Chinchilla rule: D = 20 * N
+    # Derived from equal scaling: N_opt = sqrt(C / 120)
+    N_opt = (compute_budget_flops / 120) ** 0.5
+    D_opt = 20 * N_opt
+
+    return {
+        "optimal_params": N_opt,
+        "optimal_tokens": D_opt,
+        "tokens_per_param": D_opt / N_opt,
+        "param_billions": N_opt / 1e9,
+        "token_trillions": D_opt / 1e12,
+    }
+
+
+# Example: $10M GPU budget → ~10^23 FLOPs
+# (rough: 1000 A100-days × 3×10^17 FLOPs/A100-day = 3×10^20)
+examples = [
+    ("10^21 FLOPs (small research run)", 1e21),
+    ("10^22 FLOPs (mid-scale)", 1e22),
+    ("10^23 FLOPs (frontier-adjacent)", 1e23),
+    ("10^24 FLOPs (frontier scale)", 1e24),
+]
+
+for label, compute in examples:
+    result = chinchilla_optimal(compute)
+    print(f"\n{label}")
+    print(f"  Optimal params: {result['param_billions']:.1f}B")
+    print(f"  Optimal tokens: {result['token_trillions']:.2f}T")
+    print(f"  Tokens/param: {result['tokens_per_param']:.0f}")
+```
+
+::: {.callout-tip}
+**Interview anchor:** When asked about Chinchilla, lead with the 20 tokens/parameter rule, then explain that LLaMA 3 deliberately trains at 200+ tokens/param for inference efficiency. This shows you understand both the theory and how production teams apply it.
+:::
+
+---
+
+## Emergent Capabilities
+
+**Emergent capabilities** are abilities that appear suddenly at scale — present at large model sizes, absent (not just weaker) at smaller sizes.
+
+Wei et al. (2022) catalogued emergent behaviors including few-shot arithmetic, chain-of-thought reasoning, multi-step problem solving, and instruction following. These were not present in 7B or 13B models but appeared sharply at ~100B+ parameters.
+
+**Why do emergent capabilities appear?**
+
+The leading explanation: some tasks require a critical number of "feature detectors" that must all be present simultaneously before the behavior is possible. Below a threshold, all component abilities are weak; above it, they combine. Another framing: emergent capabilities reflect phase transitions in the loss landscape — the model crosses a threshold where a new strategy for compression becomes available.
+
+**The controversy:** Schaeffer et al. (2023) argued that many apparent emergences are measurement artifacts — if you use a coarse metric (accuracy), a gradual underlying capability improvement looks like a sharp jump. Switching to continuous metrics (log-probability or partial credit) smooths out the apparent emergence. This is an active research debate with real implications: if emergence is an artifact of metrics, then capability scaling is continuous and more predictable than it appears.
+
+**Practical implications for engineers:**
+
+- You cannot safely interpolate model behavior across capability thresholds. A 7B and 70B model are not "the same model, 10× bigger" for tasks near an emergence threshold.
+- Emergence complicates safety evaluation: a model that fails to produce harmful content at 7B may succeed at 70B not because alignment changed but because the underlying capability emerged.
+- When evaluating whether to fine-tune vs. use a base model, check whether the target capability is emergent (absent in small models) — if so, fine-tuning a small model will fail regardless of data quality.
+
+::: {.callout-warning}
+**Common Misconception:** "Emergent capabilities are magical or unpredictable."
+
+They are surprising, but they follow from scale. Researchers now track emergence thresholds empirically and publish scaling curves for specific capabilities. The surprise is that capabilities jump discontinuously; the predictability comes from tracking when they jump.
+:::
+
+---
+
+## Dense vs. MoE Pre-Training
+
+**Dense models** (all LLaMA variants, GPT-4 is reportedly dense, Mistral 7B) activate every parameter for every token. A 70B dense model performs 70B parameter operations per forward pass.
+
+**Mixture of Experts (MoE)** models (Mixtral 8x7B, GPT-4 reportedly uses MoE, Grok 1) have multiple "expert" feedforward networks per layer. A learned routing network selects the top-$k$ experts for each token (typically $k=2$). Only the selected experts compute for each token.
+
+**The tradeoff:**
+
+| Property | Dense 70B | MoE 8×7B (56B total, 12B active) |
+|---|---|---|
+| Total parameters | 70B | 56B |
+| Active params per token | 70B | ~12B |
+| Inference FLOPs/token | High | Low (same as ~12B dense) |
+| Pre-training FLOPs | Same as dense 70B | Higher (routing overhead) |
+| Memory footprint | Moderate | High (must hold all experts in VRAM) |
+| Quality | Baseline | Comparable or better per FLOP |
+| Load balancing | N/A | Critical — experts must be evenly used |
+
+**When to choose MoE pre-training:**
+- You have many GPUs (MoE needs large cluster for expert parallelism)
+- You want high quality at low inference cost
+- You can accept higher pre-training complexity and memory footprint
+
+**When dense wins:**
+- Simpler training (no routing instability)
+- Easier deployment (single shard, no expert routing)
+- Smaller total parameter footprint
+
+---
+
+## Tokenization Overview
+
+Tokenization is covered in depth in Chapter 36. This section provides the pre-training-relevant summary.
+
+LLMs process **tokens**, not characters or words. Tokens are subword units — roughly 4 characters of English, or 0.75 words on average.
+
+**Why subword tokenization?**
+- Characters: too granular, sequences become too long (25× more compute for attention)
+- Words: vocabulary explodes (100K+ unique word forms), out-of-vocabulary failure
+- Subwords: vocabulary of 32K–100K covers all inputs; common words are single tokens; rare words decompose into meaningful pieces
+
+**Key algorithms:**
+
+| Algorithm | Used by | Key property |
+|---|---|---|
+| BPE (Byte-Pair Encoding) | GPT-2/3/4, Llama 3 | Frequency-based merges |
+| WordPiece | BERT, RoBERTa | Likelihood-based merges |
+| SentencePiece (BPE/Unigram) | LLaMA 1/2, T5, Gemma | Language-agnostic, no whitespace pre-tokenization |
+| tiktoken | GPT-4, Claude (cl100k_base) | Fast BPE with byte-level fallback |
+
+**Pre-training implications:**
+- Code tokenizes inefficiently (~2× more tokens per byte vs. English prose)
+- Morphologically rich languages (Turkish, Finnish, Arabic) tokenize at 3–5× the token cost of English
+- Tokenizer vocabulary is fixed at pre-training time — you cannot change it without retraining the embedding layer
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+::: {.callout-tip title="Entry Level — Questions and Answers"}
 
-**Q1. What is tokenization and why doesn't the model operate on raw characters or words?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-Tokenization is the process of converting raw text into a sequence of integer IDs — "tokens" — that the model can process. A token is roughly a subword unit: about 4 characters of English text on average, or about three-quarters of a word.
-
-Models don't operate on raw characters because the sequences would be too long and the vocabulary too small to learn meaningful representations efficiently. A 1,000-word document becomes roughly 5,000 characters — a 5× increase in sequence length means 25× more attention computations (attention is quadratic in sequence length). Models don't operate on raw words because word-level vocabularies would need hundreds of thousands of entries to cover inflected forms, proper nouns, technical terms, and code, and would fail entirely on unknown words (out-of-vocabulary, or OOV, problem).
-
-Subword tokenization algorithms like BPE (used in GPT-series), WordPiece (BERT), and SentencePiece (LLaMA, T5) provide the right balance: common words are single tokens, rare words are decomposed into meaningful subword pieces, and no input is ever truly out-of-vocabulary (because individual characters or bytes are always in the vocabulary as fallback). For practitioners, the key implication is that "number of tokens" is not the same as "number of words," and token counts for non-English text and code can be much higher than for English prose — which directly affects API cost and context window utilization.
-:::
-
-**Q2. What is the pretraining objective for a GPT-style model?**
+**Q1. What is the causal language modeling pre-training objective? Why does it work?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-GPT-style models are pretrained with causal language modeling (CLM): given all previous tokens in a sequence, predict the probability distribution over the vocabulary for the next token. Formally, the model maximizes $\sum_{t=1}^{T} \log P(x_t \mid x_1, \ldots, x_{t-1})$ over all tokens in the training corpus.
+Causal language modeling trains the model to predict the next token given all previous tokens: maximize $\sum_t \log P(x_t \mid x_1, \ldots, x_{t-1})$ over the training corpus. "Causal" means a lower-triangular attention mask prevents any position from attending to future positions — matching the left-to-right generation process at inference time.
 
-The word "causal" refers to the constraint that the model can only attend to tokens that come before the current position. A causal (lower-triangular) attention mask is applied during training, so position $t$ can attend to positions $1$ through $t-1$ but not $t+1$ through $T$. This matches the autoregressive generation setup at inference time: you generate tokens left to right, each token conditioned only on the tokens already produced.
+Why it works: to accurately predict the next word across a diverse corpus of web text, books, code, and scientific papers, the model must implicitly learn grammar, factual knowledge, domain conventions, and reasoning patterns. These capabilities are not explicitly taught — they emerge as the most efficient strategy for minimizing prediction loss. The model learns physics because predicting the next sentence in a physics paper requires knowing physics; it learns Python syntax because predicting the next line of code requires knowing Python.
 
-This objective is deceptively powerful. To accurately predict the next token across the full diversity of web text, books, scientific papers, and code, the model must implicitly learn grammar, factual knowledge, reasoning patterns, and domain-specific conventions. All of these emerge as side effects of minimizing prediction loss on a sufficiently large and diverse corpus. The model is not explicitly taught to answer questions or write code — it learns these capabilities because they are necessary for accurate next-token prediction in contexts where questions are asked and answered, and code is written and explained.
+The power of CLM comes from three properties: (1) it is self-supervised — no labels needed, any text is training data; (2) it is scalable — more data = more training signal; (3) it is general — no task-specific assumptions are built in.
 :::
 
-**Q3. What are scaling laws?**
+**Q2. What is the difference between BERT and GPT architectures?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Scaling laws are empirical relationships showing that LLM performance (measured as validation cross-entropy loss) improves as a smooth power law function of three quantities: the number of model parameters $N$, the number of training tokens $D$, and the total training compute $C$ (measured in FLOPs). The Kaplan et al. (2020) paper established these relationships: $L \propto N^{-\alpha_N}$, $L \propto D^{-\alpha_D}$, with the exponents around 0.05-0.1 depending on the quantity.
+Both are transformer language models pre-trained on large text corpora, but they differ in architecture and objective:
 
-The significance is predictability: you can train a series of small models cheaply, measure where they fall on the scaling curve, and extrapolate to predict what a 10× larger model will achieve before spending the compute to build it. This turns large-scale model training from an expensive gamble into a principled investment decision.
+**BERT (encoder, MLM):** Bidirectional attention — every token sees all other tokens. Pre-trained by masking 15% of tokens and predicting them from full context. Produces rich contextual representations. Cannot generate text (needs the full sequence to make predictions). Best for tasks with a complete input: classification, NER, extractive QA.
 
-The Chinchilla paper (Hoffmann et al., 2022) refined the Kaplan findings and showed that previous large models were undertrained: they had too many parameters relative to the amount of data they were trained on. Chinchilla-optimal training uses roughly 20 tokens per parameter — a 70B model should be trained on ~1.4 trillion tokens. The practical implication for engineers: a smaller model trained on more data can outperform a larger model trained on less data at the same compute cost, and is faster to run at inference time.
+**GPT (decoder, CLM):** Causal (unidirectional) attention — each token only sees previous tokens. Pre-trained by predicting the next token. Can generate arbitrary-length sequences autoregressively. Slightly weaker at pure understanding tasks but supports generation, instruction following, and RLHF alignment.
+
+GPT-style decoder-only models dominate production in 2025 for three reasons: (1) generation is the most commercially valuable capability; (2) RLHF works naturally with autoregressive generation; (3) few-shot prompting allows GPT models to perform BERT-style understanding tasks without task-specific fine-tuning.
 :::
 
-**Q4. What is the difference between BERT and GPT architectures?**
+**Q3. What are scaling laws? Why do they matter?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Both BERT and GPT are transformer-based language models pretrained on large text corpora, but they differ in architecture and pretraining objective in ways that create fundamentally different capabilities.
+Scaling laws are empirical relationships showing that LLM validation loss improves as a smooth power law function of model size (parameters $N$), dataset size (tokens $D$), and compute ($C$ FLOPs): $L \propto N^{-\alpha}$, $L \propto D^{-\alpha}$.
 
-BERT uses a transformer encoder with bidirectional self-attention: every token can attend to every other token in the sequence, in both directions. BERT is pretrained with masked language modeling (MLM): 15% of tokens are randomly masked and the model predicts them from context. Because BERT sees the entire sequence (minus masked tokens) at once, it produces rich bidirectional representations. However, this bidirectionality means BERT cannot generate text autoregressively — it needs to see the full sequence to make predictions.
+They matter because they are **predictive**: you can train small models cheaply, measure where they fall on the scaling curve, and extrapolate to predict the performance of a 100× larger model before spending the compute to build it. This turns frontier training from an expensive gamble into a principled investment.
 
-GPT uses a transformer decoder with causal (unidirectional) self-attention: each token can only attend to previous tokens. GPT is pretrained with causal language modeling: predict the next token given all previous tokens. Because of the causal masking, GPT can generate text by repeatedly predicting and appending the next token.
-
-The practical consequences: BERT and its variants excel at understanding tasks where you have a complete input (classification, NER, extractive QA) because bidirectional context produces better representations. GPT-style models can generate text, follow instructions, and perform tasks through prompting without task-specific fine-tuning. GPT-style decoder-only architectures have won the production LLM landscape because generation, instruction-following via RLHF, and few-shot generalization all work naturally with the causal architecture.
+The Chinchilla paper (2022) refined the laws and showed that for a given compute budget, you should scale parameters and training tokens in equal proportion — roughly 20 tokens per parameter. GPT-3 (175B parameters, 300B tokens) was undertrained by roughly 12× by this standard.
 :::
 
-:::
-
-::: {.callout-warning title="Mid Level"}
-
-**Q5. Explain the Chinchilla scaling law finding and its implications for model training budgets.**
+**Q4. What is the Chinchilla scaling law? What is the 20 tokens/parameter rule?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The Chinchilla paper (Hoffmann et al., 2022, "Training Compute-Optimal Large Language Models") showed that the prevailing wisdom about optimal model training was wrong. Earlier work by Kaplan et al. (2020) had suggested that, given a fixed compute budget, you should spend most of it on model size (parameters) and less on training data. Researchers at DeepMind designed a rigorous set of experiments varying both $N$ (parameters) and $D$ (training tokens) simultaneously across a range of compute budgets, and found that Kaplan's recommendations over-estimated optimal model size.
+Chinchilla (Hoffmann et al., 2022) showed that to optimally use a compute budget $C$ FLOPs, you should train a model with $N \propto C^{0.5}$ parameters on $D \propto C^{0.5}$ tokens — scaling both in equal proportion.
 
-The Chinchilla finding: for a compute budget of $C$ FLOPs, the compute-optimal model has $N \propto C^{0.5}$ parameters trained for $D \propto C^{0.5}$ tokens — meaning parameters and data should be scaled equally. Concretely, the optimal ratio is approximately 20 training tokens per model parameter. For a 70B parameter model, this implies ~1.4 trillion training tokens.
+The practical rule of thumb: **~20 training tokens per model parameter**. For a 7B model: 140B tokens minimum for compute-optimal training. For a 70B model: 1.4T tokens.
 
-The implication for GPT-3 (175B parameters, ~300B tokens) is that it used 10× more parameters than the compute-optimal ratio warranted, and was undertrained by roughly 6× for its parameter count. Chinchilla 70B, trained with this prescription, matched or outperformed GPT-3 and Gopher (280B) on most benchmarks. For engineering decisions, the Chinchilla finding means: do not just train the largest model you can afford — train a model at the right parameter-to-token ratio for your compute budget. Also, for inference efficiency, a smaller model trained on more data runs faster and cheaper at serving time, which typically dominates total cost of ownership.
+Pre-Chinchilla models (GPT-3, Gopher) had roughly 1-2 tokens/parameter — they were 10× undertrained. Chinchilla 70B, trained at the right ratio, matched or outperformed GPT-3 (175B) on most benchmarks despite being 2.5× smaller and cheaper to run.
+
+Modern models like LLaMA 3 deliberately go far beyond Chinchilla-optimal (LLaMA 3 8B was trained on 15T tokens = ~1,875 tokens/param) to optimize for inference efficiency at the cost of extra training compute.
 :::
 
-**Q6. Why does causal language modeling (predicting the next token) lead to a model that can answer questions, write code, and reason?**
+**Q5. What is data deduplication and why does it matter for pre-training?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-This is one of the deepest questions in modern ML, and the answer is empirical more than theoretical — but the explanation is compelling. Next-token prediction is a uniquely general compression task. To predict the next token accurately across a corpus containing physics papers, Python tutorials, legal briefs, novels, and Wikipedia articles, a model must have internalized the domain-specific patterns, vocabulary, facts, and reasoning conventions of every domain in its training data.
+Deduplication removes duplicate or near-duplicate documents from the training corpus before training.
 
-Consider what it takes to predict the next token in a mathematical proof: the model must follow the logical structure of the argument, understand the notation, and know which steps validly follow from which. Consider predicting code: the model must know the syntax of the language, the semantics of library calls, and the patterns of correct algorithmic solutions. These capabilities are not explicitly taught — they emerge because they are the most efficient strategy for minimizing prediction loss across a corpus that happens to contain all human knowledge in textual form.
+Why it matters: Common Crawl contains millions of copies of popular web pages. If a document appears 100 times in the corpus, the model is effectively trained on it 100 times — this is implicit memorization pressure. The model learns to memorize and regurgitate that content rather than abstracting generalizable patterns. Lee et al. (2022) showed deduplication improves downstream task performance by 2-5 percentage points and substantially reduces verbatim regurgitation.
 
-The emergence of "reasoning" from next-token prediction is more subtle. Large language models show behavior consistent with multi-step reasoning — solving math problems, debugging code, constructing arguments — when prompted appropriately. The leading explanation is that the training data contains many examples of step-by-step reasoning (worked proofs, annotated code, argumentative essays), and the model has learned to produce text that follows those patterns. Whether this constitutes "real" reasoning or sophisticated pattern completion is an active research debate, but the practical capability is real and useful regardless of how it is categorized philosophically.
+Methods: URL/content hashing for exact duplicates; MinHash LSH for near-duplicate detection at scale; suffix array deduplication for repeated n-gram spans. Production pipelines apply all three stages.
+
+Deduplication is also a copyright and legal risk mitigation: documents that appear only once at a low sampling rate are unlikely to be memorized verbatim by the model.
 :::
 
-**Q7. What is the practical impact of tokenization on multilingual models and code models?**
+**Q6. What is an emergent capability? Give an example.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Tokenization has concrete, measurable impacts on model performance and API cost across languages and modalities. For multilingual models, the key issue is tokenization fertility: how many tokens does it take to represent a given amount of semantic content in a given language? English is the most efficiently tokenized language in almost every major LLM tokenizer because English text dominated the training corpora used to build those tokenizers. Common English words appear as single tokens. Morphologically rich languages — Turkish, Finnish, Hungarian — form words through complex chains of suffixes and prefixes, producing many unique word forms that are rare in any given corpus and thus tokenize into multiple subword pieces. The practical consequence: the same semantic content takes 3-5× more tokens in Turkish than in English, making Turkish inference 3-5× more expensive and consuming 3-5× more of the context window per semantic unit. Model quality also degrades because the per-token information density is lower — the model has to work harder to represent the same concept.
+An emergent capability is a model behavior that appears suddenly at a certain scale threshold — present in large models, essentially absent in smaller ones, not just weaker.
 
-For code, the situation is different but equally important. Indentation in Python becomes multiple whitespace tokens. Variable names like `num_users_per_session` might tokenize into 5-6 tokens. Special characters (`{`, `}`, `[`, `;`) often each take a token. This means code is expensive to process: a Python file that is 1KB of text might consume 400-500 tokens, compared to ~250 tokens of equivalent-length English prose. Code-specialized tokenizers (like the one in StarCoder) are trained on code-heavy corpora and produce more efficient tokenizations for common programming patterns.
+Example: few-shot arithmetic. A 7B model largely fails to perform multi-step arithmetic problems given a few examples in the prompt. A 70B+ model succeeds reliably. The capability doesn't gradually improve from 7B to 70B — it's largely absent then largely present.
 
-For model developers, the implication is: if you are building a multilingual system, either use a model with a multilingual-optimized tokenizer (SentencePiece trained on multilingual data, or tiktoken with a multilingual corpus), or be prepared for significantly higher token counts and correspondingly higher cost and lower context utilization for non-English inputs.
+Other examples: chain-of-thought reasoning (following step-by-step logical arguments), instruction following (reliably doing what a prompt says), and certain multi-step coding tasks.
+
+Important nuance: Schaeffer et al. (2023) argued that many apparent emergences are measurement artifacts — using coarse accuracy metrics makes gradual improvements look like sharp jumps. Using continuous metrics (log-probabilities) often shows smooth scaling instead. This is an active debate.
+
+Practical implication: you cannot safely extrapolate behavior across emergence thresholds. A capability that a 7B model lacks may not appear at 13B — you may need 70B+.
 :::
 
 :::
 
-::: {.callout-important title="Forward Deployed Engineer"}
+::: {.callout-warning title="Mid Level — Questions and Answers"}
 
-**Q8. A customer wants to train a domain-specific LLM from scratch vs. fine-tuning an existing one. Walk through the decision framework and the questions you ask.**
+**Q1. Explain Chinchilla scaling laws. What do they say about the optimal training compute allocation between model size and data?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Training from scratch is almost never the right answer for enterprise customers, and my job in this conversation is to understand their actual requirements before they spend tens of millions of dollars finding that out the hard way. I start by asking what specific capability gap they believe a from-scratch model would fill that fine-tuning cannot. Most customers who arrive at this conversation have been told by a well-meaning engineer that "we need a custom model" without a rigorous analysis of whether fine-tuning would achieve their goals.
+Chinchilla (Hoffmann et al., 2022) reversed the pre-2022 assumption that compute budgets should be spent primarily on parameters. The Kaplan et al. (2020) finding had suggested large models with modest data; DeepMind ran a rigorous set of experiments varying both $N$ (parameters) and $D$ (tokens) at fixed compute, and found the optimal allocation requires equal scaling of both.
 
-The questions I ask: First, what is the task and what quality bar do you need to hit? If a fine-tuned GPT-4 or Claude achieves 95% of their target quality, the ROI on training from scratch is essentially zero given the compute cost difference (hundreds of millions of dollars vs. thousands). Second, do you have data that genuinely cannot be shared with a third-party API provider? This is the most legitimate reason to consider self-hosted or from-scratch models — legal, regulatory, or IP constraints. But even then, the answer is usually "fine-tune an open-weight model like Llama 3 on your data and self-host," not "train from scratch." Third, how large is your domain-specific corpus? Training from scratch is only valuable if you have trillions of tokens of domain-specific text — enough to shift the model's world knowledge substantially. A law firm with 50M pages of case documents does not have enough data to train a competitive general LLM; they have enough to significantly improve a fine-tuned model's legal reasoning. Fourth, what is your compute budget? A minimal quality training run for a 7B parameter model costs $200,000-$500,000 in compute at cloud rates; a competitive 70B run costs $5M+. Most enterprise customers should be spending that budget on data curation and fine-tuning instead.
+The concrete prescription: **N_opt ≈ (C/120)^0.5, D_opt ≈ 20 × N_opt**, where $C$ is compute in FLOPs. The 20:1 token-to-parameter ratio is the headline result.
 
-The framework: default to fine-tuning or continued pretraining on an open-weight base model unless the customer has regulatory constraints on third-party APIs, a corpus exceeding 100B domain-specific tokens, and a compute budget exceeding $5M.
+Evidence: Chinchilla 70B (1.4T tokens) matched or outperformed GPT-3 (175B, 300B tokens) on most benchmarks at 2.5× fewer parameters. GPT-3 had ~1.7 tokens/param — undertrained by ~12× by Chinchilla standards.
+
+**Beyond compute-optimal:** LLaMA 3 trains at 1,875 tokens/param (8B model, 15T tokens). This is far beyond Chinchilla-optimal but optimized for inference cost. Since a model is trained once but run millions of times, a smaller model trained longer is often the right engineering decision even if it wastes some training compute.
+
+The Chinchilla insight also elevated data quality as a first-class concern: if you need 20T tokens for a trillion-parameter model, you cannot afford to waste them on noise.
 :::
 
-**Q9. Why does a model trained on English-heavy data perform worse on other languages, and what architectural/data choices would you recommend to fix this?**
+**Q2. Walk through the major stages of a pre-training data pipeline for a web-scale corpus.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-There are three compounding reasons for degraded non-English performance. First, training data imbalance: virtually all major LLM training corpora are dominated by English. Common Crawl is approximately 50-65% English by volume, even after filtering for language quality. A model that sees 10× more English than Spanish at training time learns a far richer representation of English linguistic patterns, facts, and reasoning structures. Second, tokenization inefficiency: as discussed above, English words map to fewer tokens than words in most other languages, which means non-English text occupies more of the model's context window and the per-token prediction task requires representing more linguistic complexity. Third, benchmark contamination: most popular NLP benchmarks are English-first, and models are often implicitly optimized for English-language performance.
+A production pre-training data pipeline for web text has five stages, each with real engineering complexity:
 
-The practical consequences are real: LLMs consistently perform worse on factual recall, reasoning, and instruction following in non-English languages, with degradation increasing for languages less represented in training data.
+**1. Crawling/sourcing:** Most labs use Common Crawl (petabytes of raw HTML, updated monthly). Raw HTML must be converted to clean text (boilerplate removal, HTML tag stripping). C4 uses `newspaper3k`; FineWeb uses `trafilatura`. This step is critical — aggressive boilerplate removal improves downstream quality significantly.
 
-My recommendations depend on the customer's specific target languages. For a customer who needs strong performance in 2-5 non-English languages, the most cost-effective intervention is language-targeted fine-tuning: collect or license a high-quality corpus in those languages (ideally covering the specific domain), perform continued pretraining or supervised fine-tuning, and evaluate on language-specific benchmarks. Use a multilingual-optimized tokenizer — models like Llama 3 and Mistral use SentencePiece with multilingual vocabulary, which reduces tokenization inefficiency compared to tiktoken's English-heavy vocabulary. For a customer who needs truly broad multilingual coverage, I would recommend starting from a model with documented multilingual training data (mT5, BLOOM, Aya, or Llama 3.1, which has improved multilingual data coverage) rather than trying to fine-tune an English-dominant model. Evaluation is critical: set up language-specific test sets before deployment and measure degradation quantitatively so the customer can make an informed tradeoff decision.
+**2. Language identification:** Apply a fast language ID model (fastText's lid.176.ftz is standard). Decide language mixing ratios. For English-focused models, strict English-only filtering; for multilingual, per-language sampling.
+
+**3. Quality filtering:** Multiple heuristic filters — minimum document length, alphabetic character fraction > 0.65, no more than 90% of lines ending with bullet points or URLs, repetitive content detection. Then a model-based filter: score documents with a small reference language model (GPT-2 perplexity) and remove very high-perplexity outliers. C4, FineWeb, and DCLM each publish their filter configurations.
+
+**4. Deduplication:** Three passes: (a) URL-level exact dedup; (b) document-level MinHash LSH (Jaccard threshold ~0.8) for near-duplicates; (c) n-gram suffix array dedup to catch repeated paragraph boilerplate that URL/document-level misses. Lee et al. (2022) showed this reduces memorization substantially.
+
+**5. PII and toxic content removal:** Regex-based PII scrubbing (emails, phone numbers, SSNs). Classifier-based toxicity filtering — typically a model trained on labeled web content. The goal is not zero toxicity but reducing its representation to a level where it doesn't dominate model behavior.
+
+Final step: **domain mixing** — combine filtered web with books, code, Wikipedia, and papers at tuned ratios. Mixing ratios are a hyperparameter that affects model personality, not just capability.
+:::
+
+**Q3. Explain BF16 mixed precision training. Why BF16 instead of FP16?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Mixed precision training uses lower-precision arithmetic (BF16 or FP16) for forward/backward passes while maintaining FP32 master weights for optimizer updates. This gives ~2× memory reduction and ~2× throughput on modern hardware.
+
+**BF16 vs FP16:** Both use 16 bits, but differently:
+- **FP16:** 5 exponent bits, 10 mantissa bits. Limited exponent range causes **overflow** on large activations and gradients common in LLM training. Requires a loss scaler to prevent underflow, adding engineering complexity and occasional instability.
+- **BF16:** 8 exponent bits (same as FP32), 7 mantissa bits. Same dynamic range as FP32 — no overflow risk, no loss scaler needed. Less precision (7 vs 10 mantissa bits) but training stability is not mantissa-limited.
+
+The practical outcome: BF16 training is simpler and more stable than FP16. Every modern training run on A100/H100 hardware uses BF16. TPUs have used BF16 since 2019.
+
+**The mixed precision recipe:**
+1. Model parameters: BF16 for forward/backward
+2. Gradients: BF16 accumulation, then cast to FP32 for optimizer
+3. Optimizer states: FP32 (Adam's first and second moments)
+4. Layer norm + softmax: usually upcast to FP32 for numerical stability
+
+Memory profile of a 7B model: ~14GB in BF16 (weights only), ~56GB for full optimizer state in FP32.
+:::
+
+**Q4. What are the three ZeRO optimizer stages? When does each make sense?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+ZeRO (Zero Redundancy Optimizer) partitions training state across GPUs rather than replicating it:
+
+**ZeRO Stage 1 — Partition optimizer states:** Adam stores first and second moment estimates. For a 70B model: 2 × 70B × 4 bytes = 560GB just for optimizer states. ZeRO-1 partitions these across $N$ GPUs — each GPU holds 1/$N$ of the optimizer state. ~4× memory reduction. Communication: allreduce on gradients (same as standard DDP).
+
+**ZeRO Stage 2 — Partition optimizer states + gradients:** Gradients are also partitioned. ~8× memory reduction. Each GPU only accumulates gradients for the parameters it "owns" in the optimizer.
+
+**ZeRO Stage 3 — Partition optimizer states + gradients + parameters:** Parameters themselves are sharded. Each GPU holds only a fraction of the full model. Before each layer's forward pass, parameters are gathered from all GPUs (all-gather). ~$N_\text{GPU}$× memory reduction. Highest communication overhead.
+
+**When to use each:**
+- **Stage 1/2:** You can fit the model on each GPU with replicated parameters (most training scenarios for ≤70B models on modern hardware). Lower communication overhead.
+- **Stage 3 / FSDP:** Model doesn't fit per GPU even with Stage 2. Essential for 100B+ models or when GPU memory is severely constrained. Accept higher communication overhead.
+
+**Rule of thumb:** Start with Stage 2. Use Stage 3 only when necessary — the additional all-gather communication per layer adds latency that can dominate on slow interconnects.
+:::
+
+**Q5. What is the difference between dense and MoE pre-training? When would you recommend each?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Dense models** activate all parameters for every token. A 70B dense model performs ~70B-parameter computations per forward pass token. Memory and compute scale together.
+
+**MoE (Mixture of Experts)** models have multiple feedforward expert networks per layer. A learned router selects the top-$k$ experts (typically $k=2$) for each token. Mixtral 8×7B has 8 experts per layer, activates 2 — so 56B total parameters but only ~12B active per token.
+
+**Key tradeoffs:**
+
+| | Dense | MoE |
+|---|---|---|
+| Active params/token | = total params | < total params (12B vs 56B) |
+| Inference cost | High (proportional to total) | Low (proportional to active) |
+| Total memory needed | Moderate | High (all experts must be in VRAM) |
+| Quality per FLOP | Baseline | Better (more capacity, same compute) |
+| Training complexity | Simple | High (routing instability, load balancing) |
+
+**Load balancing** is the key MoE challenge: if all tokens route to the same 2 experts, the other 6 are wasted. Auxiliary load-balancing losses penalize routing entropy collapse. Without careful tuning, MoE models collapse to dense behavior.
+
+**My recommendation:**
+- Use MoE when: you want high quality at low inference cost and you have the infrastructure for expert parallelism (each expert lives on a different GPU shard).
+- Use dense when: simpler deployment matters (single shard), or your serving infrastructure doesn't support expert routing.
+- For small deployments (<7B total): dense is almost always preferable — MoE gains appear at larger scales.
 :::
 
 :::
+
+::: {.callout-important title="Forward Deployed Engineer — Questions and Answers"}
+
+**Q1. A customer wants to train a domain-specific LLM from scratch vs. fine-tuning an existing model. Walk through your decision framework.**
+
+> 🎯 **What great looks like:** A structured decision tree covering regulatory constraints, corpus size, compute budget, and inference requirements — with a clear default recommendation and the specific conditions that override it.
+
+> ⚠️ **Common Mistake:** Treating "custom model" as automatically requiring from-scratch training, or conversely dismissing it without asking about regulatory constraints.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Training from scratch is almost never the right answer for enterprise customers. My job is to understand their actual requirements before they spend tens of millions of dollars learning that the hard way.
+
+**The four questions I ask first:**
+
+**1. What capability gap requires from-scratch training?** Most customers who arrive here have been told by an enthusiastic engineer that "we need our own model" without rigorous analysis. If a fine-tuned open-weight model (LLaMA 3, Mistral, Qwen) achieves 90% of their target quality, the ROI on from-scratch training is essentially zero. I ask them to show me a specific capability that fine-tuning cannot achieve.
+
+**2. Do you have regulatory constraints on third-party APIs?** This is the most legitimate reason to consider self-hosted models. Healthcare (HIPAA), financial services (data sovereignty), government (FedRAMP, classified data). But the answer is usually still "fine-tune an open-weight model and self-host" — not train from scratch.
+
+**3. How large is your domain-specific corpus, and of what quality?** Pre-training from scratch is only valuable if you have enough data to substantially shift the model's world knowledge — I use 100B+ tokens as a rough minimum for any meaningful from-scratch benefit. A law firm with 50M pages of case documents (~25B tokens) doesn't have enough to compete with LLaMA 3's 15T token pre-training. They do have enough to meaningfully improve a fine-tuned model's legal reasoning.
+
+**4. What is your compute budget?** A minimal 7B from-scratch run costs $200K–$500K at cloud rates. A competitive 70B run costs $5M–$20M. Most enterprises should spend that on data curation and fine-tuning instead.
+
+**My default recommendation:** Continued pretraining (domain adaptation) on an open-weight base model + supervised fine-tuning + alignment (if needed). Reserve from-scratch consideration for: (a) regulatory constraints preventing use of any external model, (b) 100B+ tokens of genuinely proprietary domain text, and (c) compute budget > $5M.
+
+**If they insist on from-scratch:** Start with the Chinchilla scaling law calculator to scope the compute budget honestly. Train in stages (pre-train on public data first, then continued pre-train on domain data) to avoid wasting compute learning basic language from domain data alone.
+:::
+
+**Q2. Explain Chinchilla scaling laws. What do they say about optimal training compute allocation? How would you use them to advise a customer on their training run?**
+
+> 🎯 **What great looks like:** Connects theory to actionable budget numbers, explains inference efficiency vs. training efficiency tradeoff, and gives concrete numbers (20 tokens/param, LLaMA 3 at 1,875 tokens/param).
+
+> ⚠️ **Common Mistake:** Stating the theory without connecting it to the inference efficiency insight or to LLaMA-style over-training.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Chinchilla (Hoffmann et al., 2022) is the empirical recipe for compute-optimal LLM training. The core finding: for a given compute budget, you should scale model size and training data in equal proportion. The practical rule: ~20 training tokens per parameter. For a 70B model: 1.4T tokens minimum.
+
+The backstory matters: pre-2022, the field over-invested in parameters relative to data (GPT-3: 175B params, 300B tokens = 1.7 tokens/param, undertrained by 12×). Chinchilla 70B, trained at the right ratio, matched GPT-3 on most benchmarks while being 2.5× smaller and much cheaper to serve.
+
+**How I use this with customers:**
+
+First, I separate two different optimization questions: "What's compute-optimal training?" vs. "What minimizes total cost of ownership (TCO)?" These have different answers.
+
+Compute-optimal (Chinchilla): 20 tokens/param. Minimizes training compute to reach a given quality level.
+
+TCO-optimal: Train smaller models on more data. The model is trained once but run billions of times. LLaMA 3 (8B model, 15T tokens = 1,875 tokens/param) was deliberately over-trained relative to Chinchilla to produce a model that's fast and cheap to serve.
+
+**My recommendation to customers:**
+- For research/one-off use: train at Chinchilla-optimal — minimize training cost.
+- For production deployment at scale: over-train a smaller model. A 7B model at 1T tokens is cheaper per query than a 30B model at 140B tokens, even if the 30B model had lower training loss.
+
+The calculator I give them: `N_opt = sqrt(C / 120)`, `D_opt = 20 * N_opt`. For a $1M compute budget (~$10^{21}$ FLOPs at A100 pricing): N_opt ≈ 90M parameters, D_opt ≈ 1.8B tokens. This is a tiny model — confirms that a $1M training budget should go toward fine-tuning, not pre-training a serious model.
+:::
+
+**Q3. A customer's domain-specific continued pretraining run is causing catastrophic forgetting — the model loses general capabilities as it learns domain knowledge. How do you diagnose and fix it?**
+
+> 🎯 **What great looks like:** Identifies the mechanism (domain data displaces general knowledge in gradient updates), then offers tiered solutions from data mixing to EWC to replay buffers, with clear tradeoffs.
+
+> ⚠️ **Common Mistake:** Only suggesting "lower learning rate" without addressing the data distribution mismatch.
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Catastrophic forgetting during continued pretraining happens when the gradient updates from domain-specific data are large enough to overwrite the model's general knowledge. The mechanism: the base model learned a weight configuration optimized for general text; domain-specific gradients push weights toward configurations optimized for domain text, moving away from the general-text optimum.
+
+**Diagnosis first:** Which capabilities are degrading? Measure the model on general benchmarks (MMLU, HellaSwag) at checkpoints throughout the continued pretraining run. If performance drops monotonically as domain loss drops, you have a data distribution problem. If performance initially improves on domain tasks before degrading, you've over-shot.
+
+**Fixes, in order of complexity:**
+
+**1. Data mixing (always start here):** Blend general web text with domain-specific text at a 1:1 to 4:1 ratio (domain:general). This is the cheapest fix and typically recovers 80% of general capability. The exact ratio depends on domain specificity — very narrow domains need more general data to maintain breadth.
+
+**2. Lower learning rate:** Use a learning rate 5–10× lower than the original pretraining rate. This reduces gradient update magnitude, making it harder to overwrite existing weights. The cost: slower domain adaptation. LLaMA 3 technical report recommends starting continued pretraining at 10% of original LR.
+
+**3. Cosine LR schedule with re-warmup:** Resume with a short warmup (1-5% of steps) then cosine decay. Avoids the weight perturbation from a cold restart at an elevated LR.
+
+**4. Elastic Weight Consolidation (EWC):** Add a regularization term that penalizes changes to parameters that were important for general tasks (measured by Fisher information). Theoretically sound but computationally expensive to implement at scale — I rarely recommend this for production.
+
+**5. Replay buffer:** Mix a small fraction (5–10%) of original pretraining data into every batch. Structurally prevents forgetting by continuously reinforcing general capabilities. Storage cost: you need access to some of the original pretraining data.
+
+**Practical recommendation:** Data mixing (fix 1) + lower LR (fix 2) resolves 90%+ of catastrophic forgetting cases. Monitor general benchmarks every 10% of training to catch degradation early and adjust mixing ratio dynamically.
+:::
+
+:::
+
+---
+
+## Quick Reference Cheat Sheet
+
+- **CLM objective:** predict next token given past tokens; loss = $-\log P(x_t | x_{<t})$; used by every production LLM
+- **MLM objective:** predict masked tokens from bidirectional context; BERT-style; cannot generate text
+- **Why CLM produces general intelligence:** accurate next-token prediction requires internalizing grammar, facts, and reasoning in every domain of the training corpus
+- **BF16 vs FP16:** BF16 has same exponent range as FP32 (no overflow), simpler training, preferred for LLMs; FP16 needs loss scaling
+- **Gradient checkpointing:** discard activations in forward pass, recompute in backward pass; 30% compute overhead, ~$O(\sqrt{L})$ memory vs $O(L)$
+- **ZeRO stages:** Stage 1 = optimizer state sharding; Stage 2 = + gradient sharding; Stage 3 = + parameter sharding; higher stage = lower memory, higher communication
+- **Chinchilla rule:** ~20 training tokens per parameter for compute-optimal training
+- **LLaMA 3 insight:** over-train beyond Chinchilla for inference efficiency — small models, many tokens
+- **FineWeb/DCLM finding:** data quality > data quantity; careful curation beats 5× more raw data
+- **Common Crawl:** ~60% noise without filtering; requires language ID, quality filter, dedup, PII scrub, toxicity filter
+- **Deduplication:** MinHash LSH for near-duplicates; URL hashing for exact; reduces memorization and improves generalization
+- **Emergent capabilities:** behaviors absent at small scale, present at large scale; may be measurement artifacts (Schaeffer 2023)
+- **Dense model:** every parameter active for every token; simpler deployment
+- **MoE model:** only top-$k$ expert FFNs active per token; lower inference cost, higher total memory, load balancing critical
+- **Scaling laws:** $L \propto N^{-\alpha}$, $L \propto D^{-\alpha}$; predictive across orders of magnitude
+- **Tokenization:** BPE (GPT), WordPiece (BERT), SentencePiece (LLaMA); ~4 chars/token for English, 3–5× worse for morphologically rich languages
+- **Continued pretraining:** domain adaptation on top of an open-weight base model; needs 1B+ domain tokens to be meaningful; use data mixing to prevent catastrophic forgetting
+- **Catastrophic forgetting:** overwriting general knowledge with domain-specific gradients; fix with data mixing and low LR
+- **Perplexity:** $\exp(-\frac{1}{T}\sum \log P(x_t|x_{<t}))$; lower = better prediction; modern LLMs achieve single-digit PPL on matched test sets
+
+---
 
 ## Further Reading
 
 - [Chinchilla: Training Compute-Optimal LLMs (Hoffmann et al., 2022)](https://arxiv.org/abs/2203.15556)
-- [Language Models are Few-Shot Learners (GPT-3, Brown et al., 2020)](https://arxiv.org/abs/2005.14165)
+- [Language Models are Few-Shot Learners — GPT-3 (Brown et al., 2020)](https://arxiv.org/abs/2005.14165)
 - [BERT: Pre-training of Deep Bidirectional Transformers (Devlin et al., 2018)](https://arxiv.org/abs/1810.04805)
-- [The Pile: An 800GB Dataset for Language Modeling (Gao et al., 2021)](https://arxiv.org/abs/2101.00027)
-- [Neural Machine Translation of Rare Words with Subword Units / BPE (Sennrich et al., 2016)](https://arxiv.org/abs/1508.07909)
 - [Scaling Laws for Neural Language Models (Kaplan et al., 2020)](https://arxiv.org/abs/2001.08361)
+- [FineWeb: Decanting the Web for the Finest Text Data at Scale (Penedo et al., 2024)](https://arxiv.org/abs/2406.17557)
+- [DataComp for Language Models (Li et al., 2024)](https://arxiv.org/abs/2406.11794)
+- [ZeRO: Memory Optimizations Toward Training Trillion Parameter Models (Rajbhandari et al., 2020)](https://arxiv.org/abs/1910.02054)
+- [Emergent Abilities of Large Language Models (Wei et al., 2022)](https://arxiv.org/abs/2206.07682)
+- [Are Emergent Abilities of Large Language Models a Mirage? (Schaeffer et al., 2023)](https://arxiv.org/abs/2304.15004)
+- [The Pile: An 800GB Dataset (Gao et al., 2021)](https://arxiv.org/abs/2101.00027)

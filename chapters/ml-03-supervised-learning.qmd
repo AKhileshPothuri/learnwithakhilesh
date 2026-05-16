@@ -1,0 +1,1363 @@
+---
+title: "Classical Supervised Learning"
+---
+
+::: {.callout-note}
+**Who this chapter is for:** All levels — Entry, Mid, Senior/Staff ML
+**What you'll be able to answer after reading this:**
+
+- How linear and logistic regression work, and when regularization saves you
+- The mechanics of decision trees, random forests, and gradient boosting
+- Why XGBoost and LightGBM dominate structured data competitions — and production
+- How SVMs find maximum-margin boundaries and why the kernel trick matters
+- Which algorithm to reach for first on a new tabular problem, and why
+:::
+
+Classical supervised learning algorithms remain the backbone of production ML for structured/tabular data. Transformers dominate text and vision; tree ensembles dominate tables. Understanding these algorithms at a mechanical level — not just knowing the API call — separates candidates who can debug model behavior in production from those who can only fit and predict.
+
+---
+
+## Linear Regression
+
+### What It Is
+
+Linear regression fits a straight-line (or hyperplane) relationship between a set of input features and a continuous target variable. Given $n$ training examples with $p$ features, it finds the set of weights $\boldsymbol{\beta}$ such that $\hat{y} = \beta_0 + \beta_1 x_1 + \cdots + \beta_p x_p$ minimizes the sum of squared differences between predictions and true values.
+
+**Analogy:** You are a real-estate analyst trying to predict home prices. You believe price increases linearly with square footage, number of bedrooms, and distance to city center. Linear regression finds the best-fit coefficients for each factor — the exact dollar-per-square-foot, dollar-per-bedroom, and discount-per-mile values that minimize your total prediction error across all past sales.
+
+### OLS Derivation Intuition
+
+Ordinary Least Squares (OLS) minimizes the Residual Sum of Squares (RSS):
+
+$$\text{RSS} = \sum_{i=1}^{n}(y_i - \hat{y}_i)^2 = \|\mathbf{y} - \mathbf{X}\boldsymbol{\beta}\|_2^2$$
+
+Taking the derivative with respect to $\boldsymbol{\beta}$ and setting it to zero yields the closed-form Normal Equations:
+
+$$\boldsymbol{\hat{\beta}} = (\mathbf{X}^\top \mathbf{X})^{-1}\mathbf{X}^\top \mathbf{y}$$
+
+This solution exists uniquely as long as $\mathbf{X}^\top\mathbf{X}$ is invertible — which fails when features are perfectly collinear or when $p > n$. The squared loss penalizes large errors more than small ones, making OLS sensitive to outliers.
+
+> 💡 **Senior Tip:** The closed-form solution has $O(p^3)$ complexity due to matrix inversion. For $p > 10{,}000$ features, gradient descent is faster. Sklearn's `LinearRegression` uses SVD decomposition for numerical stability, not direct matrix inversion.
+
+### Assumptions (The Four You Must Know)
+
+1. **Linearity** — the relationship between features and target is linear. Violating this means your model is fundamentally misspecified.
+2. **Homoscedasticity** — residual variance is constant across all predicted values. If variance fans out as $\hat{y}$ grows, standard errors and confidence intervals are invalid.
+3. **Independence** — observations are independent. Time-series data with autocorrelation violates this; standard errors understate uncertainty.
+4. **Normality of residuals** — residuals follow a normal distribution. Required for valid hypothesis tests on coefficients; less critical for pure prediction.
+
+> ⚠️ **Common Mistake:** Candidates recite assumptions without knowing how to test them. Residual plots catch heteroscedasticity and non-linearity. Durbin-Watson tests for autocorrelation. Q-Q plots assess normality. Knowing this signals genuine experience.
+
+### Ridge, Lasso, and Elastic Net
+
+When OLS overfits or fails due to multicollinearity, add a regularization penalty to the loss:
+
+**Ridge (L2):**
+$$\text{Loss} = \text{RSS} + \lambda \sum_{j=1}^p \beta_j^2$$
+Ridge shrinks all coefficients toward zero but never eliminates them. Preferred when all features are relevant and multicollinearity is the problem. Has a closed-form solution: $\hat{\boldsymbol{\beta}}_{ridge} = (\mathbf{X}^\top\mathbf{X} + \lambda\mathbf{I})^{-1}\mathbf{X}^\top\mathbf{y}$. The $\lambda\mathbf{I}$ term makes the matrix invertible even under perfect collinearity.
+
+**Lasso (L1):**
+$$\text{Loss} = \text{RSS} + \lambda \sum_{j=1}^p |\beta_j|$$
+The L1 penalty produces **sparse solutions** — many coefficients are driven to exactly zero. This is automatic feature selection. Why? The L1 ball has corners at the axes; the optimal solution typically lies at a corner, zeroing out non-essential features.
+
+**Elastic Net:**
+$$\text{Loss} = \text{RSS} + \lambda_1 \sum|\beta_j| + \lambda_2 \sum\beta_j^2$$
+Combines L1 sparsity with L2 stability. Preferred when features are correlated and you want some selection. Standard choice for genomics or any high-dimensional domain with feature groups.
+
+| Method | Sparsity | Correlated Features | Closed Form |
+|--------|----------|-------------------|-------------|
+| OLS | None | Unstable | Yes |
+| Ridge | None (shrinkage) | Handles well | Yes |
+| Lasso | Yes (zero out) | Arbitrarily picks one | No (coordinate descent) |
+| Elastic Net | Yes (partial) | Handles groups | No |
+
+### Multicollinearity and Why It Matters
+
+Multicollinearity occurs when features are highly correlated (e.g., "square feet" and "number of rooms"). Effects:
+
+- OLS coefficient estimates become numerically unstable — tiny data changes cause huge swings in $\hat{\boldsymbol{\beta}}$
+- Standard errors inflate, making significance tests meaningless
+- Coefficients are uninterpretable individually (partial derivative meaning breaks down)
+- **Prediction accuracy is unaffected** — this surprises candidates. The model still predicts well; you just can't trust which feature is "driving" the prediction.
+
+Detect with Variance Inflation Factor (VIF): $\text{VIF}_j = \frac{1}{1 - R_j^2}$ where $R_j^2$ is the $R^2$ from regressing feature $j$ on all other features. VIF > 10 is a red flag.
+
+### Model Evaluation: R², Adjusted R², Residual Analysis
+
+**R²:** Proportion of variance explained. $R^2 = 1 - \frac{RSS}{\text{TSS}}$. Ranges from 0 to 1; higher is better, but R² always increases when you add features — even noise.
+
+**Adjusted R²:** Penalizes for adding features: $\bar{R}^2 = 1 - (1-R^2)\frac{n-1}{n-p-1}$. Decreases if you add an irrelevant feature. Use this to compare models with different feature counts.
+
+**Residual analysis essentials:**
+- Residuals vs fitted: should be random scatter, not a funnel or curve
+- Q-Q plot of residuals: should track the diagonal for normality
+- Scale-location plot: checks homoscedasticity
+- Cook's distance: identifies influential outliers driving the fit
+
+### Key Hyperparameters
+
+| Hyperparameter | Effect | Typical Range |
+|---|---|---|
+| `alpha` (Ridge/Lasso) | Regularization strength; higher = more shrinkage | 0.001 – 100 (log scale search) |
+| `l1_ratio` (Elastic Net) | Mix between L1 and L2; 0 = pure Ridge, 1 = pure Lasso | 0.1 – 0.9 |
+| `fit_intercept` | Whether to fit bias term | True (almost always) |
+| `max_iter` (Lasso/EN) | Convergence iterations for coordinate descent | 1000 – 10000 |
+
+### Pros, Cons, and When to Use
+
+| | |
+|---|---|
+| **Pros** | Fast training and inference; coefficients are interpretable; well-understood statistical properties; handles high-dimensional data with regularization |
+| **Cons** | Assumes linearity; sensitive to outliers (OLS); multicollinearity degrades interpretability; requires feature engineering for non-linear patterns |
+
+**When to use:** Baseline for any regression task; whenever interpretability is required (medical, financial, regulatory contexts); when features are known to have linear relationships; small-to-medium $n$ with few features.
+
+**When NOT to use:** Target has clear non-linear dependence on features without engineering transformations; high cardinality categorical features; data has heavy-tailed noise (consider Huber regression instead).
+
+**Common misconception:** "R² of 0.9 means the model is good." R² measures explained variance, not predictive accuracy on new data. A model with R² = 0.95 on training can have R² = -0.3 on test if it memorized noise. Always report test-set metrics.
+
+### Working Code
+
+```python
+#| label: linear-regression-sklearn
+#| eval: false
+import numpy as np
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import make_regression
+from sklearn.metrics import r2_score, mean_squared_error
+import matplotlib.pyplot as plt
+
+# Generate synthetic data
+X, y = make_regression(n_samples=500, n_features=20, n_informative=10,
+                        noise=20, random_state=42)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Always scale features for regularized regression — L1/L2 penalties are not scale-invariant
+scaler = StandardScaler()
+X_train_s = scaler.fit_transform(X_train)
+X_test_s  = scaler.transform(X_test)
+
+# OLS
+ols = LinearRegression().fit(X_train_s, y_train)
+print(f"OLS  R²: {r2_score(y_test, ols.predict(X_test_s)):.3f}")
+
+# Ridge — alpha is the regularization strength (sklearn's alpha = statistical lambda)
+ridge = Ridge(alpha=1.0).fit(X_train_s, y_train)
+print(f"Ridge R²: {r2_score(y_test, ridge.predict(X_test_s)):.3f}")
+
+# Lasso — produces sparse coefficients
+lasso = Lasso(alpha=0.1, max_iter=5000).fit(X_train_s, y_train)
+n_zero = np.sum(lasso.coef_ == 0)
+print(f"Lasso R²: {r2_score(y_test, lasso.predict(X_test_s)):.3f}  |  zeros: {n_zero}/{X.shape[1]}")
+
+# Elastic Net
+en = ElasticNet(alpha=0.1, l1_ratio=0.5, max_iter=5000).fit(X_train_s, y_train)
+print(f"ElasticNet R²: {r2_score(y_test, en.predict(X_test_s)):.3f}")
+
+# Cross-validate Ridge across a range of alphas
+from sklearn.linear_model import RidgeCV
+alphas = np.logspace(-3, 3, 100)
+ridge_cv = RidgeCV(alphas=alphas, cv=5).fit(X_train_s, y_train)
+print(f"Best Ridge alpha: {ridge_cv.alpha_:.4f}")
+
+# Residual plot
+preds = ols.predict(X_test_s)
+residuals = y_test - preds
+plt.scatter(preds, residuals, alpha=0.5)
+plt.axhline(0, color='red', linestyle='--')
+plt.xlabel("Fitted values"); plt.ylabel("Residuals")
+plt.title("Residuals vs Fitted")
+plt.tight_layout(); plt.show()
+```
+
+> ⚠️ **Production Gotcha:** Lasso and Elastic Net require `StandardScaler` before fitting. The L1/L2 penalties are applied to raw coefficient values — without scaling, features with large numeric ranges (e.g., income in dollars vs age in years) get unfairly penalized or protected. Ridge also requires scaling for coefficient comparability, though the math is more forgiving.
+
+---
+
+## Logistic Regression
+
+### What It Is
+
+Logistic regression predicts the probability that an observation belongs to a class. Despite the name, it is a classification algorithm. It uses a linear combination of features, then squashes the output through the sigmoid function to produce a probability in (0, 1).
+
+**Analogy:** A doctor assessing heart disease risk uses patient age, cholesterol, and blood pressure to compute a risk score (linear combination), then maps it through a sigmoidal curve to produce a 0–100% probability. Below 50% → discharge; above 50% → admit for further testing. The linear combination is the logistic regression; the threshold decision is separate.
+
+### Sigmoid, Log-Odds, and Cross-Entropy
+
+The **sigmoid function** maps any real number to (0, 1):
+$$\sigma(z) = \frac{1}{1 + e^{-z}}, \quad z = \mathbf{w}^\top \mathbf{x} + b$$
+
+**Log-odds (logit):** If $p = \sigma(z)$, then $\log\frac{p}{1-p} = z$. The model's linear output $z$ is the log of the odds ratio. This is why logistic regression is sometimes called a log-odds model — the log-odds are linear in the features, even though the probabilities are not.
+
+**Cross-entropy loss** (binary):
+$$\mathcal{L} = -\frac{1}{n}\sum_{i=1}^n \left[y_i \log\hat{p}_i + (1-y_i)\log(1-\hat{p}_i)\right]$$
+
+Minimizing cross-entropy is equivalent to maximum likelihood estimation of the Bernoulli distribution parameters. There is no closed-form solution; optimized via gradient descent or L-BFGS.
+
+### Why Logistic Regression Is a Linear Classifier
+
+The decision boundary is defined by $\sigma(\mathbf{w}^\top\mathbf{x} + b) = 0.5$, which means $\mathbf{w}^\top\mathbf{x} + b = 0$ — a hyperplane in feature space. Logistic regression cannot learn non-linear boundaries from raw features. Adding polynomial features (e.g., $x_1^2, x_1 x_2$) can produce non-linear boundaries, but the model itself is still linear in the transformed feature space.
+
+### Multiclass Extensions
+
+**One-vs-Rest (OvR):** Train $K$ binary classifiers, each predicting class $k$ vs all others. At inference, pick the class with the highest probability. Fast and parallelizable; does not produce calibrated probabilities across classes.
+
+**Softmax (multinomial logistic regression):** Models all $K$ classes jointly with a single set of weights. Output probabilities sum to 1. Preferred when classes are mutually exclusive and well-calibrated probabilities are needed.
+
+### Coefficient Interpretability
+
+In logistic regression, each coefficient $w_j$ represents the change in the **log-odds** per unit increase in feature $j$, holding all else constant. $e^{w_j}$ is the **odds ratio** for feature $j$. This is powerful for interpretability: in a fraud model, $e^{w_\text{foreign\_txn}} = 2.3$ means a foreign transaction multiplies the odds of fraud by 2.3x.
+
+> 💡 **Senior Tip:** Log-odds interpretation requires features to be on comparable scales or to be categorical. For continuous features, report the odds ratio per standard deviation, not per unit — it's more meaningful and comparable across features with different scales.
+
+### Key Hyperparameters
+
+| Hyperparameter | Effect | Typical Range |
+|---|---|---|
+| `C` | Inverse regularization strength; lower = stronger L2 penalty | 0.001 – 100 (log scale) |
+| `penalty` | L1, L2, or Elastic Net | `'l2'` (default), `'l1'`, `'elasticnet'` |
+| `solver` | Optimization algorithm; `lbfgs` for L2, `liblinear` for L1 small data | `'lbfgs'`, `'liblinear'`, `'saga'` |
+| `max_iter` | Max convergence iterations | 100 – 2000 |
+| `class_weight` | Handle class imbalance by upweighting minority class | `'balanced'` or dict |
+
+### Pros, Cons, and When to Use
+
+| | |
+|---|---|
+| **Pros** | Fast; interpretable coefficients (log-odds); calibrated probabilities; works well with many features when classes are linearly separable; strong regularization |
+| **Cons** | Cannot learn non-linear boundaries without feature engineering; sensitive to outliers; assumption that log-odds are linear in features |
+
+**When to use:** Binary classification with interpretability requirements; credit scoring, medical diagnosis, ad click-through rate estimation as baseline; high-dimensional sparse data (text with TF-IDF); when you need calibrated probability outputs for downstream decisions.
+
+**When NOT to use:** Complex non-linear decision boundaries; raw image or audio features; when tree-based models already give >5% accuracy improvement.
+
+**Common misconception:** "Logistic regression can't handle non-linearity." Correct — but adding polynomial or interaction features, or using a kernel logistic regression, extends it. Also, logistic regression often outperforms complex models when data is limited, because its inductive bias (linearity) provides strong regularization implicitly.
+
+### Working Code
+
+```python
+#| label: logistic-regression-sklearn
+#| eval: false
+from sklearn.linear_model import LogisticRegression
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (classification_report, roc_auc_score,
+                              ConfusionMatrixDisplay, RocCurveDisplay)
+import numpy as np
+
+X, y = make_classification(n_samples=1000, n_features=20, n_informative=10,
+                            n_classes=2, weights=[0.8, 0.2], random_state=42)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y,
+                                                     test_size=0.2, random_state=42)
+scaler = StandardScaler()
+X_train_s = scaler.fit_transform(X_train)
+X_test_s  = scaler.transform(X_test)
+
+# Binary logistic regression — class_weight='balanced' handles imbalance
+lr = LogisticRegression(C=1.0, penalty='l2', solver='lbfgs',
+                        class_weight='balanced', max_iter=1000, random_state=42)
+lr.fit(X_train_s, y_train)
+
+y_pred  = lr.predict(X_test_s)
+y_proba = lr.predict_proba(X_test_s)[:, 1]
+
+print(classification_report(y_test, y_pred))
+print(f"ROC-AUC: {roc_auc_score(y_test, y_proba):.3f}")
+
+# Coefficient interpretation: exponentiate for odds ratios
+import pandas as pd
+feature_names = [f"feat_{i}" for i in range(X.shape[1])]
+odds_ratios = np.exp(lr.coef_[0])
+coef_df = pd.DataFrame({'feature': feature_names, 'odds_ratio': odds_ratios})
+print(coef_df.sort_values('odds_ratio', ascending=False).head(5))
+
+# Multiclass with softmax
+from sklearn.datasets import load_iris
+X_mc, y_mc = load_iris(return_X_y=True)
+lr_multi = LogisticRegression(multi_class='multinomial', solver='lbfgs',
+                               C=1.0, max_iter=500)
+scores = cross_val_score(lr_multi, X_mc, y_mc, cv=5, scoring='accuracy')
+print(f"Multiclass CV accuracy: {scores.mean():.3f} ± {scores.std():.3f}")
+```
+
+> ⚠️ **Production Gotcha:** `LogisticRegression` in sklearn applies L2 regularization by default with `C=1.0`. For an unregularized baseline (often informative for diagnosing underfitting), set `C=1e9` or use `penalty=None`. Forgetting this makes "no regularization" and "weak regularization" indistinguishable, which matters when diagnosing whether your model is underfitting.
+
+---
+
+## Decision Trees
+
+### What It Is
+
+A decision tree partitions the feature space recursively by asking yes/no questions about one feature at a time. At each internal node, it picks the feature and threshold that best separates the training examples. Leaf nodes contain predictions — the majority class (classification) or mean target value (regression).
+
+**Analogy:** A doctor's clinical decision pathway: "Is the patient's age > 50? If yes, is their blood pressure > 140? If yes, order an ECG." Each branch is a splitting decision; the leaf is the action. Decision trees make this process algorithmic and data-driven.
+
+### Splitting Criteria
+
+**Gini Impurity** (classification): $G = 1 - \sum_k p_k^2$. Measures how often a randomly chosen element would be incorrectly classified. Zero for a pure node; maximum at $0.5$ for binary classification. Computationally cheaper than entropy.
+
+**Entropy / Information Gain** (classification): $H = -\sum_k p_k \log_2 p_k$. Information gain is the reduction in entropy from a split. Theoretically more principled; equivalent to maximizing mutual information between the split feature and the target. Produces slightly more balanced trees.
+
+**MSE** (regression): Splits minimize the weighted sum of variances in the resulting child nodes. Equivalent to minimizing RSS across all samples in the node.
+
+> 💡 **Senior Tip:** Gini and entropy produce nearly identical trees in practice. The real hyperparameters that matter are `max_depth`, `min_samples_leaf`, and `min_impurity_decrease`. Spending time debating Gini vs entropy is a distraction from the regularization choices that actually control overfitting.
+
+### Pruning and Regularization
+
+**Pre-pruning (early stopping):**
+- `max_depth` — limits tree height directly
+- `min_samples_split` — minimum samples required to split a node
+- `min_samples_leaf` — minimum samples required in a leaf (prevents tiny, noisy splits)
+- `min_impurity_decrease` — only split if impurity decreases by at least this amount
+
+**Post-pruning (cost-complexity pruning):** Grow the full tree, then prune branches that offer insufficient impurity reduction relative to the complexity penalty $\alpha$. Sklearn's `ccp_alpha` parameter controls this. More computationally expensive but often produces better-generalized trees than pre-pruning alone.
+
+### Why Trees Overfit Easily
+
+An unpruned decision tree will keep splitting until every leaf contains a single training example — achieving 100% training accuracy. Each final split encodes noise, not signal. The decision boundary has infinite zig-zags following individual data points. This is the extreme high-variance end of the bias-variance tradeoff. Even with pruning, a single tree has high variance because small changes in training data can produce completely different splits at early nodes, propagating structural changes throughout.
+
+### Feature Importance
+
+Decision tree feature importance is the total impurity reduction attributable to each feature, summed across all splits that used that feature, weighted by the number of samples at each split:
+
+$$\text{Importance}_j = \sum_{\text{nodes split on } j} \frac{n_\text{node}}{n_\text{total}} \cdot \Delta\text{impurity}$$
+
+> ⚠️ **Common Mistake:** Tree-based feature importance has a **cardinality bias** — features with many unique values (e.g., user IDs, timestamps) appear more important simply because they offer more candidate split points. Always pair tree importances with permutation importance or SHAP values.
+
+### Key Hyperparameters
+
+| Hyperparameter | Effect | Typical Range |
+|---|---|---|
+| `max_depth` | Maximum tree depth; primary overfitting control | 3 – 20 |
+| `min_samples_leaf` | Min samples per leaf; higher = smoother decision boundary | 1 – 50 |
+| `min_samples_split` | Min samples to split a node | 2 – 20 |
+| `ccp_alpha` | Post-pruning complexity penalty | 0.0 – 0.05 (tune with CV) |
+| `criterion` | Splitting criterion | `'gini'`, `'entropy'`, `'squared_error'` |
+
+### Pros, Cons, and When to Use
+
+| | |
+|---|---|
+| **Pros** | Interpretable (visualizable); handles mixed feature types natively; no scaling required; captures non-linear relationships; handles missing values (with imputation) |
+| **Cons** | High variance; overfits without careful tuning; not competitive with ensembles on accuracy; unstable (axis-aligned splits miss diagonal boundaries) |
+
+**When to use:** When you need human-readable rules (medical, legal, regulatory); quick exploratory analysis to understand feature relationships; as the base learner in ensembles.
+
+**When NOT to use:** Production predictive modeling (use a forest or boosting); small datasets where variance is catastrophic; features with complex interactions better captured by continuous models.
+
+**Common misconception:** "Decision trees handle missing data automatically." Sklearn's decision trees do not handle NaN values at all — they require explicit imputation. Only XGBoost, LightGBM, and CatBoost handle missing values natively in their tree-building algorithms.
+
+### Working Code
+
+```python
+#| label: decision-tree-sklearn
+#| eval: false
+from sklearn.tree import DecisionTreeClassifier, export_text, plot_tree
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
+import numpy as np
+
+X, y = make_classification(n_samples=1000, n_features=10, n_informative=5,
+                            random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Overfitting example: unpruned tree
+dt_full = DecisionTreeClassifier(random_state=42)
+dt_full.fit(X_train, y_train)
+print(f"Unpruned  Train: {dt_full.score(X_train, y_train):.3f} | Test: {dt_full.score(X_test, y_test):.3f}")
+
+# Pruned tree
+dt_pruned = DecisionTreeClassifier(max_depth=5, min_samples_leaf=10,
+                                    criterion='gini', random_state=42)
+dt_pruned.fit(X_train, y_train)
+print(f"Pruned    Train: {dt_pruned.score(X_train, y_train):.3f} | Test: {dt_pruned.score(X_test, y_test):.3f}")
+
+# Post-pruning via cost-complexity
+path = dt_full.cost_complexity_pruning_path(X_train, y_train)
+ccp_alphas = path.ccp_alphas[::5]  # subsample for speed
+test_scores = []
+for alpha in ccp_alphas:
+    dt = DecisionTreeClassifier(ccp_alpha=alpha, random_state=42)
+    score = cross_val_score(dt, X_train, y_train, cv=5).mean()
+    test_scores.append(score)
+
+best_alpha = ccp_alphas[np.argmax(test_scores)]
+print(f"Best ccp_alpha: {best_alpha:.4f}")
+
+# Feature importance
+feature_names = [f"feat_{i}" for i in range(X.shape[1])]
+importances = dt_pruned.feature_importances_
+for name, imp in sorted(zip(feature_names, importances), key=lambda x: -x[1]):
+    print(f"  {name}: {imp:.3f}")
+
+# Visualize the tree
+plt.figure(figsize=(20, 8))
+plot_tree(dt_pruned, feature_names=feature_names, class_names=['0','1'],
+          filled=True, max_depth=3)
+plt.tight_layout(); plt.show()
+```
+
+---
+
+## Random Forests
+
+### What It Is
+
+A random forest builds hundreds of decision trees on bootstrapped subsets of the training data, and at each split considers only a random subset of features. Predictions are made by majority vote (classification) or mean (regression) across all trees.
+
+**Analogy:** Diagnose a patient's illness by consulting 500 different doctors, each with access to a random subset of the patient's records. No single doctor has complete information. The majority diagnosis is far more reliable than any single doctor's opinion — including the best one in the room. This is the power of ensemble disagreement canceling out individual errors.
+
+### Bagging + Random Feature Selection — Why Both Matter
+
+**Bagging (Bootstrap Aggregating)** alone reduces variance by averaging predictions of high-variance models. If each tree is uncorrelated with others, averaging reduces variance by a factor of $n$ (number of trees) without increasing bias.
+
+**The problem:** Trees trained on the same feature set will be correlated. If there is a strong predictor (say, feature $X_1$), almost every tree will use it as the top split. The trees' errors will be correlated — averaging correlated errors does not reduce variance efficiently.
+
+**Random feature subsampling** breaks this correlation. By restricting each split to $\sqrt{p}$ (classification) or $p/3$ (regression) randomly selected features, strong predictors are sometimes excluded, forcing trees to find alternative splits. The trees become diverse; their errors become uncorrelated; averaging genuinely reduces variance.
+
+> 💡 **Senior Tip:** `max_features='sqrt'` is the default for classifiers in sklearn because it was found empirically optimal in Breiman's original paper. For regression, `'sqrt'` is also often best but `n_features/3` is the theoretical recommendation. Tuning `max_features` is often the highest-ROI hyperparameter adjustment in random forests.
+
+### Out-of-Bag (OOB) Error
+
+Each tree is trained on a bootstrap sample — on average, 63.2% of the original training data ($1 - 1/e$). The remaining ~36.8% is never seen by that tree — these are the "out-of-bag" samples. By predicting on OOB samples across all trees that did not train on each point, you get an unbiased generalization estimate without a separate validation set.
+
+Set `oob_score=True` in sklearn to get this for free. OOB error closely tracks cross-validation performance and is computationally cheaper.
+
+### Feature Importance: Impurity-Based vs Permutation
+
+**Impurity-based (MDI):** Same calculation as decision trees — total impurity reduction per feature across all trees. Fast but biased toward high-cardinality features.
+
+**Permutation importance:** After training, randomly shuffle feature $j$ in the test set and measure how much accuracy drops. A large drop means the feature was important; no drop means the model did not rely on it. Unbiased, slower, but more trustworthy.
+
+> ⚠️ **Common Mistake:** Impurity-based importance can make correlated features appear unimportant. If features A and B are highly correlated, the forest may split on A sometimes and B other times — both appear to have half the importance of a single uncorrelated predictor of the same strength. Use permutation importance or SHAP for correlated features.
+
+### Why RF Resists Overfitting vs Single Tree
+
+1. **Averaging reduces variance** — individual trees overfit, but their errors are uncorrelated and average to near-zero
+2. **Bagging adds variance in the training data** — each tree never sees the full dataset, making it harder to memorize any specific example
+3. **More trees = better estimate** — adding trees improves stability monotonically (unlike adding depth to a single tree). The cost: compute. No benefit to 10,000 trees vs 500 on typical datasets.
+
+### Key Hyperparameters
+
+| Hyperparameter | Effect | Typical Range |
+|---|---|---|
+| `n_estimators` | Number of trees; more = better until diminishing returns | 100 – 1000 |
+| `max_features` | Features per split; controls tree correlation | `'sqrt'`, `'log2'`, 0.1–0.5 |
+| `max_depth` | Per-tree depth; `None` = fully grown | `None`, 10 – 50 |
+| `min_samples_leaf` | Min samples per leaf | 1 – 20 |
+| `n_jobs` | Parallelism; `-1` uses all cores | `-1` |
+| `oob_score` | Compute OOB accuracy | `True` recommended |
+
+### Pros, Cons, and When to Use
+
+| | |
+|---|---|
+| **Pros** | Robust to overfitting; minimal hyperparameter tuning; built-in OOB validation; handles high dimensions; good for mixed feature types; parallel training |
+| **Cons** | Large memory footprint (stores all trees); slower inference than single tree; less interpretable than single tree; often outperformed by gradient boosting on accuracy |
+
+**When to use:** Strong default for tabular data; when you have limited time for hyperparameter tuning; when inference latency allows batch/offline scoring; when you need reliable feature importances quickly.
+
+**When NOT to use:** Hard real-time inference latency constraints (<1ms); when gradient boosting has a clear accuracy edge that matters for the business outcome.
+
+**Common misconception:** "More trees always overfits more." False — adding trees to a random forest only reduces variance. It cannot increase bias or cause overfitting. The overfitting risk lies in per-tree depth, not tree count.
+
+### Working Code
+
+```python
+#| label: random-forest-sklearn
+#| eval: false
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.inspection import permutation_importance
+from sklearn.metrics import classification_report
+import numpy as np
+import pandas as pd
+
+X, y = make_classification(n_samples=5000, n_features=20, n_informative=10,
+                            n_redundant=5, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Standard random forest — oob_score gives free validation estimate
+rf = RandomForestClassifier(
+    n_estimators=300,
+    max_features='sqrt',
+    min_samples_leaf=2,
+    n_jobs=-1,
+    oob_score=True,
+    random_state=42
+)
+rf.fit(X_train, y_train)
+
+print(f"OOB Score: {rf.oob_score_:.3f}")
+print(f"Test Score: {rf.score(X_test, y_test):.3f}")
+print(classification_report(y_test, rf.predict(X_test)))
+
+# Feature importance comparison: MDI vs permutation
+feature_names = [f"feat_{i}" for i in range(X.shape[1])]
+
+# MDI (impurity-based) — fast but biased toward high cardinality
+mdi_importances = pd.Series(rf.feature_importances_, index=feature_names)
+print("\nTop 5 MDI importances:")
+print(mdi_importances.nlargest(5))
+
+# Permutation importance — slower but unbiased
+perm_result = permutation_importance(rf, X_test, y_test, n_repeats=10,
+                                     n_jobs=-1, random_state=42)
+perm_importances = pd.Series(perm_result.importances_mean, index=feature_names)
+print("\nTop 5 Permutation importances:")
+print(perm_importances.nlargest(5))
+
+# Convergence check: test score vs n_estimators
+from sklearn.ensemble import RandomForestClassifier
+scores = []
+for n in [10, 50, 100, 200, 500]:
+    rf_n = RandomForestClassifier(n_estimators=n, max_features='sqrt',
+                                  n_jobs=-1, random_state=42)
+    rf_n.fit(X_train, y_train)
+    scores.append((n, rf_n.score(X_test, y_test)))
+    print(f"n_estimators={n}: {scores[-1][1]:.3f}")
+```
+
+> ⚠️ **Production Gotcha:** Random forests trained on all features including high-cardinality IDs (user_id, session_id, product_id) will produce meaningless importances and potentially overfit. Always drop ID columns before fitting. Use `ColumnTransformer` or explicit feature filtering in your preprocessing pipeline.
+
+---
+
+## Gradient Boosting / XGBoost / LightGBM
+
+### What It Is
+
+Gradient boosting builds an ensemble of weak learners sequentially, where each new tree corrects the errors of the previous ensemble. Unlike bagging (parallel, independent trees), boosting is sequential and adaptive: each tree focuses on the examples the current model gets wrong.
+
+**Analogy:** A student takes a practice exam. A tutor reviews the wrong answers and creates a new set of practice problems focused specifically on the question types the student missed. The student takes another practice exam on those new problems. Repeat. Each iteration targets the remaining weaknesses. Gradient boosting does this with trees and mathematical residuals.
+
+### Boosting vs Bagging
+
+| | Bagging (Random Forest) | Boosting (Gradient Boosting) |
+|---|---|---|
+| Tree construction | Parallel, independent | Sequential, each depends on previous |
+| Variance/Bias | Reduces variance | Reduces bias (and some variance) |
+| Tree depth | Deep trees | Shallow trees (weak learners) |
+| Overfitting | Hard to overfit | Can overfit with too many rounds |
+| Hyperparameter sensitivity | Low | High |
+
+### Gradient Descent in Function Space
+
+Traditional gradient descent updates parameters to minimize a loss. Gradient boosting instead performs gradient descent in the space of functions. At each round $m$:
+
+1. Compute **pseudo-residuals** $r_i = -\left[\frac{\partial \mathcal{L}(y_i, F(x_i))}{\partial F(x_i)}\right]$ — these are the negative gradient of the loss with respect to the current prediction.
+2. Fit a tree to the pseudo-residuals (not the original targets).
+3. Update $F_m(x) = F_{m-1}(x) + \nu \cdot h_m(x)$ where $\nu$ is the learning rate and $h_m$ is the new tree.
+
+For squared loss, pseudo-residuals equal the raw residuals $y_i - \hat{y}_i$. For log-loss, they equal $y_i - \hat{p}_i$. For Huber loss, they are a clipped version. This generality is why gradient boosting works on any differentiable loss.
+
+### XGBoost: Second-Order Taylor Expansion
+
+XGBoost improves on vanilla gradient boosting with a more principled tree-building objective. It uses a **second-order Taylor expansion** of the loss:
+
+$$\mathcal{L}^{(m)} \approx \sum_i \left[g_i f_m(x_i) + \frac{1}{2} h_i f_m^2(x_i)\right] + \Omega(f_m)$$
+
+where $g_i = \partial \mathcal{L}/\partial \hat{y}_i$ (first derivative, gradient) and $h_i = \partial^2 \mathcal{L}/\partial \hat{y}_i^2$ (second derivative, Hessian). The regularization term $\Omega$ penalizes tree complexity:
+
+$$\Omega(f) = \gamma T + \frac{1}{2}\lambda \sum_{j=1}^T w_j^2$$
+
+where $T$ is the number of leaves and $w_j$ are leaf weights. This means XGBoost prunes entire branches during construction if the gain doesn't exceed $\gamma$. The closed-form optimal leaf weight and split gain are derived analytically, enabling fast exact split finding.
+
+**Additional XGBoost features:**
+- Column (feature) subsampling per tree and per split (reduces correlation, like RF)
+- Row subsampling (`subsample`) — stochastic boosting reduces overfitting
+- Missing value handling built-in: learns optimal direction for NaN at each split
+- Sparsity-aware algorithm: efficient on sparse data (one-hot encoded features)
+
+### LightGBM: Why It's Faster
+
+LightGBM (Microsoft, 2017) introduced three innovations that make it significantly faster than XGBoost on large datasets:
+
+**1. Leaf-wise (best-first) tree growth** instead of level-wise:
+- Standard gradient boosting grows trees level by level (all nodes at depth $d$ before depth $d+1$)
+- LightGBM grows the leaf with the maximum loss reduction at each step
+- Produces deeper, more asymmetric trees with fewer total leaves
+- More accurate per fixed number of leaves, but more prone to overfitting on small data → use `min_data_in_leaf` to control
+
+**2. Gradient-based One-Side Sampling (GOSS):**
+- Keep all large-gradient instances (examples the model is currently wrong about most)
+- Randomly sample small-gradient instances (well-learned examples contribute little information)
+- Reduces data size while preserving the most informative examples
+- Result: significantly fewer data points processed per split without losing accuracy
+
+**3. Exclusive Feature Bundling (EFB):**
+- Many features in sparse datasets are mutually exclusive (never non-zero simultaneously)
+- Bundle mutually exclusive features into a single feature, reducing effective feature dimensionality
+- Enables efficient histogram construction on high-dimensional sparse data
+
+**Practical performance:** LightGBM is typically 3-10x faster than XGBoost at comparable accuracy on large datasets (>100k rows, >100 features). Both are faster than sklearn's GradientBoostingClassifier by a significant margin.
+
+### Key Hyperparameters
+
+| Hyperparameter | Effect | Typical Range |
+|---|---|---|
+| `learning_rate` (eta) | Shrinkage per tree; lower = more trees needed, less overfitting | 0.01 – 0.3 |
+| `n_estimators` | Number of boosting rounds | 100 – 5000 (use early stopping) |
+| `max_depth` | Max tree depth | 3 – 10 (XGB: 6 default; LGB: -1 for leaf-wise) |
+| `num_leaves` | Max leaves (LightGBM) | 31 – 255 |
+| `min_child_weight` | Min sum of hessian in leaf; higher = more conservative | 1 – 20 |
+| `subsample` | Row subsampling fraction per tree | 0.6 – 1.0 |
+| `colsample_bytree` | Feature subsampling per tree | 0.6 – 1.0 |
+| `reg_alpha` (L1) | L1 regularization on leaf weights | 0 – 10 |
+| `reg_lambda` (L2) | L2 regularization on leaf weights | 1 – 10 |
+| `gamma` (XGB) | Min split gain threshold; > 0 prunes aggressively | 0 – 5 |
+| `scale_pos_weight` | Class imbalance ratio | `neg_count / pos_count` |
+
+### Pros, Cons, and When to Use
+
+| | |
+|---|---|
+| **Pros** | State-of-the-art on tabular data; handles missing values natively; built-in regularization; fast inference; feature importance included; early stopping prevents overfitting |
+| **Cons** | Many hyperparameters to tune; sequential training limits parallelism; can overfit with bad hyperparameters; less interpretable than linear models |
+
+**When to use:** Any structured tabular prediction task; Kaggle/competition default; production fraud detection, CTR prediction, churn prediction on tabular data.
+
+**When NOT to use:** Raw text/image without extensive feature engineering; very small datasets (<500 rows) where simpler models generalize better; when model interpretability is mandatory (regulators may reject gradient boosting without SHAP explanations).
+
+**Common misconception:** "Just set `n_estimators=10000` and it won't overfit because of learning rate." False — without `early_stopping_rounds`, gradient boosting will overfit on any finite dataset given enough trees. Always use a validation set with early stopping.
+
+### Working Code
+
+```python
+#| label: gradient-boosting-xgboost-lightgbm
+#| eval: false
+import xgboost as xgb
+import lightgbm as lgb
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+import numpy as np
+
+X, y = make_classification(n_samples=10000, n_features=30, n_informative=15,
+                            weights=[0.9, 0.1], random_state=42)
+
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2,
+                                                   stratify=y, random_state=42)
+
+# ---- XGBoost ----
+dtrain = xgb.DMatrix(X_train, label=y_train)
+dval   = xgb.DMatrix(X_val,   label=y_val)
+
+xgb_params = {
+    'objective':        'binary:logistic',
+    'eval_metric':      'auc',
+    'learning_rate':    0.05,
+    'max_depth':        6,
+    'subsample':        0.8,
+    'colsample_bytree': 0.8,
+    'min_child_weight': 3,
+    'reg_lambda':       1.0,
+    'scale_pos_weight': int((y == 0).sum() / (y == 1).sum()),  # handles imbalance
+    'seed':             42,
+}
+
+evals_result = {}
+xgb_model = xgb.train(
+    xgb_params,
+    dtrain,
+    num_boost_round=2000,
+    evals=[(dval, 'val')],
+    early_stopping_rounds=50,    # stops when val AUC stops improving
+    verbose_eval=100,
+    evals_result=evals_result,
+)
+
+val_preds_xgb = xgb_model.predict(dval)
+print(f"XGBoost Val ROC-AUC: {roc_auc_score(y_val, val_preds_xgb):.4f}")
+print(f"Best iteration: {xgb_model.best_iteration}")
+
+# ---- LightGBM ----
+lgb_train = lgb.Dataset(X_train, label=y_train)
+lgb_val   = lgb.Dataset(X_val,   label=y_val, reference=lgb_train)
+
+lgb_params = {
+    'objective':        'binary',
+    'metric':           'auc',
+    'learning_rate':    0.05,
+    'num_leaves':       63,
+    'min_data_in_leaf': 20,
+    'feature_fraction': 0.8,
+    'bagging_fraction': 0.8,
+    'bagging_freq':     5,
+    'lambda_l2':        1.0,
+    'is_unbalance':     True,   # handles class imbalance
+    'verbose':         -1,
+    'seed':             42,
+}
+
+callbacks = [lgb.early_stopping(50), lgb.log_evaluation(100)]
+lgb_model = lgb.train(
+    lgb_params,
+    lgb_train,
+    num_boost_round=2000,
+    valid_sets=[lgb_val],
+    callbacks=callbacks,
+)
+
+val_preds_lgb = lgb_model.predict(X_val)
+print(f"LightGBM Val ROC-AUC: {roc_auc_score(y_val, val_preds_lgb):.4f}")
+print(f"Best iteration: {lgb_model.best_iteration}")
+
+# Feature importance
+import pandas as pd
+lgb_importance = pd.DataFrame({
+    'feature': [f'feat_{i}' for i in range(X.shape[1])],
+    'importance_gain': lgb_model.feature_importance(importance_type='gain')
+}).sort_values('importance_gain', ascending=False)
+print(lgb_importance.head(10))
+```
+
+> ⚠️ **Production Gotcha:** Never set `n_estimators` (sklearn API) or `num_boost_round` to a fixed number without early stopping when tuning. The optimal number of rounds changes with every change in `learning_rate`, `max_depth`, or data size. Always use `early_stopping_rounds` with a held-out validation set. In production serving, serialize the model at `best_iteration` only — extra rounds add latency with no benefit.
+
+---
+
+## Support Vector Machines
+
+### What It Is
+
+A Support Vector Machine finds the hyperplane that maximizes the margin between two classes. The margin is the distance from the hyperplane to the nearest training points (support vectors) on each side. SVM is a maximum-margin classifier — it is not just finding any separating hyperplane, but the one with the widest possible buffer zone.
+
+**Analogy:** You are drawing a road between two regions on a map. You want the road to have the widest possible shoulders — equal distance from the nearest buildings on each side. The buildings closest to the road are the "support vectors." Buildings far from the road don't affect where the road goes.
+
+### Maximum Margin Intuition
+
+For a binary classification problem with labels $y_i \in \{-1, +1\}$, SVM solves:
+
+$$\min_{\mathbf{w}, b} \frac{1}{2}\|\mathbf{w}\|^2 \quad \text{subject to} \quad y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1 \; \forall i$$
+
+The margin is $\frac{2}{\|\mathbf{w}\|}$. Minimizing $\|\mathbf{w}\|^2$ maximizes the margin. Only the support vectors — the points satisfying $y_i(\mathbf{w}^\top \mathbf{x}_i + b) = 1$ — affect the solution. All other points can be removed and the hyperplane doesn't change.
+
+This is a quadratic programming problem. The dual formulation (via Lagrange multipliers) reveals that the solution depends only on dot products between training points: $f(x) = \text{sign}\left(\sum_i \alpha_i y_i \mathbf{x}_i^\top \mathbf{x} + b\right)$, enabling the kernel trick.
+
+### Support Vectors
+
+Support vectors are the training points closest to the decision boundary — they lie on the margin. Critically, they are the only points that define the hyperplane. This has two implications:
+
+1. **Memory efficiency:** At inference, only the support vectors need to be stored and compared, not all training data
+2. **Sensitivity to outliers:** Because the margin is defined by the closest points, a single outlier near the boundary can completely change the hyperplane — this is the motivation for soft margin
+
+### Soft Margin: The C Parameter
+
+Real data is never perfectly linearly separable. The soft-margin SVM introduces slack variables $\xi_i \geq 0$ that allow some misclassification:
+
+$$\min_{\mathbf{w}, b, \boldsymbol{\xi}} \frac{1}{2}\|\mathbf{w}\|^2 + C\sum_i \xi_i \quad \text{subject to} \quad y_i(\mathbf{w}^\top \mathbf{x}_i + b) \geq 1 - \xi_i$$
+
+**C controls the bias-variance tradeoff:**
+- Large C: Minimize misclassifications even at the cost of a narrow margin → low bias, high variance (overfitting)
+- Small C: Allow more misclassifications for a wider, more generalizable margin → higher bias, lower variance
+
+This is the most important hyperparameter in SVM. Tune with cross-validation on a log scale.
+
+### Kernel Trick
+
+SVMs in the dual formulation only need dot products $\langle \mathbf{x}_i, \mathbf{x}_j \rangle$. The kernel trick replaces these with a kernel function $K(\mathbf{x}_i, \mathbf{x}_j) = \phi(\mathbf{x}_i)^\top \phi(\mathbf{x}_j)$, where $\phi$ maps to a higher-dimensional feature space — without ever explicitly computing $\phi$. This allows learning non-linear boundaries in the original space.
+
+**Common kernels:**
+- **Linear:** $K(x_i, x_j) = x_i^\top x_j$ — no transformation; fast; for linearly separable data
+- **RBF (Gaussian):** $K(x_i, x_j) = \exp(-\gamma \|x_i - x_j\|^2)$ — maps to infinite-dimensional space; can learn any smooth boundary; most widely used
+- **Polynomial:** $K(x_i, x_j) = (x_i^\top x_j + r)^d$ — degree-$d$ polynomial boundary; useful when feature interactions matter
+- **Sigmoid:** $K(x_i, x_j) = \tanh(\alpha x_i^\top x_j + c)$ — similar to neural network activation; rarely preferred
+
+The **RBF kernel** parameter $\gamma$ controls the "width" of influence of each training point:
+- Large $\gamma$: narrow influence, complex boundary, high variance
+- Small $\gamma$: wide influence, smoother boundary, higher bias
+
+### Key Hyperparameters
+
+| Hyperparameter | Effect | Typical Range |
+|---|---|---|
+| `C` | Margin width vs misclassification trade-off | 0.001 – 1000 (log scale) |
+| `kernel` | Feature transformation type | `'rbf'`, `'linear'`, `'poly'` |
+| `gamma` | RBF kernel width; `'scale'` = 1/(n_features × X.var()) | `'scale'`, `'auto'`, 0.001 – 10 |
+| `degree` | Polynomial kernel degree | 2 – 5 |
+| `class_weight` | Class imbalance handling | `'balanced'` |
+
+### When SVMs Beat Gradient Boosting
+
+SVMs retain advantages in specific regimes:
+
+- **Small, high-dimensional datasets** (e.g., $n < 10{,}000$, $p > n$): text classification, bioinformatics (gene expression), document classification with TF-IDF features. SVMs have strong theoretical generalization bounds and are effective when samples are sparse in high-dimensional space.
+- **Well-defined margin problems**: when classes are cleanly separable with a thin margin, SVMs find the globally optimal boundary; gradient boosting may overfit the irrelevant majority region.
+- **Kernel functions encoding domain knowledge**: custom kernels for molecular similarity, string kernels for text — gradient boosting needs explicit feature engineering for the same effect.
+
+In practice, gradient boosting (XGBoost/LightGBM) dominates most tabular tasks with > 10,000 rows. SVMs remain competitive for NLP before transformer models, bioinformatics, and specialized classification tasks with small $n$.
+
+### Pros, Cons, and When to Use
+
+| | |
+|---|---|
+| **Pros** | Effective in high-dimensional spaces; strong generalization with small datasets; kernel trick handles non-linearity; maximum-margin principle is theoretically well-founded |
+| **Cons** | Does not scale to large $n$ (training is $O(n^2)$ to $O(n^3)$ with kernel); no native probability outputs (requires Platt scaling); sensitive to feature scaling; difficult to interpret; slow hyperparameter tuning |
+
+**When to use:** Text classification with TF-IDF features; bioinformatics; small, clean, high-dimensional datasets; when you need a theoretically justified maximum-margin classifier.
+
+**When NOT to use:** $n > 100{,}000$ rows (too slow); unscaled raw features (SVMs require StandardScaler); when you need native probability calibration without extra post-processing.
+
+**Common misconception:** "SVM needs the kernel trick for good performance." For linearly separable problems (e.g., text with TF-IDF), a linear SVM is often as good or better than RBF and is dramatically faster (scales linearly with $n$ using `LinearSVC`).
+
+### Working Code
+
+```python
+#| label: svm-sklearn
+#| eval: false
+from sklearn.svm import SVC, LinearSVC
+from sklearn.datasets import make_classification, make_moons
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.pipeline import Pipeline
+import numpy as np
+
+# Example 1: Non-linear data — RBF kernel SVM
+X, y = make_moons(n_samples=1000, noise=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# SVM requires feature scaling — wrap in pipeline to prevent data leakage
+svm_pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('svm', SVC(kernel='rbf', C=1.0, gamma='scale',
+                probability=True, random_state=42))
+])
+svm_pipeline.fit(X_train, y_train)
+
+y_proba = svm_pipeline.predict_proba(X_test)[:, 1]
+print(f"RBF SVM ROC-AUC: {roc_auc_score(y_test, y_proba):.3f}")
+print(classification_report(y_test, svm_pipeline.predict(X_test)))
+
+# Hyperparameter tuning: C and gamma — grid on log scale
+param_grid = {
+    'svm__C':     [0.1, 1, 10, 100],
+    'svm__gamma': [0.001, 0.01, 0.1, 1, 'scale'],
+}
+grid_search = GridSearchCV(svm_pipeline, param_grid, cv=5,
+                           scoring='roc_auc', n_jobs=-1)
+grid_search.fit(X_train, y_train)
+print(f"Best params: {grid_search.best_params_}")
+print(f"Best CV AUC: {grid_search.best_score_:.3f}")
+
+# Example 2: High-dimensional text-like sparse data — LinearSVC is much faster
+from sklearn.datasets import make_classification
+X_hd, y_hd = make_classification(n_samples=5000, n_features=500,
+                                  n_informative=50, random_state=42)
+X_tr, X_te, y_tr, y_te = train_test_split(X_hd, y_hd, test_size=0.2, random_state=42)
+
+linear_svm = Pipeline([
+    ('scaler', StandardScaler(with_mean=False)),  # with_mean=False for sparse
+    ('svm', LinearSVC(C=1.0, max_iter=5000, random_state=42))
+])
+linear_svm.fit(X_tr, y_tr)
+print(f"LinearSVC (high-dim) accuracy: {linear_svm.score(X_te, y_te):.3f}")
+
+# Support vector count — tells you how "tight" the margin is
+svm_fitted = svm_pipeline.named_steps['svm']
+print(f"Number of support vectors: {svm_fitted.n_support_}")
+```
+
+> ⚠️ **Production Gotcha:** `SVC(probability=True)` uses Platt scaling internally — a logistic regression fit on the SVM decision function using 5-fold cross-validation. This makes training ~5x slower and can produce poorly calibrated probabilities near 0 and 1. For large-scale production probability estimation, use logistic regression or gradient boosting instead. Reserve SVMs with probability for small-data scenarios where the added cost is acceptable.
+
+---
+
+## Algorithm Comparison
+
+| Algorithm | Interpretable | Handles Non-linearity | Training Speed | Inference Speed | Handles Missing Data | Best For |
+|---|---|---|---|---|---|---|
+| Linear Regression | High (coefs) | No (raw features) | Very fast | Very fast | No (impute first) | Continuous targets, regulatory models |
+| Logistic Regression | High (log-odds) | No (raw features) | Fast | Very fast | No (impute first) | Binary classification, calibrated probs |
+| Decision Tree | Very high (rules) | Yes | Fast | Very fast | No | Interpretable rules, baselines |
+| Random Forest | Low (ensemble) | Yes | Moderate (parallel) | Moderate | No | Tabular, minimal tuning, robust baseline |
+| XGBoost / LightGBM | Low (SHAP helps) | Yes | Fast (LGB fastest) | Fast | Yes (native) | Best tabular accuracy, production ML |
+| SVM (RBF) | Very low | Yes (kernel) | Slow ($O(n^{2-3})$) | Slow (kernel eval) | No | Small high-dim data, text |
+| SVM (Linear) | Low | No | Fast | Very fast | No | High-dim sparse, text classification |
+
+---
+
+## Cheat Sheet
+
+- **OLS normal equations:** $\hat{\beta} = (\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{X}^\top \mathbf{y}$ — fails when features are collinear or $p > n$.
+- **Ridge adds $\lambda\mathbf{I}$** to $\mathbf{X}^\top\mathbf{X}$, making it always invertible and shrinking coefficients.
+- **Lasso drives coefficients to zero** because the L1 ball has corners at the coordinate axes — automatic feature selection.
+- **R² always increases with more features**; use adjusted R² or out-of-sample RMSE to compare models.
+- **VIF > 10** signals multicollinearity; affects interpretability, not prediction.
+- **Logistic regression is a linear classifier** — decision boundary is a hyperplane, not a curve.
+- **Sigmoid output is a log-odds in linear form**: $\log(p/(1-p)) = \mathbf{w}^\top\mathbf{x} + b$.
+- **Exponentiate logistic regression coefficients** to get odds ratios: $e^{w_j}$ = multiplicative change in odds per unit of feature $j$.
+- **Always use `class_weight='balanced'`** or `scale_pos_weight` for imbalanced classification.
+- **Gini ≈ entropy** in practice — focus hyperparameter search on `max_depth` and `min_samples_leaf`.
+- **Unpruned decision trees achieve 100% training accuracy** — always a sign of overfitting.
+- **Random forest feature importance is biased** toward high-cardinality features — verify with permutation importance or SHAP.
+- **OOB score ≈ cross-validation accuracy** for random forests — use `oob_score=True` as a cheap sanity check.
+- **Adding trees to a random forest never overfits** — only increases compute and variance reduction.
+- **Gradient boosting pseudo-residuals = negative gradient** of the loss with respect to current predictions.
+- **XGBoost uses second-order gradients (Hessian)** for more accurate split gain estimates.
+- **LightGBM is leaf-wise, XGBoost is level-wise** — LightGBM is faster and often more accurate on large data.
+- **GOSS in LightGBM**: keep all high-gradient samples, subsample low-gradient samples — preserves information density.
+- **Always use `early_stopping_rounds`** with gradient boosting — fixed `n_estimators` without early stopping will overfit.
+- **Start with `learning_rate=0.05`** and let early stopping find the right `n_estimators`; tune other params after.
+- **SVM margin is defined by support vectors only** — all other training points are irrelevant to the solution.
+- **Large C in SVM**: narrow margin, fits training data closely, risk of overfitting.
+- **Small C in SVM**: wide margin, more misclassifications allowed, more regularized.
+- **Large gamma (RBF)**: each point has narrow influence — complex boundary, risk of overfitting.
+- **SVM requires StandardScaler** — without it, features with larger scales dominate the margin calculation.
+- **LinearSVC is $O(n)$ for text** — prefer it over SVC(kernel='linear') for high-dimensional sparse data.
+- **Gradient boosting beats random forest on most tabular tasks** with sufficient hyperparameter tuning.
+- **Start with LightGBM for any new structured data problem** — best default accuracy/speed tradeoff.
+- **For interpretability under regulatory pressure**: use logistic regression or decision tree, supplement with SHAP.
+- **Rule of thumb for feature importance verification**: if importance changes dramatically on retraining, you have correlated or unstable features.
+
+---
+
+## Interview Questions
+
+### Entry Level
+
+::: {.callout-tip title="Entry Level"}
+
+**Q1. What is the difference between linear regression and logistic regression?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**Weak answer:** "Linear regression predicts continuous values, logistic regression predicts classes."
+
+**Strong answer:** Linear regression models a continuous target variable as a linear combination of features: $\hat{y} = \mathbf{w}^\top\mathbf{x} + b$. It minimizes MSE and assumes the relationship between features and target is linear with normally distributed residuals. It can output any real number.
+
+Logistic regression models the probability of a binary class label. It applies the sigmoid function to the same linear combination: $\hat{p} = \sigma(\mathbf{w}^\top\mathbf{x} + b)$, constraining output to (0, 1). It minimizes cross-entropy loss (equivalent to maximum likelihood estimation). The decision boundary is still a hyperplane — it is a linear classifier applied to classification, not regression.
+
+The key distinction beyond "continuous vs. discrete output" is the loss function and the meaning of the output: linear regression gives you a prediction of a quantity; logistic regression gives you a calibrated probability of class membership. Getting this nuance right is what distinguishes a candidate who understands the math from one who memorized the sklearn API.
+:::
+
+**Q2. Why do we need regularization in linear models? What's the difference between L1 and L2?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**Weak answer:** "Regularization prevents overfitting by adding a penalty term."
+
+**Strong answer:** Regularization prevents overfitting when the model is too flexible relative to the training data — this happens when features outnumber samples, when features are correlated, or when the dataset is noisy. Both penalties shrink coefficients toward zero, reducing model complexity and variance at the cost of some bias.
+
+L2 (Ridge) adds $\lambda\sum\beta_j^2$ to the loss. It penalizes large coefficients by shrinking all of them proportionally, but never to exactly zero. The quadratic penalty has a smooth gradient everywhere, enabling a closed-form solution. L2 is preferred when all features are expected to contribute — it stabilizes multicollinear estimates by adding $\lambda\mathbf{I}$ to the normal equations matrix, making it invertible.
+
+L1 (Lasso) adds $\lambda\sum|\beta_j|$ to the loss. The absolute value creates a non-smooth penalty at zero, which creates a mathematical incentive for the optimizer to drive coefficients exactly to zero. This produces sparse solutions — automatic feature selection. It requires coordinate descent because the gradient of $|\beta_j|$ is undefined at zero. Preferred when you believe many features are irrelevant.
+
+Concrete difference: run both on a dataset with 20 features, 10 of which are pure noise. Lasso will zero out roughly those 10 noise features. Ridge will shrink all 20 features but keep all non-zero.
+:::
+
+**Q3. What is the Gini impurity and how is it used in decision trees?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Gini impurity measures how often a randomly chosen element from a node would be incorrectly classified if it were labeled according to the class distribution in that node. Formally: $G = 1 - \sum_k p_k^2$, where $p_k$ is the fraction of samples in class $k$.
+
+At each split candidate, the decision tree computes the weighted Gini impurity of the two resulting child nodes: $G_{split} = \frac{n_{left}}{n} G_{left} + \frac{n_{right}}{n} G_{right}$. The split that minimizes this weighted Gini (equivalently, maximizes Gini gain) is chosen. A Gini of 0 means a perfectly pure node — all one class. A Gini of 0.5 (binary classification) means maximally impure — 50/50 class distribution.
+
+The key fact for interviews: Gini and entropy produce nearly identical results in practice. The practical differences that actually matter are tree depth controls (`max_depth`, `min_samples_leaf`), not the choice of splitting criterion.
+:::
+
+**Q4. What is bagging, and how does it improve model performance?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Bagging (Bootstrap Aggregating) is an ensemble technique that trains multiple instances of the same model on different bootstrap samples of the training data, then aggregates their predictions. A bootstrap sample is a random sample of the training data with replacement — the same size as the original, but with some examples appearing multiple times and others excluded.
+
+Bagging reduces variance without increasing bias. High-variance models (like deep decision trees) give very different predictions on different training sets. By training many models on different samples and averaging their predictions, the errors from individual models cancel out — provided the errors are uncorrelated. For classification, bagging takes the majority vote; for regression, it takes the mean.
+
+Random forests extend bagging by also randomly subsampling features at each split, which further decorrelates the individual trees and makes averaging more effective. The out-of-bag examples (the ~36.8% of samples excluded from each bootstrap) provide a free, unbiased validation estimate without a separate held-out set.
+:::
+
+**Q5. What is the kernel trick in SVMs?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The kernel trick allows SVMs to learn non-linear decision boundaries without ever explicitly computing the high-dimensional feature transformation.
+
+SVMs in their dual form make predictions as: $f(x) = \sum_i \alpha_i y_i K(x_i, x) + b$, where $K(x_i, x) = \phi(x_i)^\top\phi(x)$ is the kernel function — the dot product in the transformed feature space. The key insight: you never need to compute $\phi(x)$ explicitly. You only need a function $K$ that computes the dot product in the transformed space.
+
+For RBF: $K(x_i, x_j) = \exp(-\gamma\|x_i - x_j\|^2)$. This corresponds to an infinite-dimensional feature space, but we compute it with a single exponential operation. The SVM can therefore learn boundaries of arbitrary smoothness without the memory cost of explicitly storing infinite-dimensional feature vectors.
+
+Practical implication: for non-linear data, use `SVC(kernel='rbf')`. For text classification with TF-IDF (already high-dimensional and effectively linear), use `LinearSVC` — no kernel needed, dramatically faster.
+:::
+
+**Q6. When would you choose random forest over a single decision tree?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Almost always. A single decision tree has high variance — small changes in training data produce very different tree structures. It is prone to overfitting (an unpruned tree achieves 100% training accuracy by memorizing noise) and its accuracy is generally well below that of ensemble methods.
+
+A random forest reduces variance dramatically by training hundreds of decorrelated trees and averaging their predictions. Individual trees still overfit, but their overfitting errors are in different directions, so they largely cancel when averaged. The random feature subsampling ensures trees disagree usefully rather than all making the same errors on the same hard examples.
+
+The only scenario to prefer a single decision tree is when interpretability is paramount — a single tree with depth ≤ 5 can be printed, understood, and audited by non-technical stakeholders. For regulatory contexts (some credit scoring, medical decision support) where "explain every prediction" is a hard requirement, a simple decision tree may be the only option even at significant accuracy cost.
+:::
+
+**Q7. What is overfitting, and how do you detect it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Overfitting occurs when a model learns the noise and idiosyncrasies of the training data so precisely that it fails to generalize to new examples. The model has high training accuracy but significantly lower validation or test accuracy.
+
+Detection methods: (1) **Train-test gap** — large difference between training and test metrics (e.g., training accuracy 97%, test accuracy 72%); (2) **Learning curves** — plot training and validation loss vs. number of training examples; an overfit model shows low training loss and high validation loss that don't converge; (3) **Cross-validation** — high variance across folds indicates the model is sensitive to which specific examples it saw; (4) **Residual analysis** (regression) — residuals that show systematic patterns on training data but random scatter on held-out data.
+
+Solutions: regularization (L1/L2), reduce model complexity (fewer features, shallower trees), increase training data, use dropout (neural networks), or switch to inherently lower-variance models (e.g., random forest instead of single tree, logistic regression instead of deep polynomial regression).
+:::
+:::
+
+---
+
+### Mid Level
+
+::: {.callout-tip title="Mid Level"}
+
+**Q1. You're training an XGBoost model for churn prediction. Walk me through how you would set up the training pipeline, select hyperparameters, and validate the model.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Setup:** Split data into train/validation/test (70/15/15) with stratification on the churn label. Keep the test set completely locked until final evaluation — all hyperparameter decisions use train+validation only.
+
+**Preprocessing:** Handle missing values — XGBoost handles them natively, but be explicit about encoding categorical features (target encoding or `enable_categorical=True`). Encode the binary churn label as 0/1. Compute `scale_pos_weight = (n_non_churn / n_churn)` for class imbalance.
+
+**Baseline:** Start with `n_estimators=2000`, `learning_rate=0.05`, `early_stopping_rounds=50`. Run on validation set. This gives you a solid reference point and an optimal number of rounds without tuning.
+
+**Hyperparameter search:** Use `Optuna` or `RandomizedSearchCV` on a log-scale search space: `max_depth` in [3,8], `subsample` in [0.6, 1.0], `colsample_bytree` in [0.6, 1.0], `min_child_weight` in [1, 10], `reg_lambda` in [0.1, 10]. Use 5-fold CV with early stopping inside each fold. 50–100 trials of random/Bayesian search is sufficient.
+
+**Metrics:** For churn prediction, ROC-AUC is the primary metric (model discrimination). Report also precision-recall AUC (better for imbalanced classes), and at the operating threshold: precision, recall, F1. Present the precision-recall curve to the business so they can choose the threshold that matches their cost model (cost of missed churn vs. cost of false intervention).
+
+**Validation:** Final test set evaluation with the locked model. Run SHAP value analysis on test set for feature importance and model explanation. Check for data leakage (features computed using future information, e.g., last month's support tickets when predicting this month's churn).
+
+**Follow-up question:** "How do you handle the fact that churn labels may be noisy (customers who cancelled but were actually returning seasonal users)?"
+
+**Answer:** Analyze the label carefully — define churn precisely (cancelled subscription with no return in N days vs. reduced engagement). For noisy labels, use label smoothing, or treat it as a learning-with-label-noise problem. Build a holdout of "confirmed churners" with clean labels and use it as your primary evaluation set.
+:::
+
+**Q2. Explain gradient boosting. How does it differ from random forest algorithmically?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Random forest trains all trees in parallel on bootstrapped subsets of data. Each tree is independent — a tree at round 100 has no knowledge of what tree at round 50 learned. The ensemble reduces variance by averaging decorrelated high-variance models.
+
+Gradient boosting trains trees sequentially, where each tree explicitly targets the errors of the current ensemble. After fitting the first tree $F_1(x)$, compute residuals $r_i = y_i - F_1(x_i)$. Fit the next tree $h_2(x)$ to those residuals — not the original targets. Update $F_2(x) = F_1(x) + \nu h_2(x)$. Repeat until convergence or early stopping.
+
+The "gradient" in gradient boosting: for a general loss $\mathcal{L}$, the pseudo-residuals $r_i = -\partial\mathcal{L}/\partial F(x_i)$ are the negative gradient of the loss with respect to the current predictions. Fitting a tree to these gradients is gradient descent in function space — each tree is a step in the direction that reduces the loss fastest.
+
+This sequential correction is why gradient boosting reduces bias (not just variance). A single tree is a high-bias model; each iteration adds a tree targeting the bias remaining. The tradeoff: overfitting risk if you run too many iterations without regularization. `learning_rate` scales each tree's contribution, preventing large individual steps that overfit. `early_stopping` monitors validation loss to stop before overfitting begins.
+
+**Code follow-up:**
+```python
+# Verify gradient boosting is targeting residuals:
+import lightgbm as lgb
+from sklearn.datasets import make_regression
+import numpy as np
+
+X, y = make_regression(n_samples=1000, n_features=10, random_state=42)
+model = lgb.LGBMRegressor(n_estimators=100, learning_rate=0.1)
+model.fit(X, y)
+
+# Predictions improve monotonically as rounds increase
+staged_preds = [model.predict(X, num_iteration=i) for i in range(1, 20)]
+for i, p in enumerate(staged_preds):
+    print(f"Round {i+1}: MSE = {np.mean((y - p)**2):.2f}")
+```
+:::
+
+**Q3. How does LightGBM achieve faster training than XGBoost on large datasets?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Three innovations work together:
+
+**1. Leaf-wise vs. level-wise growth.** XGBoost expands all nodes at a given depth level before going deeper — breadth-first. LightGBM always expands the single leaf with the highest loss reduction — best-first. For a fixed number of leaves, leaf-wise typically produces lower loss because it focuses capacity where it matters most. Fewer leaves are wasted on low-gain splits.
+
+**2. GOSS (Gradient-based One-Side Sampling).** Training examples with small gradient magnitude contribute little to the tree-building objective — the model already explains them well. LightGBM keeps all high-gradient instances (the "hard" examples) and randomly downsamples low-gradient instances. With weights to compensate for the downsampling, this gives nearly identical split gain estimates using a fraction of the data. On a 10 million row dataset, this can reduce effective training data by 80% with minimal accuracy loss.
+
+**3. EFB (Exclusive Feature Bundling).** In one-hot-encoded or sparse data, many features are mutually exclusive (only one is non-zero at a time). EFB identifies these bundles and creates a single dense feature encoding the bundle, reducing feature count from thousands to hundreds without information loss.
+
+**Practical upshot:** On 1M rows with 200 features, LightGBM typically trains 5-10x faster than XGBoost at comparable accuracy. For less than 10k rows, both are fast enough that the difference is irrelevant — focus on accuracy hyperparameters instead.
+
+**When to prefer XGBoost:** Exact split finding (not histogram-based) is XGBoost's default and can be marginally more accurate on very small datasets. Also, XGBoost's GPU implementation (`tree_method='gpu_hist'`) is more mature.
+:::
+
+**Q4. You have a random forest model in production. After retraining on new data, the top feature importances changed dramatically. What do you investigate?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a common production debugging scenario. I'd investigate in this order:
+
+**1. Feature correlation:** If two correlated features (A and B) were both important, the forest may switch which one it uses as the primary splitter depending on small changes in training data. MDI importance splits credit between correlated features arbitrarily. Check if the new "top features" are correlated with the old ones — correlation doesn't mean the model is wrong, just that importance is distributed differently between correlated signals.
+
+**2. Data distribution shift:** Did the new training data have a different distribution? Plot the feature distributions (histograms, quantiles) for old vs new training data. If a previously important feature now has near-zero variance in the new data, it will correctly appear less important.
+
+**3. Target distribution shift:** Did the base rate or the relationships between features and target change? This is especially common in fraud, ad click, and financial data. Plot feature-target correlations across time.
+
+**4. Data leakage or preprocessing bug:** Did a new feature get added that leaks the target? A feature with unrealistically high importance on training but poor test performance is a leakage red flag.
+
+**5. Random seed / bootstrap variance:** Rerun training multiple times with different seeds. If importance rankings are highly variable across seeds, your features may be weakly informative and bootstrapping is capturing noise. Use more trees (`n_estimators > 500`) to stabilize estimates.
+
+**Final check:** Compare MDI importance vs. permutation importance on a held-out test set. If permutation importance shows a different pattern than MDI, permutation importance is more reliable.
+:::
+
+**Q5. When would you use SVM over gradient boosting for a classification problem?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Practical cases where I'd consider SVM:
+
+**1. Small, high-dimensional data (n << p):** Gene expression datasets ($n$ = 200 patients, $p$ = 10,000 genes), NLP before transformers with TF-IDF features. SVMs have tight generalization bounds in this regime; gradient boosting will overfit or build trees on noise features.
+
+**2. Sparse feature spaces:** Text classification with bag-of-words or TF-IDF. LinearSVC is extremely fast on sparse matrices via `liblinear`. XGBoost and LightGBM handle sparse data but are not as natively optimized for bag-of-words input.
+
+**3. When you have domain-specific kernels:** If you can define a meaningful similarity function between samples (molecular fingerprints, protein sequences, graph structures), SVMs can directly use that similarity as a kernel. Gradient boosting requires you to engineer explicit features.
+
+**In practice:** I would always run a logistic regression baseline first. If logistic regression and gradient boosting are already close in accuracy, adding SVM rarely improves things enough to justify the slower hyperparameter tuning. SVMs are not in my default go-to set for tabular data with $n > 50{,}000$.
+:::
+
+**Q6. How do you handle class imbalance in a binary classifier? Walk through multiple strategies.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Understand the problem first.** Is the imbalance reflecting the real-world distribution (e.g., fraud is genuinely rare)? Then you want a model calibrated to that distribution — don't resample to 50/50 and then apply that model to a world that is 0.1% positive.
+
+**Strategy 1 — Cost-sensitive learning.** Most algorithms support `class_weight='balanced'` or `scale_pos_weight`. This upweights minority class errors in the loss function. For gradient boosting: `scale_pos_weight = n_negative / n_positive`. Clean, no data modification, generally the first thing to try.
+
+**Strategy 2 — Threshold adjustment.** Train on the true distribution, then shift the decision threshold from 0.5 to match your cost model. If missing a positive costs 10x more than a false positive, you want higher recall even at precision cost. Plot precision-recall curve, pick the operating point that matches the business tradeoff.
+
+**Strategy 3 — Oversampling (SMOTE).** Synthesize new minority class samples by interpolating between existing minority samples in feature space. Reduces overfitting vs naive duplication. Use `imbalanced-learn` library. Caution: always apply SMOTE inside the cross-validation fold (fit on training fold, evaluate on untouched validation fold).
+
+**Strategy 4 — Undersampling.** Randomly remove majority class samples. Loses information — only useful when dataset is very large and you can afford to discard majority examples.
+
+**Strategy 5 — Anomaly detection framing.** For extreme imbalance (1:10,000+), consider framing as anomaly detection: train an isolation forest or autoencoder on majority class, flag minority class as anomalies. No positive labels needed.
+
+**Metric choice:** Accuracy is useless with severe imbalance. Use ROC-AUC for discrimination ability, PR-AUC for precision-recall tradeoff, and F1 or F-beta (with beta weighting precision vs recall per your business case) for binary decisions.
+:::
+:::
+
+---
+
+### Senior Level
+
+::: {.callout-tip title="Senior Level"}
+
+**Q1. Walk me through how XGBoost builds trees differently from a random forest. Be precise.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** A senior candidate explains both the algorithmic differences and the practical implications — when each wins, and why. They mention second-order gradients and regularized objectives, not just "sequential vs parallel."
+
+Random forest builds $T$ independent trees, each on a bootstrapped sample of data, each considering $\sqrt{p}$ features per split. Trees are fully grown (or pruned with hyperparameters). Predictions are averaged. The goal is reducing variance through decorrelated aggregation.
+
+XGBoost builds trees sequentially. At round $m$, it computes the gradient $g_i = \partial \mathcal{L}/\partial \hat{y}_i^{(m-1)}$ and Hessian $h_i = \partial^2 \mathcal{L}/\partial (\hat{y}_i^{(m-1)})^2$ of the loss for every training example. The new tree is fit to minimize the second-order Taylor approximation of the total loss:
+
+$$\mathcal{L}^{(m)} \approx \sum_i [g_i f_m(x_i) + \frac{1}{2}h_i f_m^2(x_i)] + \gamma T + \frac{1}{2}\lambda\sum_j w_j^2$$
+
+For each candidate split, XGBoost computes the exact gain analytically: $\text{Gain} = \frac{1}{2}\left[\frac{G_L^2}{H_L + \lambda} + \frac{G_R^2}{H_R + \lambda} - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda}\right] - \gamma$. If gain $< 0$, the split is pruned immediately. This is fundamentally different from random forest splitting criteria — XGBoost evaluates each split against a regularized objective rather than raw impurity.
+
+The Hessian $h_i$ weights each sample's contribution to split gain. For squared loss, $h_i = 1$ (all samples equal weight). For log-loss (classification), $h_i = \hat{p}_i(1-\hat{p}_i)$ — samples near the decision boundary (uncertainty) get higher weight in split selection. This is why XGBoost often builds more accurate boundaries near the decision surface.
+
+**Practical difference:** XGBoost reduces bias through sequential correction; random forest reduces variance through averaging. On most tabular tasks, bias reduction wins — XGBoost outperforms. But random forest is more stable with minimal tuning and harder to overfit.
+
+> ⚠️ **Common Mistake:** Saying XGBoost is "just boosted trees" without explaining the second-order approximation and regularized objective. That's the core innovation that separates XGBoost from earlier gradient boosting implementations like sklearn's `GradientBoostingClassifier`.
+:::
+
+**Q2. You have 100k samples and 500 features. Which model do you start with and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** A senior candidate answers with a decision process, not a single algorithm. They identify that the answer depends on the target variable type, feature characteristics, and business requirements — then commit to a concrete recommendation.
+
+**My default starting point: LightGBM.** At 100k samples and 500 features, this is the sweet spot where gradient boosting consistently outperforms. My reasoning:
+
+**Why not start with simpler models:** Logistic/linear regression would require significant feature engineering (handling non-linearity, interactions) and would struggle with 500 potentially correlated features without careful regularization. A random forest would give a decent baseline but consistently loses to gradient boosting with even modest tuning.
+
+**Why LightGBM specifically:** 100k rows with 500 features trains in under 60 seconds. Built-in handling of missing values. Native categorical support (`enable_categorical=True`) avoids one-hot explosion. GOSS and EFB work well at this scale. `early_stopping_rounds` gives automatic convergence. I can have a solid baseline in under 2 hours including feature importance analysis.
+
+**Feature assessment first:** With 500 features, I'd first check:
+- Are any features high-cardinality IDs? Drop them or target-encode.
+- Are features sparse (many zeros)? LightGBM handles this well.
+- Are features correlated (VIF)? LightGBM's column subsampling handles this; I'll also run permutation importance to surface correlated redundancy.
+- Missing value percentage per feature? LightGBM handles natively; document the pattern.
+
+**First LightGBM run setup:**
+```python
+model = lgb.LGBMClassifier(
+    n_estimators=5000,
+    learning_rate=0.05,
+    num_leaves=63,
+    min_data_in_leaf=20,
+    feature_fraction=0.8,
+    bagging_fraction=0.8,
+    bagging_freq=5,
+    is_unbalance=True,  # if imbalanced
+    n_jobs=-1
+)
+model.fit(X_train, y_train,
+          eval_set=[(X_val, y_val)],
+          callbacks=[lgb.early_stopping(100), lgb.log_evaluation(200)])
+```
+
+**Exceptions that change the answer:**
+- If interpretability is a hard requirement → start with logistic regression, explain why gradient boosting doesn't meet that constraint
+- If inference must be <1ms → LightGBM is still fine, but test before committing
+- If many features are text/images → LightGBM is not the right tool; need neural approach
+
+> ⚠️ **Common Mistake:** Starting with neural networks on a structured tabular dataset of this size. Every Kaggle structured data competition with a tree ensemble winner demonstrates that gradient boosting systematically beats MLPs on tabular data without extensive architecture tuning. Neural networks win on images, text, and sequences — not flat feature vectors.
+:::
+
+**Q3. Your Random Forest feature importances changed dramatically after retraining on new data. What's happening and how do you debug it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Systematic root-cause analysis covering both algorithmic properties of RF importances and data/production issues. Shows understanding of MDI bias and proposes actionable diagnostic steps.
+
+**Step 1: Understand that this can be normal.** MDI (impurity-based) importance is a property of this specific trained forest on this specific data. Correlated features will arbitrarily distribute credit between them based on which ones happen to be sampled at the top splits. With 500 features and significant correlation, large swings in individual feature rankings are expected even with identical underlying data.
+
+**Step 2: Quantify the change.** Is the top-5 list completely different, or just reshuffled within a correlated group? If "square footage" and "number of rooms" swap positions, that's expected. If "user_id" suddenly became the top feature when it wasn't before, that's a bug.
+
+**Step 3: Check for data issues.**
+- New feature added to data pipeline that leaks the target? A feature with 99% importance is almost certainly leakage.
+- Distribution shift in an important feature? If "transaction amount" now has a different scale or encoding, its importance changes.
+- Sample size change affecting which features have enough signal?
+- Train/test split change causing a different feature to capture temporal leakage?
+
+**Step 4: Cross-validate the importances.** Train 5 forests on 5 different subsamples and plot importance distributions. If a feature's importance has high variance across folds, it's borderline — not reliably important. If importances are stable across folds but different from before, the data genuinely changed.
+
+**Step 5: Switch to permutation importance.** Run permutation importance on a held-out test set for both the old and new model. This is less sensitive to data-specific split artifacts and gives you a more stable signal. If permutation importance also changed dramatically, the feature-target relationships themselves changed (distribution shift).
+
+**Step 6: SHAP analysis.** SHAP values decompose each prediction into per-feature contributions. Comparing SHAP distributions for old vs new model data reveals whether specific subpopulations changed, not just aggregate importances.
+
+> ⚠️ **Common Mistake:** Treating importance changes as always indicating a problem. Sometimes it just means correlated features switched which one happened to be chosen for the top splits. The model's predictions may be equally accurate.
+:::
+
+**Q4. Design a production fraud detection system. Walk through model selection, training, and deployment.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Treats this as a system design problem, not just a modeling problem. Addresses: label quality, class imbalance, temporal validation, feature engineering, model serving, monitoring, feedback loops.
+
+**Problem framing:** Binary classification — transaction is fraud (1) or not (0). Severe class imbalance (~0.1% fraud rate). Time-ordered data — temporal leakage is the biggest trap. Latency constraint: real-time decision (<100ms) or async review (<1 second)?
+
+**Data and labels:**
+- Labels have lag: fraud is often confirmed days after transaction (chargebacks, investigations). Don't train on transactions with labels still uncertain. Use confirmed labels only, with a cutoff.
+- Label noise: some fraud goes undetected (false negatives in training data). Accept this — don't over-engineer against it.
+- Temporal split: train on T to T+12 months, validate on T+12 to T+15, test on T+15 to T+18. Never shuffle and split randomly — this leaks future patterns into training.
+
+**Feature engineering:**
+- Transaction features: amount, merchant category, time of day, device, location
+- Velocity features: transactions in past 1h, 24h, 7d per card/user/device (window aggregations)
+- Behavioral deviation: is this amount/merchant unusual for this user?
+- Network features: is this card/account linked to known fraud patterns?
+- These window features require a feature store for low-latency serving.
+
+**Model selection:**
+- Start with LightGBM. Handles class imbalance with `is_unbalance=True`. Fast inference (microseconds). Feature importance + SHAP for explainability.
+- Consider a stacking ensemble: LightGBM + logistic regression on LightGBM leaf indices (a classic Kaggle technique that often gives +1-2% AUC).
+- Neural networks (tabular DNN) can capture feature interactions LightGBM misses, but require more engineering. Worth A/B testing after LightGBM is in production.
+
+**Validation:**
+- Primary metric: ROC-AUC and PR-AUC (both matter for imbalanced data)
+- At operating threshold: precision, recall, F-beta (tune beta to match cost model: missed fraud cost vs false alarm cost)
+- Evaluate on temporal holdout — not random split
+- Check performance stratified by transaction type, merchant category, geography — ensure model is fair and consistent
+
+**Deployment:**
+- Model served via low-latency endpoint (FastAPI + model binary, or ONNX for cross-platform serving)
+- Feature store provides pre-computed window aggregations at <10ms
+- Decision is synchronous for card-present transactions; can be async for card-not-present
+- Model output is a probability → business rule layer applies thresholds (block/review/pass)
+
+**Monitoring:**
+- PSI (Population Stability Index) on input features: detects distribution shift before model degrades
+- Model performance: precision/recall on confirmed fraud labels (with label lag — report with proper accounting for this)
+- Score distribution monitoring: if average fraud probability changes significantly without business cause, something is wrong
+- Data pipeline freshness: if feature store is stale, model performance degrades silently
+
+**Retraining:**
+- Monthly scheduled retraining on rolling 12-month window
+- Champion-challenger A/B testing for new model versions
+- Trigger: PSI > 0.25 on any important feature, or recall drops below threshold on validation window
+
+> ⚠️ **Common Mistake:** Building a model without accounting for temporal leakage in the validation split. Shuffling transaction data and doing 80/20 split will give artificially high CV performance because future patterns leak into training. Real performance will be significantly worse.
+:::
+
+**Q5. How do you handle severe class imbalance (1:1000) in a fraud detection model? What if standard techniques fail?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Goes beyond SMOTE/class_weight. Addresses why naive approaches fail at 1:1000, and proposes anomaly detection, cost-sensitive learning, and threshold calibration as a coherent system.
+
+**Why standard approaches fail at 1:1000:** With only 0.1% positive rate, SMOTE generates synthetic minority samples in a sparse region with few real examples — the interpolations may not reflect real fraud patterns. Naive oversampling causes overfitting to specific fraud patterns and poor generalization to new attack vectors.
+
+**Tier 1 — Always do this first:**
+- `scale_pos_weight = 1000` in LightGBM/XGBoost — free, no data modification
+- Evaluate with PR-AUC, not ROC-AUC. ROC-AUC can be misleadingly high with severe imbalance; PR-AUC directly measures precision-recall tradeoff on the positive class.
+- Set decision threshold based on business cost model, not 0.5.
+
+**Tier 2 — If Tier 1 is insufficient:**
+- **Focal loss:** A modification of cross-entropy that down-weights easy-to-classify majority examples during training, focusing learning signal on hard examples near the decision boundary. `alpha` controls class weighting, `gamma` controls hard example focus.
+- **Isotonic regression calibration** on validation set to ensure predicted probabilities are accurate — critical when downstream decisions depend on the probability value.
+
+**Tier 3 — Architectural approaches:**
+- **Anomaly detection pre-filter:** Train an autoencoder or Isolation Forest on majority class (normal transactions). Flag transactions with high reconstruction error as candidate fraud. Use this as a binary feature in the main model, or as a two-stage pipeline (anomaly score > threshold → expensive model review).
+- **Two-stage pipeline:** Fast first stage (logistic regression or rule-based) to filter obvious legitimate transactions. Second stage runs detailed model only on flagged transactions. Reduces effective imbalance at second stage.
+- **Contrastive learning / self-supervised pre-training:** Pretrain a representation on the majority class (normal transactions), then fine-tune with few fraud examples. Similar to how few-shot learning works.
+
+**Tier 4 — Data acquisition:**
+- The real fix for severe imbalance is more labels. If you have 1 million transactions and 1000 frauds, consider: active learning (have human analysts label uncertain predictions), semi-supervised learning (use unlabeled examples to improve representations), or partnerships with industry groups for shared fraud labels.
+
+**Failure mode to watch for:** If the model achieves high PR-AUC in offline evaluation but underperforms in production, the fraud distribution has shifted (new attack vectors). Monitor precision on confirmed catches — if precision drops without recall dropping, the model is being exploited by new patterns.
+
+> ⚠️ **Common Mistake:** Reporting accuracy as a metric. With 1:1000 imbalance, predicting "not fraud" for everything gives 99.9% accuracy. Accuracy is meaningless here. Always use PR-AUC, recall at fixed precision, or F-beta as primary metrics.
+:::
+
+**Q6. A logistic regression and a gradient boosting model have the same ROC-AUC on your test set, but you must choose one for production. How do you decide?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Recognizes that equal accuracy doesn't mean equal appropriateness for production. Considers latency, interpretability, maintenance overhead, calibration, and failure modes.
+
+**Questions I ask before deciding:**
+
+**1. Latency requirements.** Logistic regression inference is a dot product — nanoseconds. Gradient boosting is hundreds of tree traversals — microseconds to low milliseconds. Both are fine for batch; for real-time with <1ms SLA, logistic regression wins.
+
+**2. Interpretability requirements.** Regulatory contexts (GDPR Article 22, ECOA in US credit) require explainable decisions. Logistic regression provides direct coefficient interpretation as log-odds. Gradient boosting requires SHAP values — accurate but adds infrastructure complexity. If "why was this loan denied" must be answered, logistic regression has a significant operational advantage.
+
+**3. Probability calibration.** Logistic regression outputs well-calibrated probabilities by construction (under correct model specification). Gradient boosting is typically well-calibrated but should be checked with a calibration curve. If downstream decisions rely on precise probabilities (e.g., expected loss = probability × amount), calibration matters.
+
+**4. Maintenance overhead.** Logistic regression degrades gracefully with distribution shift — its coefficients have clear interpretations and it's easy to retrain quickly. Gradient boosting requires more careful hyperparameter tuning on each retrain and its feature importance analysis is more complex.
+
+**5. Failure mode analysis.** What happens when each model is wrong? Gradient boosting may capture complex interactions that logistic regression misses — but it may also capture spurious interactions that break with distribution shift. Logistic regression's simplicity is also its robustness.
+
+**My default recommendation:** If equal AUC is measured on a properly held-out test set (not just CV), choose gradient boosting for prediction-focused systems where accuracy in 6 months matters. Choose logistic regression for regulatory or interpretability-constrained systems, or for systems with aggressive latency or maintenance budgets.
+
+**But investigate first:** Are they truly equal? Run a calibration curve, check performance on stratified subgroups (not just overall AUC), and verify on a time-forward holdout (not a random split). "Equal AUC on random test set" does not always mean "equal performance in production over time."
+
+> ⚠️ **Common Mistake:** Defaulting to the more complex model because it "feels better" or is more technically impressive. Production ML is engineering. If logistic regression meets the requirements, it's often the correct choice.
+:::
+
+**Q7. Explain the bias-variance tradeoff. How does it manifest differently in decision trees, random forests, and gradient boosting?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+> 🎯 **What great looks like:** Goes beyond the textbook definition. Explains how each algorithm controls the tradeoff mechanically, and connects it to hyperparameter choices.
+
+**The tradeoff:** Total expected prediction error = Bias² + Variance + Irreducible noise.
+- **Bias:** Error from wrong assumptions (underfitting) — model is too simple to capture the true relationship
+- **Variance:** Error from sensitivity to training data (overfitting) — model captures noise rather than signal
+- You cannot simultaneously minimize both with a fixed model class
+
+**Decision trees:**
+- Shallow tree: high bias (misses complex patterns), low variance (stable across different training samples)
+- Deep unpruned tree: zero bias (memorizes training data), high variance (completely unstable — different training samples produce entirely different trees)
+- `max_depth` directly controls this tradeoff. Hyperparameter selection is entirely about bias-variance balance.
+
+**Random forests:**
+- Each tree: low bias (fully grown), high variance
+- Averaging $T$ uncorrelated trees: variance reduces by factor $T$ (theoretically), bias stays the same
+- RF primarily attacks variance, not bias. This is why RF can't outperform a single decision tree on the same training data — it gives up some accuracy there — but generalizes much better.
+- `max_features` controls tree correlation; `n_estimators` controls variance reduction ceiling.
+
+**Gradient boosting:**
+- Each tree: high bias (shallow), low variance (weak learner)
+- Sequential addition: each tree reduces the bias of the ensemble (targets remaining errors)
+- More rounds → lower bias, but also potentially higher variance (overfitting)
+- `n_estimators` controls bias; `learning_rate`, `max_depth`, `subsample` control overfitting (variance)
+- This is why gradient boosting often outperforms random forest: it reduces both bias and variance when properly regularized, whereas RF can only reduce variance.
+
+**Practical implication:** When a random forest is underfitting (training accuracy low), you typically cannot fix it — the model class has limited capacity. When gradient boosting is underfitting, increase `n_estimators` or `max_depth`. When either is overfitting, random forest is more robust (just stop adding trees early); gradient boosting requires careful `learning_rate` + early stopping discipline.
+:::
+:::

@@ -1,0 +1,1449 @@
+---
+title: "Unsupervised Learning, Evaluation Metrics & Feature Engineering"
+---
+
+::: {.callout-note}
+**Who this chapter is for:** Entry, Mid, and Senior/Staff ML/GenAI engineers
+
+**What you'll be able to answer after reading this:**
+
+- How and when to apply K-Means, DBSCAN, hierarchical clustering, and GMMs — and where each breaks
+- When to use PCA vs. t-SNE vs. UMAP, and why conflating them is an interview red flag
+- Which evaluation metric to reach for first, and why accuracy is almost never that metric
+- How feature engineering decisions cause model failures in production, and how to prevent them
+:::
+
+---
+
+# Section 1: Unsupervised Learning
+
+Unsupervised learning is the problem of finding structure in data without labels. The two dominant sub-problems are **clustering** (grouping similar instances together) and **dimensionality reduction** (projecting high-dimensional data into a lower-dimensional space while preserving meaningful structure). Both appear constantly in production ML pipelines — clustering for customer segmentation, anomaly detection, and preprocessing; dimensionality reduction for visualization, feature compression, and noise removal.
+
+The practical challenge with unsupervised methods is that "correct" is not well-defined — you have no labels to evaluate against. This pushes you toward domain knowledge, internal metrics, and downstream task performance as your judges. This ambiguity is intentional in interview questions: if you say "I'd evaluate the clustering using accuracy," that is a red flag.
+
+---
+
+## Clustering
+
+### K-Means
+
+**Plain-English definition:** Partition n data points into k clusters by iteratively assigning each point to its nearest centroid and recomputing centroids until convergence.
+
+**How it works:** K-Means is a coordinate descent algorithm minimizing within-cluster sum of squared distances (WCSS). The standard algorithm (Lloyd's algorithm) operates in three steps:
+
+1. Initialize k centroids — randomly or using k-means++ (smarter seeding that spreads initial centroids out to reduce pathological initializations)
+2. Assignment step: assign each point to the nearest centroid by Euclidean distance
+3. Update step: recompute each centroid as the mean of all points assigned to it
+4. Repeat steps 2 and 3 until centroid positions change by less than a tolerance threshold (convergence)
+
+The algorithm guarantees convergence but only to a local minimum of WCSS, not the global minimum. The quality of the solution depends heavily on initialization. K-means++ initialization reduces the probability of poor solutions by selecting subsequent centroids with probability proportional to their squared distance from the nearest existing centroid — this typically produces 2-5× better solutions than random initialization with negligible additional cost.
+
+**Choosing k — elbow method and silhouette score:** Neither method tells you the "true" k. The elbow method plots WCSS against k; the point where the marginal decrease in WCSS stops being dramatic is the "elbow." In practice, the elbow is often ambiguous. The silhouette score for a point measures how similar it is to its own cluster versus the next nearest cluster: $s = (b - a) / \max(a, b)$ where $a$ is the mean intra-cluster distance and $b$ is the mean distance to the nearest other cluster. Silhouette ranges from -1 to +1; values above 0.5 indicate dense, well-separated clusters.
+
+::: {.callout-warning}
+**Common Mistake:** Using only the elbow method to choose k. The elbow is often a bend, not a clean inflection point. Always pair it with silhouette scores, and validate the final cluster count against domain knowledge. A marketing team might have business reasons why k=4 matters even if k=6 scores slightly better.
+:::
+
+**Limitations:**
+
+- Assumes spherical, equally-sized clusters — fails on elongated, irregular, or varying-density clusters
+- Sensitive to outliers: a single outlier can pull a centroid significantly
+- Requires specifying k upfront — a parameter that often requires domain knowledge you may not have
+- Does not handle non-convex cluster shapes (two interlocking crescents, for example)
+- Scales well (O(n·k·i·d) per iteration, where i = iterations, d = dimensions) but degrades in very high dimensions due to the curse of dimensionality flattening distance distributions
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
+
+# Always scale before clustering — K-Means is distance-based
+X = StandardScaler().fit_transform(data)
+
+# Elbow method + silhouette
+inertias, silhouettes = [], []
+K_range = range(2, 11)
+
+for k in K_range:
+    km = KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=42)
+    labels = km.fit_predict(X)
+    inertias.append(km.inertia_)
+    silhouettes.append(silhouette_score(X, labels))
+
+# Plot both together to cross-validate k choice
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+ax1.plot(K_range, inertias, 'bo-')
+ax1.set_xlabel('k'); ax1.set_ylabel('WCSS (inertia)'); ax1.set_title('Elbow Method')
+ax2.plot(K_range, silhouettes, 'rs-')
+ax2.set_xlabel('k'); ax2.set_ylabel('Silhouette Score'); ax2.set_title('Silhouette Score')
+plt.tight_layout()
+plt.show()
+```
+
+> 💡 **Senior Tip:** In production, K-Means cluster labels shift between runs unless you pin `random_state`. If your pipeline relies on cluster IDs being stable (e.g., "cluster 2 = high-value customers"), use label alignment or assign semantic labels post-hoc rather than depending on raw cluster indices.
+
+---
+
+### DBSCAN
+
+**Plain-English definition:** Density-Based Spatial Clustering of Applications with Noise — group points that are tightly packed together and label points in sparse regions as noise, without needing to specify the number of clusters.
+
+**How it works:** DBSCAN classifies each point as one of three types:
+
+- **Core point:** has at least `min_samples` other points within radius `epsilon` (its neighborhood is dense enough)
+- **Border point:** within epsilon of a core point but has fewer than `min_samples` in its own neighborhood
+- **Noise point:** neither core nor border — isolated point in a sparse region
+
+Clusters are formed by connecting core points within epsilon of each other (transitively), with border points assigned to the cluster of their nearest core point. This naturally handles arbitrary cluster shapes — any connected region of sufficient density becomes a cluster, regardless of its shape.
+
+**Hyperparameter intuition:** `epsilon` sets the neighborhood radius — think of it as "how close is 'nearby'?" `min_samples` sets the density threshold — how many neighbors are required to call a region dense. A starting heuristic: set `min_samples` to 2×dimensions (at minimum), then use a k-distance plot (sort distances to the min_samples-th nearest neighbor) to identify the "knee" as a good epsilon.
+
+::: {.callout-warning}
+**Common Mistake:** Running DBSCAN on unscaled features. If one feature has range 0-1000 and another has range 0-1, the large-scale feature dominates the distance calculation entirely. Always scale features to the same range before running any distance-based algorithm.
+:::
+
+**When to use:**
+- Data has clusters of irregular, non-convex shapes
+- You have outliers and want them explicitly identified (noise points)
+- You do not know k in advance
+- Spatial data (geolocation, sensor data)
+
+**When NOT to use:**
+- Clusters have very different densities (DBSCAN uses a single epsilon across all clusters — it will merge sparse clusters or split dense ones)
+- Very high-dimensional data (all distance-based methods suffer here)
+- You need exactly k clusters for a downstream system
+
+```python
+from sklearn.cluster import DBSCAN
+from sklearn.neighbors import NearestNeighbors
+
+# Find good epsilon with k-distance plot
+k = 2 * X.shape[1]  # heuristic: 2 * n_features
+nbrs = NearestNeighbors(n_neighbors=k).fit(X)
+distances, _ = nbrs.kneighbors(X)
+distances = np.sort(distances[:, -1])  # distance to k-th nearest neighbor
+
+plt.plot(distances)
+plt.xlabel('Points (sorted)'); plt.ylabel(f'{k}-NN distance')
+plt.title('K-Distance Plot — knee = good epsilon')
+plt.show()
+
+# Fit DBSCAN
+db = DBSCAN(eps=0.5, min_samples=k)
+labels = db.fit_predict(X)
+
+n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+n_noise = (labels == -1).sum()
+print(f"Clusters: {n_clusters}, Noise points: {n_noise} ({100*n_noise/len(labels):.1f}%)")
+```
+
+> 💡 **Senior Tip:** In fraud detection and anomaly detection pipelines, the noise points (-1 labels) from DBSCAN are often the most interesting output — they are the anomalies. The cluster labels may be less important than the outlier flags.
+
+---
+
+### Hierarchical Clustering
+
+**Plain-English definition:** Build a tree of clusters either bottom-up (agglomerative — start with each point as its own cluster and merge the most similar pair) or top-down (divisive — start with one cluster and recursively split it).
+
+**Agglomerative clustering** (overwhelmingly more common in practice) uses a linkage criterion to define the distance between two clusters (as opposed to two points):
+
+- **Single linkage:** distance = minimum pairwise distance between any point in cluster A and any point in cluster B. Prone to "chaining" — creates long, stretched clusters because one close pair merges two clusters.
+- **Complete linkage:** distance = maximum pairwise distance. Produces more compact, spherical clusters. Sensitive to outliers.
+- **Average linkage:** distance = average of all pairwise distances. More robust than single or complete.
+- **Ward linkage:** merge the two clusters that minimize the increase in total within-cluster variance. Tends to produce equally-sized, compact clusters. This is usually the default choice.
+
+**The dendrogram** is a tree diagram showing the merge order and merge distances. The height of each merge branch represents how dissimilar the merged clusters were. To cut the dendrogram into k clusters, draw a horizontal line at the appropriate height. The advantage is that you can defer the choice of k until after fitting — you fit once and explore multiple k values by changing the cut height.
+
+**When to use:**
+- You want to explore the data's hierarchical structure without committing to a k upfront
+- Small to medium datasets (hierarchical clustering is O(n²) to O(n³) and does not scale to millions of points)
+- Domain requires interpretable merge hierarchies (e.g., phylogenetic trees, document taxonomy)
+
+```python
+from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+from scipy.spatial.distance import pdist
+
+# Compute linkage matrix — 'ward' is almost always the right default
+Z = linkage(X, method='ward')
+
+# Visualize
+plt.figure(figsize=(12, 5))
+dendrogram(Z, truncate_mode='lastp', p=30, leaf_font_size=10)
+plt.title('Hierarchical Clustering Dendrogram (Ward linkage)')
+plt.xlabel('Sample index or cluster size'); plt.ylabel('Distance')
+plt.show()
+
+# Cut the tree at desired number of clusters
+k = 4
+labels = fcluster(Z, k, criterion='maxclust')
+```
+
+---
+
+### Gaussian Mixture Models (GMM)
+
+**Plain-English definition:** Model the data as a weighted sum of k Gaussian distributions. Each point gets a probability of belonging to each cluster (soft clustering), unlike K-Means where assignment is hard (binary).
+
+**How it works:** A GMM assumes data is generated from k Gaussian components, each with its own mean $\mu_k$, covariance matrix $\Sigma_k$, and mixture weight $\pi_k$ (summing to 1). Fitting a GMM means learning these parameters to maximize the likelihood of the observed data. Because each point's cluster assignment is a latent (hidden) variable, this is solved with the **Expectation-Maximization (EM) algorithm**:
+
+- **E-step:** Given current parameters, compute the posterior probability that each point was generated by each component (responsibilities)
+- **M-step:** Update parameters (means, covariances, weights) to maximize expected log-likelihood given those responsibilities
+- Repeat until log-likelihood converges
+
+**Relation to K-Means:** K-Means is a special case of GMM where all covariance matrices are constrained to $\epsilon I$ (spherical, equal-sized) and assignments are hard (argmax instead of soft probabilities). GMMs are strictly more expressive. The covariance structure can be parameterized in several ways: `full` (each cluster has its own arbitrary covariance), `tied` (all share one covariance), `diag` (diagonal covariance only), `spherical` (scalar variance only).
+
+**When to use:**
+- You want soft cluster membership (probabilities, not just labels) — useful when a customer could plausibly belong to two segments
+- Clusters are elliptical rather than spherical — `full` covariance handles this
+- You want a generative model: you can sample new data points from a fitted GMM
+
+::: {.callout-warning}
+**Common Mistake:** Choosing `full` covariance on small datasets or high-dimensional data. Full covariance matrices have O(d²) parameters per component. With d=100 features and k=5 clusters, that is 50,000 covariance parameters to estimate from your data. Use `diag` or `tied` when data is limited relative to dimensionality.
+:::
+
+```python
+from sklearn.mixture import GaussianMixture
+from sklearn.model_selection import cross_val_score
+
+# Select number of components using BIC (Bayesian Information Criterion)
+# Lower BIC = better fit penalized for complexity
+bic_scores = []
+K_range = range(1, 11)
+for k in K_range:
+    gmm = GaussianMixture(n_components=k, covariance_type='full',
+                          n_init=5, random_state=42)
+    gmm.fit(X)
+    bic_scores.append(gmm.bic(X))
+
+best_k = K_range[np.argmin(bic_scores)]
+print(f"Best k by BIC: {best_k}")
+
+# Fit final model
+gmm = GaussianMixture(n_components=best_k, covariance_type='full',
+                      n_init=10, random_state=42)
+gmm.fit(X)
+
+# Soft assignments: each row sums to 1
+responsibilities = gmm.predict_proba(X)
+# Hard assignments
+hard_labels = gmm.predict(X)
+```
+
+---
+
+### Clustering Algorithm Comparison
+
+| Algorithm | Must specify k? | Handles arbitrary shapes | Handles noise/outliers | Scales to large n | Soft assignments | Best for |
+|---|---|---|---|---|---|---|
+| K-Means | Yes | No (spherical only) | No | Yes (O(nkid)) | No | General purpose, large datasets |
+| DBSCAN | No | Yes | Yes (explicit noise) | Moderate | No | Spatial data, outlier detection |
+| Hierarchical | No (cut later) | Depends on linkage | No | No (O(n²–n³)) | No | Small datasets, need hierarchy |
+| GMM | Yes | Partial (elliptical) | Partial (low responsibility) | Moderate | Yes | Probabilistic membership, generative modeling |
+
+---
+
+## Dimensionality Reduction
+
+### PCA (Principal Component Analysis)
+
+**Plain-English definition:** Find the directions (principal components) along which the data varies most, and project the data onto those directions to get a lower-dimensional representation.
+
+**How it works:** PCA finds an orthogonal basis for the data by computing the eigenvectors of the covariance matrix. The eigenvector with the largest eigenvalue is the direction of maximum variance (first principal component), the second eigenvector (orthogonal to the first) captures the second-most variance, and so on. Projecting the data onto the top-k eigenvectors reduces dimensionality from d to k while retaining the most variance possible.
+
+The eigenvectors are computed via singular value decomposition (SVD) of the centered data matrix rather than explicitly constructing the covariance matrix — this is numerically more stable and efficient. The proportion of variance explained by each component is its eigenvalue divided by the sum of all eigenvalues. A **scree plot** plots the cumulative variance explained vs. number of components; the "elbow" suggests how many components to retain.
+
+**When to use:**
+- Preprocessing before a distance-sensitive algorithm (K-Means, K-NN, SVM) on high-dimensional data
+- Removing noise from data (lower components often capture noise rather than signal)
+- Computational speedup: replace 500 features with 20 PCA components before training
+- Visualization (project to 2D or 3D, though t-SNE/UMAP is better for this)
+
+**Limitations:**
+- Strictly linear: cannot capture non-linear structure (two interlocking spirals would not be separated)
+- Principal components are linear combinations of original features — not directly interpretable
+- Sensitive to feature scale — always standardize before PCA
+- Information loss is inevitable: unless you retain all components, some variance is discarded
+
+::: {.callout-warning}
+**Common Mistake:** Fitting PCA on the full dataset (including the test set) before splitting. This leaks information about the test set into the transformation. Always fit PCA on the training set only and apply the learned transformation to the test set.
+:::
+
+```python
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+# Scale first — PCA is variance-based, scale affects variance
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)  # note: transform, not fit_transform
+
+# Fit PCA — keep enough components to explain 95% of variance
+pca = PCA(n_components=0.95, random_state=42)  # float = variance threshold
+X_pca = pca.fit_transform(X_scaled)
+
+print(f"Reduced from {X_scaled.shape[1]} to {X_pca.shape[1]} components")
+print(f"Variance explained: {pca.explained_variance_ratio_.sum():.3f}")
+
+# Scree plot
+cumvar = np.cumsum(pca.explained_variance_ratio_)
+plt.plot(range(1, len(cumvar)+1), cumvar, 'o-')
+plt.axhline(0.95, color='r', linestyle='--', label='95% threshold')
+plt.xlabel('Number of components'); plt.ylabel('Cumulative variance explained')
+plt.legend(); plt.title('PCA Scree Plot'); plt.show()
+
+# Apply same transformation to test set
+X_test_pca = pca.transform(X_test_scaled)
+```
+
+---
+
+### t-SNE (t-Distributed Stochastic Neighbor Embedding)
+
+**Plain-English definition:** A non-linear dimensionality reduction technique that places similar high-dimensional points close together in a 2D or 3D map, optimized for visualization.
+
+**How it works:** t-SNE converts pairwise distances in high-dimensional space into probabilities (high probability = nearby points), does the same in the low-dimensional space using a Student-t distribution (heavier tails than Gaussian — this prevents crowding), and minimizes the KL divergence between the two probability distributions via gradient descent. The result is a 2D or 3D embedding where local neighborhoods are preserved: points that were close in the original space cluster together in the plot.
+
+The `perplexity` hyperparameter controls the effective number of local neighbors considered for each point. Perplexity between 5 and 50 is typical; lower = more local structure preserved, higher = more global structure. Results are sensitive to perplexity and run-to-run variability (the optimization is non-convex).
+
+**Critical limitations — this is where candidates frequently lose points:**
+- t-SNE is **not deterministic** by default: different random seeds produce different-looking plots. This is not a bug, but it means you cannot compare two separate t-SNE runs directly.
+- The **distances between clusters in a t-SNE plot are not meaningful.** Two clusters appearing close together does not mean they are globally similar. The inter-cluster layout changes with perplexity and random seed.
+- **Do not use t-SNE for feature extraction.** The mapping is not stable and cannot be applied to new data points without refitting. Use PCA or UMAP if you need features.
+- t-SNE scales poorly: O(n²) time and memory in the naive implementation, O(n log n) with the Barnes-Hut approximation.
+
+**When to use:**
+- Exploratory visualization of high-dimensional data to assess whether meaningful cluster structure exists
+- Sanity-checking embeddings (e.g., visualizing word embeddings, BERT representations)
+- Communicating data structure to stakeholders who need an intuitive picture
+
+```python
+from sklearn.manifold import TSNE
+
+# t-SNE is slow — subsample large datasets
+max_samples = 5000
+if len(X_scaled) > max_samples:
+    idx = np.random.choice(len(X_scaled), max_samples, replace=False)
+    X_viz = X_scaled[idx]
+    y_viz = y[idx]  # labels for coloring (if available)
+else:
+    X_viz, y_viz = X_scaled, y
+
+# First reduce with PCA to 50 dims — speeds up t-SNE significantly
+X_pca50 = PCA(n_components=50, random_state=42).fit_transform(X_viz)
+
+tsne = TSNE(n_components=2, perplexity=30, n_iter=1000,
+            random_state=42, n_jobs=-1)
+X_tsne = tsne.fit_transform(X_pca50)
+
+plt.figure(figsize=(8, 6))
+scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y_viz,
+                      cmap='tab10', alpha=0.6, s=5)
+plt.colorbar(scatter); plt.title('t-SNE Visualization'); plt.show()
+```
+
+> ⚠️ **Common Mistake:** Interpreting cluster sizes and distances in a t-SNE plot as meaningful. They are not. The only interpretable information is local neighborhood structure — points that cluster together were likely nearby in the original space.
+
+---
+
+### UMAP (Uniform Manifold Approximation and Projection)
+
+**Plain-English definition:** A non-linear dimensionality reduction technique grounded in topological data analysis that is faster than t-SNE, preserves more global structure, and can be used both for visualization and feature extraction.
+
+**How it works:** UMAP constructs a fuzzy topological representation of the high-dimensional data (modeling the manifold the data lies on) and optimizes a low-dimensional representation to have a similar fuzzy topology. The mathematical grounding in category theory and Riemannian geometry makes UMAP more principled than t-SNE. In practice, the key differences are:
+
+- **Speed:** UMAP is 5-20× faster than t-SNE on the same data
+- **Scalability:** UMAP can handle millions of points; t-SNE cannot
+- **Global structure:** UMAP better preserves the relative positions of clusters (inter-cluster distances are more meaningful, though still not perfectly faithful)
+- **Supervised UMAP:** You can provide partial labels to guide the embedding — useful when you have some labeled data and want the low-dimensional space to respect class structure
+
+**When to use UMAP over t-SNE:**
+- Large datasets (>10K points)
+- You need a reusable transformation (UMAP can transform new data points with `transform()`)
+- Feature engineering: use UMAP as a non-linear feature extractor in a preprocessing pipeline
+- You care about global structure as well as local clusters
+
+```python
+import umap
+
+# UMAP for visualization
+reducer = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1,
+                    random_state=42)
+X_umap = reducer.fit_transform(X_scaled)
+
+# UMAP for feature extraction (can be used on new data)
+reducer_features = umap.UMAP(n_components=10, n_neighbors=30,
+                               min_dist=0.0, random_state=42)
+reducer_features.fit(X_train_scaled)
+X_train_umap = reducer_features.transform(X_train_scaled)
+X_test_umap = reducer_features.transform(X_test_scaled)  # reusable!
+```
+
+> 💡 **Senior Tip:** `n_neighbors` controls the balance between local and global structure. Small values (5-15) emphasize local neighborhoods; large values (50-200) capture more global topology. `min_dist` controls cluster compactness in the embedding — 0.0 creates tightly packed clusters useful for discrete cluster analysis; 0.1-0.5 preserves more continuous structure.
+
+### Dimensionality Reduction Comparison
+
+| Method | Linear? | For visualization | For feature extraction | Handles new points | Speed (n=100K) | Key hyperparameter |
+|---|---|---|---|---|---|---|
+| PCA | Yes | Acceptable | Yes | Yes | Fast | n_components |
+| t-SNE | No | Excellent | No | No | Slow | perplexity |
+| UMAP | No | Excellent | Yes | Yes | Fast-moderate | n_neighbors, min_dist |
+
+---
+
+# Section 2: Evaluation Metrics
+
+Selecting the right metric is a design decision with business consequences. Optimizing the wrong metric produces models that perform well on paper and fail in production. This section covers what each metric measures, when it is appropriate, and — critically — when it will mislead you.
+
+---
+
+## Classification Metrics
+
+### The Confusion Matrix Foundation
+
+Every classification metric derives from the confusion matrix. For a binary classifier:
+
+|  | Predicted Positive | Predicted Negative |
+|---|---|---|
+| **Actually Positive** | True Positive (TP) | False Negative (FN) |
+| **Actually Negative** | False Positive (FP) | True Negative (TN) |
+
+The four cells tell you everything about classifier behavior. The question is which combination of these cells matters for your use case.
+
+---
+
+### Accuracy
+
+$\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}$
+
+Accuracy is the fraction of predictions that are correct. It is the most intuitive metric and the most commonly misused one. On a balanced dataset (equal class distribution), accuracy is a reasonable first-pass metric. On an imbalanced dataset, it is nearly meaningless.
+
+**The 99% accuracy trap:** Imagine a fraud detection model where 1% of transactions are fraudulent. A model that predicts "not fraud" for every single transaction achieves 99% accuracy — and catches exactly zero fraudulent transactions. The model is useless by its intended purpose, but accuracy scores it perfectly. This is the most important metric intuition to internalize before any interview.
+
+::: {.callout-warning}
+**When to avoid accuracy:** Any dataset where class frequencies differ by more than 2:1. In practice, churn prediction (5-20% churn), fraud detection (0.1-2%), medical diagnosis (rare disease prevalence), and anomaly detection all require metrics beyond accuracy.
+:::
+
+---
+
+### Precision, Recall, and F1
+
+**Precision** = $\frac{TP}{TP + FP}$ — of everything the model labeled positive, what fraction was actually positive? A precision-optimized model is cautious: it only fires when confident, accepting that it will miss some real positives.
+
+**Recall** = $\frac{TP}{TP + FN}$ — of everything that was actually positive, what fraction did the model catch? A recall-optimized model casts a wide net: it catches most true positives, accepting that it will also flag many false positives.
+
+The tension between precision and recall is fundamental: as you lower the classification threshold to catch more true positives (increasing recall), you will inevitably flag more false positives (decreasing precision). This tradeoff cannot be escaped — it can only be managed by choosing the right operating point.
+
+**When each matters:**
+- **Precision critical:** Spam filtering (flagging a legitimate email as spam is costly), content moderation (removing real user content), ad targeting (wasting budget on non-converting impressions)
+- **Recall critical:** Cancer screening (missing a real cancer case is catastrophic), fraud detection (missing fraud costs money), safety systems (missing a dangerous event has severe consequences)
+
+**F1 score** = $\frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$ — the harmonic mean of precision and recall. It is higher when both are high and punishes extreme imbalances between the two. F-beta generalizes this: $F_\beta = (1+\beta^2) \cdot \frac{P \cdot R}{\beta^2 P + R}$ — a $\beta > 1$ weights recall higher than precision.
+
+> ⚠️ **Common Mistake:** Averaging F1 across classes incorrectly. `macro` average treats all classes equally regardless of support (may be misleading if class sizes are very unequal). `weighted` average weights by class support. `micro` average computes globally from TP/FP/FN totals. Always specify which averaging strategy and why.
+
+---
+
+### ROC-AUC
+
+The **Receiver Operating Characteristic (ROC) curve** plots True Positive Rate (recall) on the y-axis vs. False Positive Rate ($FP / (FP + TN)$) on the x-axis at every possible classification threshold. A perfect classifier achieves (0, 1) — TPR=1, FPR=0 at some threshold. A random classifier traces the diagonal line TPR=FPR.
+
+**AUC (Area Under the ROC Curve)** summarizes the entire curve in one number:
+- AUC = 0.5: random classifier (useless)
+- AUC = 0.7: acceptable for many problems
+- AUC = 0.85: good discrimination
+- AUC = 0.95+: excellent; question whether data leakage is inflating it
+- AUC = 1.0: perfect discrimination (almost certainly leakage in production data)
+
+A useful probabilistic interpretation: AUC is the probability that the classifier assigns a higher score to a randomly chosen positive example than to a randomly chosen negative example.
+
+**Threshold independence** is the key advantage of ROC-AUC: it evaluates the model's discriminative ability across all thresholds simultaneously. This makes it useful for comparing classifiers before committing to an operating threshold.
+
+::: {.callout-warning}
+**When ROC-AUC misleads:** On highly imbalanced datasets, the large number of true negatives dominates the FPR axis. The ROC curve can look excellent (high AUC) even when precision is disastrous at the operating threshold. Example: a model with AUC=0.95 on a 1% positive class might have precision of 3% at the operating threshold — it fires 33× more often than necessary.
+:::
+
+---
+
+### Precision-Recall Curve
+
+The **Precision-Recall (PR) curve** plots precision on the y-axis vs. recall on the x-axis at every threshold. It focuses entirely on the positive class and is the correct diagnostic tool for imbalanced classification problems.
+
+**AUPRC (Area Under the PR Curve):** A random classifier on a dataset with p% positives achieves an AUPRC of p (the baseline). Models must substantially exceed this to be useful. An AUPRC of 0.5 on a 1% positive class is excellent; on a 50-50 balanced class, 0.5 AUPRC is equivalent to random guessing.
+
+Use the PR curve when:
+- Positive class prevalence is low (fraud, disease, churn in healthy user bases)
+- False positive costs are high and you need to understand the precision-recall tradeoff explicitly
+- You are communicating model performance to a business audience that cares about "when we flag something, how often are we right?" (precision) and "how many of the real events do we catch?" (recall)
+
+```python
+from sklearn.metrics import (
+    classification_report, roc_auc_score, average_precision_score,
+    RocCurveDisplay, PrecisionRecallDisplay, confusion_matrix
+)
+import matplotlib.pyplot as plt
+
+# Assumes binary classifier with predict_proba support
+y_prob = model.predict_proba(X_test)[:, 1]
+y_pred = model.predict(X_test)
+
+# Confusion matrix
+cm = confusion_matrix(y_test, y_pred)
+print("Confusion Matrix:\n", cm)
+
+# Classification report (precision, recall, F1 per class)
+print(classification_report(y_test, y_pred, target_names=['Negative', 'Positive']))
+
+# ROC-AUC
+roc_auc = roc_auc_score(y_test, y_prob)
+print(f"ROC-AUC: {roc_auc:.4f}")
+
+# Average precision (AUPRC)
+avg_precision = average_precision_score(y_test, y_prob)
+print(f"Average Precision (AUPRC): {avg_precision:.4f}")
+print(f"Baseline AUPRC (random): {y_test.mean():.4f}")
+
+# Plot both curves side by side
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+RocCurveDisplay.from_predictions(y_test, y_prob, ax=ax1)
+ax1.set_title(f'ROC Curve (AUC={roc_auc:.3f})')
+PrecisionRecallDisplay.from_predictions(y_test, y_prob, ax=ax2)
+ax2.set_title(f'PR Curve (AUPRC={avg_precision:.3f})')
+plt.tight_layout(); plt.show()
+```
+
+---
+
+### Cohen's Kappa and MCC
+
+For severely imbalanced datasets, neither accuracy nor F1 captures the full picture. Two metrics that account for chance-level performance are useful here.
+
+**Cohen's Kappa** measures inter-rater agreement, corrected for chance: $\kappa = \frac{p_o - p_e}{1 - p_e}$ where $p_o$ is observed accuracy and $p_e$ is expected accuracy from a random classifier with the same marginal distributions. A kappa of 0 means no better than chance; 1.0 means perfect agreement.
+
+**Matthews Correlation Coefficient (MCC)** is often considered the most informative single metric for imbalanced binary classification: $MCC = \frac{TP \cdot TN - FP \cdot FN}{\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}$. MCC is the correlation coefficient between actual and predicted binary labels. It ranges from -1 (perfect inverse prediction) to 0 (random) to +1 (perfect). Unlike F1, MCC accounts for all four cells of the confusion matrix and is high only when the classifier performs well on both classes.
+
+> 💡 **Senior Tip:** In ML research and competition, MCC is increasingly preferred as the primary metric for binary classification with class imbalance, precisely because it cannot be gamed by a degenerate classifier that always predicts the majority class.
+
+---
+
+## Regression Metrics
+
+### MAE, MSE, RMSE, MAPE
+
+**Mean Absolute Error (MAE)** = $\frac{1}{n}\sum|y_i - \hat{y}_i|$ — average absolute deviation from the true value. Interpretable in the original units. Less sensitive to outliers than MSE because it does not square the error.
+
+**Mean Squared Error (MSE)** = $\frac{1}{n}\sum(y_i - \hat{y}_i)^2$ — penalizes large errors disproportionately (squaring amplifies outlier impact). Used in optimization because it is differentiable everywhere. Loss function for many regression models.
+
+**Root Mean Squared Error (RMSE)** = $\sqrt{MSE}$ — same units as the target variable, making it more interpretable than MSE. Still penalizes large errors more than MAE. The most commonly reported regression metric.
+
+**Mean Absolute Percentage Error (MAPE)** = $\frac{100}{n}\sum\left|\frac{y_i - \hat{y}_i}{y_i}\right|$ — expresses error as a percentage of the true value. Scale-independent, allowing comparison across datasets with different magnitudes. **Critical flaw:** undefined when $y_i = 0$, and asymmetric (overestimation and underestimation of the same magnitude produce different MAPE values). Use with caution.
+
+| Metric | Penalizes outliers | Interpretable units | Scale-independent | Use when |
+|---|---|---|---|---|
+| MAE | Linearly | Yes | No | Outliers are real and shouldn't dominate |
+| MSE | Quadratically | No (squared) | No | Optimization, penalizing large errors |
+| RMSE | Quadratically | Yes | No | Default regression reporting |
+| MAPE | Linearly | Yes (%) | Yes | Comparing across scales; never use with zero targets |
+
+---
+
+### R² and Adjusted R²
+
+**R²** (coefficient of determination) = $1 - \frac{SS_{res}}{SS_{tot}}$ — the proportion of variance in the target variable that is explained by the model. A model that always predicts the mean achieves R²=0; a perfect model achieves R²=1. R² can be negative if the model is worse than just predicting the mean.
+
+**Adjusted R²** penalizes model complexity: $\bar{R}^2 = 1 - (1-R^2)\frac{n-1}{n-p-1}$ where p is the number of predictors. R² always increases (or stays the same) as you add predictors, even if those predictors are pure noise. Adjusted R² decreases when added predictors do not improve fit enough to justify the added complexity. Use adjusted R² whenever comparing models with different numbers of features.
+
+::: {.callout-warning}
+**Common Mistake:** Reporting only R² without domain context. An R² of 0.85 sounds excellent, but in financial price prediction it may reflect a near-random model that happens to track the mean trend. In demand forecasting, a well-calibrated MAE matters more than R². Always pair R² with an absolute error metric.
+:::
+
+---
+
+## Cross-Validation
+
+Cross-validation provides a more reliable estimate of generalization performance than a single train/val split by using multiple splits and averaging results.
+
+### k-Fold and Stratified k-Fold
+
+**Standard k-fold:** Split data into k equal folds. For each fold i, train on all other k-1 folds, evaluate on fold i. Average the k evaluation scores. Typical k: 5 or 10. Lower k = higher variance in the estimate but faster computation; higher k approaches leave-one-out (LOO).
+
+**Stratified k-fold:** Ensures each fold has approximately the same class distribution as the full dataset. This is critical for imbalanced classification — standard k-fold can produce a fold with no positive examples at all. Stratified k-fold should be the default for classification.
+
+**Leave-One-Out (LOO):** k = n; each observation is its own test set. Produces a near-unbiased estimate of generalization performance but has high variance and is computationally expensive for large n. Primarily useful for very small datasets (<100 examples).
+
+### Time-Series Cross-Validation
+
+Standard k-fold shuffles the data randomly, which causes future data to appear in the training set when validating past data — a form of data leakage. Time-series cross-validation enforces temporal order:
+
+- **Expanding window:** Train on [0, t], evaluate on [t, t+h]. Increase t by one horizon h, repeat. The training set grows over time.
+- **Rolling window:** Train on [t-w, t], evaluate on [t, t+h]. Training window of fixed size w slides forward. Reflects scenarios where recent data is more relevant than old data.
+
+> 💡 **Senior Tip:** In production, the relevant question is not "how well does the model do on held-out data sampled from the same distribution?" but "how well does the model do on data from the next period?" Time-series cross-validation measures the latter. Using standard k-fold on time series data produces optimistic validation scores that systematically underestimate production error.
+
+### Nested Cross-Validation
+
+Standard cross-validation for model selection introduces a subtle bias: you use the same data to both select hyperparameters and estimate generalization performance, producing an overly optimistic estimate. Nested cross-validation separates these concerns:
+
+- **Outer loop (model evaluation):** k-fold to estimate final generalization performance
+- **Inner loop (hyperparameter selection):** For each outer training fold, run another k-fold to select the best hyperparameters
+
+The outer loop's test performance is an unbiased estimate of the selected model's generalization ability. The computational cost is O(k_outer × k_inner × n_hyperparameter_configs), which becomes expensive quickly — in practice, nested CV is most useful when you have a small dataset and need reliable performance estimates.
+
+```python
+from sklearn.model_selection import (
+    StratifiedKFold, TimeSeriesSplit, cross_val_score, GridSearchCV
+)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+
+# Standard stratified k-fold — always use stratified for classification
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+scores = cross_val_score(model, X, y, cv=cv, scoring='roc_auc', n_jobs=-1)
+print(f"ROC-AUC: {scores.mean():.4f} ± {scores.std():.4f}")
+
+# Time-series CV — preserves temporal order
+tscv = TimeSeriesSplit(n_splits=5, gap=0)
+ts_scores = cross_val_score(model, X_ts, y_ts, cv=tscv, scoring='neg_mean_absolute_error')
+print(f"MAE: {-ts_scores.mean():.4f} ± {ts_scores.std():.4f}")
+
+# Nested CV for unbiased hyperparameter selection
+inner_cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Inner loop: select best hyperparameters
+pipe = Pipeline([('scaler', StandardScaler()), ('svm', SVC(probability=True))])
+param_grid = {'svm__C': [0.1, 1, 10], 'svm__gamma': ['scale', 'auto']}
+grid_search = GridSearchCV(pipe, param_grid, cv=inner_cv, scoring='roc_auc')
+
+# Outer loop: estimate generalization performance
+nested_scores = cross_val_score(grid_search, X, y, cv=outer_cv,
+                                 scoring='roc_auc', n_jobs=-1)
+print(f"Nested CV ROC-AUC: {nested_scores.mean():.4f} ± {nested_scores.std():.4f}")
+```
+
+---
+
+### Metrics Summary Table
+
+| Metric | Use When | Avoid When | Sensitive To |
+|---|---|---|---|
+| Accuracy | Classes are balanced | Class imbalance | Majority class |
+| Precision | FP cost is high (spam, ad targeting) | Recall also matters | Threshold choice |
+| Recall | FN cost is high (fraud, diagnosis) | Precision also matters | Threshold choice |
+| F1 | Both P and R matter, balanced need | One is clearly more important | Threshold choice |
+| ROC-AUC | Comparing classifiers across thresholds | Severe imbalance (use PR instead) | Imbalance (misleadingly optimistic) |
+| AUPRC | Imbalanced classification | Baseline not clear without prevalence | Positive class prevalence |
+| MCC | Severe imbalance, need single metric | Less interpretable to stakeholders | Nothing (most robust) |
+| MAE | Outliers are real, interpretability needed | Differentiable loss needed | Outliers less than MSE |
+| RMSE | Default regression reporting | Zero-target scenarios | Outliers (squares errors) |
+| MAPE | Cross-scale comparison | Targets near or at zero | Asymmetry, division by zero |
+| R² | Explained variance reporting | Comparing models with different # features | Number of features |
+
+---
+
+# Section 3: Feature Engineering
+
+Feature engineering is the process of transforming raw data into representations that machine learning models can learn from effectively. It is simultaneously one of the highest-leverage activities in applied ML (good features can overcome a weak algorithm) and one of the most common sources of production failures (bad features can break a good algorithm).
+
+---
+
+## Encoding Categorical Variables
+
+### One-Hot Encoding
+
+Converts a categorical variable with k distinct categories into k binary columns (or k-1 to avoid the dummy variable trap in linear models). Assumes no ordinal relationship between categories — each is independent.
+
+**When to use:** Nominal categories with no natural ordering (country, product type, device type). Preferred for linear models, which interpret feature values directly as magnitudes.
+
+**Limitation:** High cardinality (a feature with 10,000 unique values produces 10,000 columns) causes dimensionality explosion, sparse matrices, and overfitting.
+
+### Label Encoding
+
+Assigns an integer (0, 1, 2, ...) to each category. Compact but introduces an artificial ordinal relationship: the model may learn that category "2" is twice category "1," which is meaningless for nominal data.
+
+**When to use:** Ordinal categories where the integer order reflects a real relationship (low=0, medium=1, high=2). Safe for tree-based models (which split on thresholds and are insensitive to the linear interpretation of integers) — never use for linear models with nominal categories.
+
+### Target Encoding
+
+Replace each category with the mean (or other statistic) of the target variable for that category. A category that correlates with high target values gets a high encoded value.
+
+**When to use:** High-cardinality categorical features (zip codes, user IDs, product IDs) where one-hot encoding is impractical.
+
+::: {.callout-warning}
+**Critical risk — data leakage:** Naive target encoding uses the target from the same rows being encoded, which leaks the target directly into the feature. Always use cross-validated target encoding (compute the target statistic using out-of-fold data only) or add Laplace smoothing to prevent memorization of rare categories. `category_encoders.TargetEncoder` with `smoothing` handles this correctly.
+:::
+
+### Ordinal Encoding
+
+Maps ordered categories to integers while respecting the natural order. Distinct from label encoding in that the ordering is intentional and domain-specified (e.g., education level: high school=1, bachelor's=2, master's=3, PhD=4).
+
+```python
+import pandas as pd
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
+from category_encoders import TargetEncoder
+
+# One-hot: for nominal categoricals
+ohe = OneHotEncoder(handle_unknown='ignore', sparse_output=False, drop='first')
+X_ohe = ohe.fit_transform(X[['country', 'device_type']])
+
+# Ordinal: for ordered categoricals
+ordinal_map = [['high school', 'bachelor', 'master', 'phd']]
+oe = OrdinalEncoder(categories=ordinal_map, handle_unknown='use_encoded_value',
+                    unknown_value=-1)
+X_ordinal = oe.fit_transform(X[['education']])
+
+# Target encoding with smoothing (prevents leakage via regularization)
+# Use in a CV loop or with the built-in cv parameter
+te = TargetEncoder(smoothing=10)  # higher smoothing = more regularization
+X_te = te.fit_transform(X[['zip_code']], y_train)  # only fit on training data!
+```
+
+---
+
+## Feature Scaling
+
+Distance-based and gradient-based algorithms are sensitive to feature scale. Tree-based algorithms (Random Forest, XGBoost) are scale-invariant. Neural networks benefit from scaling for numerical stability and faster convergence.
+
+**StandardScaler** (Z-score normalization): $x' = (x - \mu) / \sigma$. Centers to mean 0, scales to unit variance. Assumes approximately normally distributed features. Sensitive to outliers (an outlier shifts the mean and inflates the standard deviation).
+
+**MinMaxScaler**: $x' = (x - x_{min}) / (x_{max} - x_{min})$. Scales to [0, 1]. Sensitive to outliers (a single extreme value compresses all other values to a narrow range). Useful when the feature has a known bounded range and no extreme outliers.
+
+**RobustScaler**: $x' = (x - Q_{50}) / (Q_{75} - Q_{25})$. Uses median and interquartile range instead of mean and standard deviation. Robust to outliers by design. Use when features have heavy tails or known outliers that you do not want to remove.
+
+| Scaler | Centers to | Sensitive to outliers | Use when |
+|---|---|---|---|
+| StandardScaler | Mean 0, std 1 | Yes | Features roughly normal, no extreme outliers |
+| MinMaxScaler | [0, 1] | Yes (strongly) | Bounded features, known range, neural net image inputs |
+| RobustScaler | Median, IQR | No | Features with heavy tails or outliers that are real data |
+
+> ⚠️ **Common Mistake:** Fitting the scaler on the full dataset before splitting. This leaks test set statistics (mean, min, max) into the training preprocessing. Always: `scaler.fit(X_train)` then `scaler.transform(X_train)` and `scaler.transform(X_test)`.
+
+---
+
+## Handling Missing Data
+
+### Imputation Strategies
+
+**Mean/median imputation:** Replace missing values with the column mean (continuous, symmetric distributions) or median (skewed distributions, outliers present). Fast and simple. Destroys the variance of the imputed feature and ignores correlations between features.
+
+**Mode imputation:** For categorical features, replace with the most frequent category. Same limitations as mean/median imputation for continuous data.
+
+**Model-based imputation:** Use a regression or classification model to predict missing values from other features. `sklearn.impute.IterativeImputer` implements MICE (Multiple Imputation by Chained Equations) — models each feature with missing values as a function of other features, iterating to convergence. More accurate than univariate imputation but computationally expensive.
+
+**K-NN imputation:** Replace missing values with the average of the k nearest complete neighbors in feature space. More flexible than mean imputation but sensitive to scale and computationally expensive at large n.
+
+### Missing Indicator Flags
+
+For data where missingness is informative (e.g., a customer not filling out income field may correlate with a specific demographic), add a binary indicator column (`feature_missing = 1 if null else 0`) before imputing. This preserves the signal that the value was missing, which the imputed value cannot capture.
+
+### Deletion
+
+**Complete-case analysis (listwise deletion):** Drop rows with any missing values. Valid only if data is Missing Completely At Random (MCAR) — if missingness is related to other features or the target, deletion introduces bias.
+
+::: {.callout-warning}
+**Production gotcha:** Imputers must be fit on training data and applied to test data — just like scalers. If your mean imputer learned mean=42 from training data, apply 42 as the imputed value at inference, even if the test batch mean is different. Refitting imputers at inference is data leakage.
+:::
+
+```python
+from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
+from sklearn.pipeline import Pipeline
+import numpy as np
+
+# Add missingness indicator before imputing
+df['income_missing'] = df['income'].isna().astype(int)
+
+# Pipeline: impute then scale (order matters!)
+num_pipeline = Pipeline([
+    ('imputer', SimpleImputer(strategy='median')),  # or 'mean', 'most_frequent'
+    ('scaler', RobustScaler())
+])
+
+# For richer imputation
+knn_imputer = KNNImputer(n_neighbors=5, weights='distance')
+mice_imputer = IterativeImputer(max_iter=10, random_state=42)  # MICE
+```
+
+---
+
+## Feature Selection
+
+Too many features slow training, increase overfitting risk, and can introduce noise that degrades performance. Feature selection reduces the feature set to those that are most informative.
+
+### Filter Methods
+
+**Variance threshold:** Remove features with near-zero variance — they carry almost no information. `sklearn.feature_selection.VarianceThreshold`.
+
+**Correlation analysis:** For continuous targets, compute Pearson correlation between each feature and the target. Remove features with |correlation| below a threshold. Also check inter-feature correlation: highly correlated features are redundant (and cause multicollinearity in linear models). Remove one of any pair with |correlation| > 0.9.
+
+### Wrapper Methods
+
+**Recursive Feature Elimination (RFE):** Fit a model, rank features by importance, remove the least important feature(s), refit, repeat until a target number of features is reached. Expensive but accounts for feature interactions. `sklearn.feature_selection.RFE` and `RFECV` (which selects the optimal number via cross-validation).
+
+### Embedded Methods
+
+**Tree-based feature importance:** After fitting a Random Forest or XGBoost model, `feature_importances_` gives impurity-based importance. Fast but biased toward high-cardinality features in Random Forests. Prefer permutation importance for a more reliable estimate.
+
+**SHAP-based selection:** SHAP (SHapley Additive exPlanations) values provide the contribution of each feature to each individual prediction. Aggregate SHAP values across all predictions for a global importance measure that is model-agnostic, consistent, and accounts for feature interactions. Select top-k features by mean |SHAP value|.
+
+```python
+from sklearn.feature_selection import VarianceThreshold, RFECV, SelectKBest, f_classif
+from sklearn.ensemble import RandomForestClassifier
+import shap
+
+# 1. Remove near-zero variance features
+vt = VarianceThreshold(threshold=0.01)  # removes features with var < 0.01
+X_var = vt.fit_transform(X_scaled)
+print(f"Features after variance filter: {X_var.shape[1]} (from {X_scaled.shape[1]})")
+
+# 2. Correlation filter
+corr_matrix = pd.DataFrame(X_scaled).corr().abs()
+upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+to_drop = [col for col in upper.columns if any(upper[col] > 0.9)]
+print(f"Dropping {len(to_drop)} highly correlated features")
+
+# 3. RFE with cross-validation to select optimal number of features
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+rfecv = RFECV(estimator=rf, step=1, cv=StratifiedKFold(5),
+              scoring='roc_auc', n_jobs=-1)
+rfecv.fit(X_train, y_train)
+print(f"Optimal features: {rfecv.n_features_}")
+X_rfecv = rfecv.transform(X_train)
+
+# 4. SHAP-based importance
+explainer = shap.TreeExplainer(rf)
+shap_values = explainer.shap_values(X_train)
+# For binary classification, shap_values[1] = SHAP for positive class
+mean_shap = np.abs(shap_values[1]).mean(axis=0)
+top_k = np.argsort(mean_shap)[-20:]  # top 20 features by mean |SHAP|
+shap.summary_plot(shap_values[1], X_train, max_display=20)
+```
+
+---
+
+## Feature Leakage
+
+Feature leakage is the single most dangerous failure mode in applied ML. It occurs when information from the future or from the target leaks into your training features, producing models that perform unrealistically well in validation but fail in production.
+
+### What it is
+
+Leakage means your model has access to information at training time that it would not have at inference time. The model learns a spurious shortcut — it does not actually learn the underlying signal, it learns to exploit the data artifact.
+
+### Common sources
+
+**Target leakage:** A feature is computed using the target variable (directly or indirectly). Example: using "days until churn" as a feature in a churn model — this is computed from the churn date, which you only know after the fact.
+
+**Temporal leakage:** Future data appears in the training set for predicting the past. Example: splitting time-series data randomly and using aggregate statistics (rolling averages, etc.) computed on the full series. A row representing day 100 might be in the training set, but its rolling 7-day feature included day 103, which is in the test set.
+
+**Data pipeline leakage:** Preprocessing steps are fit on the full dataset instead of the training fold only. Example: StandardScaler fit on all data before cross-validation — test set statistics influence the training normalization.
+
+**Proxy leakage:** A feature is not the target itself, but highly correlated with it in ways that would not exist at inference time. Example: in a hospital readmission model, including "discharge notes sentiment" — in practice, these notes are written after the readmission decision, not before.
+
+### How to detect leakage
+
+- Unusually high validation performance (AUC > 0.98 on a hard problem): be suspicious
+- A feature has near-perfect correlation with the target: check if it is a proxy
+- Feature importance analysis shows a surprising feature dominating: investigate its data origin
+- Drop the suspected feature and re-evaluate: if performance collapses, it was leakage
+
+### How to prevent leakage
+
+- Use pipelines that encapsulate all preprocessing, fit only on training data
+- For time-series, enforce temporal splits and never compute rolling statistics that look forward
+- Audit the feature creation process: for every feature, ask "would I know this at prediction time?"
+- Never include features derived from the prediction period in the training set
+
+> 💡 **Senior Tip:** When handed a dataset by a data team, your first two validation steps should be (1) check temporal integrity — are there any features that could have been computed after the event you're predicting? — and (2) check for features with suspiciously high correlation to the target. Both are data quality audits, not modeling questions.
+
+---
+
+## Feature Transformations
+
+### Log Transform for Skewed Distributions
+
+When a continuous feature has a highly right-skewed distribution (salary, revenue, population), the raw values cause models to disproportionately weight extreme high values. Log-transforming compresses the high end and expands the low end: $x' = \log(x + 1)$ (the +1 handles zero values).
+
+Only apply log transforms when the feature is strictly non-negative and when skewness > 1 suggests the linear scale is not appropriate. After log-transforming, verify the distribution approximates normality.
+
+### Interaction Features
+
+Multiplying two features together (or adding them, taking their ratio) creates a new feature that captures non-linear relationships. Example: `price_per_sqft = price / area` is more informative for housing models than `price` and `area` separately.
+
+Tree-based models can learn interactions from data (they split on one feature, then another), but linear models cannot — interaction features must be added explicitly. Use domain knowledge to guide which interactions are meaningful rather than brute-force generating all pairwise products.
+
+### Polynomial Features
+
+`sklearn.preprocessing.PolynomialFeatures` generates all polynomial combinations of features up to degree d. A degree-2 expansion of 10 features produces 65 features; degree-3 produces 285. This enables linear models to fit non-linear decision boundaries, but the feature count grows as $O(n^d)$ and overfitting risk increases rapidly. Use with aggressive regularization.
+
+```python
+from sklearn.preprocessing import PolynomialFeatures, PowerTransformer
+from sklearn.pipeline import Pipeline
+import numpy as np
+
+# Log transform for skewed features
+df['log_revenue'] = np.log1p(df['revenue'])  # log(1 + x), handles zeros
+
+# Box-Cox / Yeo-Johnson transforms (more flexible than log)
+# Yeo-Johnson handles negative values; Box-Cox requires positive only
+pt = PowerTransformer(method='yeo-johnson')
+X_pt = pt.fit_transform(X_skewed)
+
+# Interaction feature
+df['price_per_sqft'] = df['price'] / (df['area'] + 1e-6)  # avoid division by zero
+
+# Polynomial features (degree 2 only for interpretability and scale)
+poly = PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)
+X_poly = poly.fit_transform(X_important_features)  # apply only to a subset!
+print(f"Polynomial features: {X_poly.shape[1]}")
+
+# Full feature engineering pipeline
+from sklearn.compose import ColumnTransformer
+
+numeric_features = ['age', 'income', 'tenure']
+categorical_features = ['country', 'device']
+
+preprocessor = ColumnTransformer([
+    ('num', Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', RobustScaler())
+    ]), numeric_features),
+    ('cat', Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('encoder', OneHotEncoder(handle_unknown='ignore', drop='first'))
+    ]), categorical_features)
+])
+
+full_pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('feature_selector', SelectKBest(f_classif, k=20)),
+    ('classifier', RandomForestClassifier(n_estimators=200, random_state=42))
+])
+
+full_pipeline.fit(X_train, y_train)
+```
+
+---
+
+## Cheat Sheet
+
+**Clustering:**
+
+- K-Means minimizes within-cluster sum of squares; assumes spherical, equal-size clusters
+- K-Means++ initialization reduces bad initializations; always use it over random init
+- Choose k using both elbow method (WCSS vs k) AND silhouette score; neither alone is sufficient
+- DBSCAN requires no k; finds arbitrary shapes; labels noise explicitly; fails on varying-density clusters
+- DBSCAN hyperparameters: epsilon (neighborhood radius) — tune with k-distance plot; min_samples — start at 2×dimensions
+- Hierarchical clustering is O(n²–n³); use it for small datasets and when hierarchy matters
+- Ward linkage minimizes variance increase at each merge; produces compact, balanced clusters
+- GMM = soft K-Means with full covariance; uses EM; supports probabilistic cluster membership
+- GMM covariance types: full > tied > diag > spherical (decreasing expressiveness and parameter count)
+- Use BIC/AIC to select number of GMM components, not just visual inspection
+
+**Dimensionality Reduction:**
+
+- PCA is linear; finds directions of maximum variance; always scale before PCA
+- Scree plot shows cumulative variance explained; retain components up to 90–95% threshold
+- t-SNE is for visualization only; inter-cluster distances are NOT meaningful; not deterministic
+- Always run PCA to 50 dims before t-SNE for efficiency; subsample to <10K points
+- UMAP is faster than t-SNE; preserves more global structure; can transform new points
+- n_neighbors in UMAP controls local vs global structure; min_dist controls cluster compactness
+- Never fit PCA/scalers/imputers on the full dataset before train/test split
+
+**Evaluation Metrics:**
+
+- Accuracy is misleading on imbalanced datasets; always check class distribution first
+- Precision = of what you flagged, how often you were right; use when FP costs are high
+- Recall = of what actually happened, how much you caught; use when FN costs are high
+- F1 is the harmonic mean of precision and recall; harmonic mean punishes extreme imbalance between P and R
+- ROC-AUC measures discrimination across all thresholds; AUC=0.5 is random; very high AUC (>0.98) is suspicious
+- PR curve is better than ROC for imbalanced datasets; AUPRC baseline = positive class prevalence
+- MCC accounts for all four confusion matrix cells; most robust single metric for imbalanced binary classification
+- For regression: MAE for interpretability; RMSE for penalizing large errors; avoid MAPE when targets can be zero
+- Use stratified k-fold for classification CV; never use standard k-fold on imbalanced data
+- Use time-series split for temporal data; standard k-fold causes future leakage
+- Nested CV uses inner loop for hyperparameter selection and outer loop for unbiased performance estimation
+
+**Feature Engineering:**
+
+- One-hot encode nominal categoricals; label encode ordinals; use target encoding for high-cardinality
+- Target encoding without cross-validation or smoothing causes target leakage; always smooth
+- StandardScaler: use for normally distributed features; fit on train, transform test
+- RobustScaler: use for features with outliers; based on median and IQR
+- MinMaxScaler: use for bounded features (pixel values, probabilities)
+- Add missing indicator columns when missingness is informative before imputing
+- Fit all preprocessors (scalers, imputers, encoders) on training data only; never on full dataset
+- Feature leakage: anything that encodes future information or the target itself
+- Most common leakage: scaling on full data, temporal features looking forward, proxy variables derived from target
+- Log transform for right-skewed features (revenue, counts); use np.log1p for zeros
+- Tree models learn interactions automatically; linear models need explicit interaction features
+- SHAP-based feature importance is more reliable than impurity-based importance for tree models
+- RFECV selects the optimal feature count via cross-validation, not just a fixed k
+
+---
+
+## Interview Questions
+
+### Entry Level
+
+**Q1. What is the difference between supervised and unsupervised learning? Give one example of each.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Supervised learning trains a model on labeled examples — each training instance has an input and a known output (target). The model learns to map inputs to outputs and is evaluated by how well those predictions match the true labels. Examples: spam classification (input = email, label = spam/not-spam), house price prediction (input = features, label = price), sentiment analysis (input = text, label = positive/negative).
+
+Unsupervised learning finds structure in unlabeled data — there is no predefined output to predict. The model discovers patterns, groupings, or compressed representations from the data itself. Examples: customer segmentation with K-Means (find natural groups without predefined group labels), PCA for dimensionality reduction (find low-dimensional representations), anomaly detection (identify data points that don't fit the normal distribution).
+
+The key practical difference: in supervised learning, you can directly measure if your model is right or wrong against ground-truth labels. In unsupervised learning, "correctness" is ambiguous — you must use intrinsic metrics (silhouette score, reconstruction error), domain knowledge, or downstream task performance to evaluate quality.
+:::
+
+**Q2. What is accuracy, and when should you NOT use it as your primary metric?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+
+**Weak answer:** "Accuracy is the percentage of correct predictions."
+
+**Strong answer:** Accuracy is the fraction of predictions that are correct: (TP + TN) / (TP + TN + FP + FN). It is the most intuitive metric and also the most commonly misused one.
+
+You should not use accuracy as your primary metric whenever the class distribution is imbalanced. The canonical example: a fraud detection dataset where 99% of transactions are legitimate. A model that predicts "not fraud" for every single transaction achieves 99% accuracy — and catches zero fraudulent transactions. The metric gives you a false sense of performance.
+
+As a practical rule: if any class represents less than 30-40% of the data, move to precision, recall, F1, ROC-AUC, or PR-AUC as your primary metric. Check the class distribution before evaluating any classifier. Imbalanced classes appear in fraud detection, churn prediction, medical diagnosis, rare event detection, and most real-world classification problems — which means accuracy is the wrong metric more often than it is the right one.
+:::
+
+**Q3. Explain PCA in plain English. What does it actually do to your data?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+PCA finds the directions in your feature space along which the data varies the most. Imagine your data is a cloud of points in many dimensions. PCA identifies the axis through that cloud along which the cloud is most stretched out — that is the first principal component. Then it finds the next-most-stretched axis (perpendicular to the first), then the next, and so on.
+
+It then projects your data onto these axes, discarding the directions with low variance (which tend to capture noise). If 20 features together explain 95% of the variance, PCA lets you represent your data in 20 dimensions instead of the original 500, losing only 5% of the information.
+
+What it does to your data: it rotates your coordinate system to align with the directions of maximum variance, then optionally discards the lowest-variance dimensions. The resulting features (principal components) are linear combinations of your original features — not individual features anymore, so individual principal components are generally not interpretable.
+:::
+
+**Q4. What is the difference between precision and recall? Give a business scenario where each matters more.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Precision asks: of everything I labeled as positive, how often was I right? ($TP / (TP + FP)$). A high-precision model makes fewer false alarms — when it fires, it is usually right — but it may miss many true positives.
+
+Recall asks: of everything that was actually positive, how much did I catch? ($TP / (TP + FN)$). A high-recall model catches most true events — but may fire many false alarms.
+
+**Precision matters most:** Spam filtering. Flagging a legitimate email as spam is very costly to the user (missed communication). A spam filter should only fire when confident — it is acceptable to let a few spam emails through rather than delete a real message.
+
+**Recall matters most:** Cancer screening. Missing a real cancer is catastrophic; the cost of a false positive (additional tests, biopsy) is acceptable compared to missing the disease. The screening system should cast a wide net, accepting many false positives to ensure high recall.
+
+The tradeoff: lowering the classification threshold increases recall (you catch more positives) but decreases precision (you also flag more negatives). Raising it does the reverse. The right operating threshold depends entirely on the relative costs of false positives vs. false negatives in your specific domain.
+:::
+
+**Q5. Why should you scale your features before running K-Means?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+K-Means assigns each point to the nearest centroid using Euclidean distance. Euclidean distance is scale-sensitive: a feature with range 0–10,000 (like annual salary) will numerically dominate a feature with range 0–1 (like a probability) in the distance calculation. The large-scale feature determines cluster membership almost entirely, and the small-scale feature is effectively ignored.
+
+For example: if you cluster customers by age (range 18–80) and income (range $20K–$200K), unscaled Euclidean distance is driven almost entirely by income. Two customers with identical ages but incomes of $50K and $51K would be closer than two customers with the same income but ages of 25 and 65. The resulting clusters reflect income groupings almost exclusively.
+
+After standardizing (subtract mean, divide by standard deviation), each feature contributes equally to the distance calculation. The clusters then reflect combined patterns across all features as intended. This applies to every distance-based algorithm: K-NN, DBSCAN, SVM with RBF kernel, hierarchical clustering.
+:::
+
+**Q6. What are the three types of points in DBSCAN, and what does it do with outliers?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+DBSCAN classifies every point as one of three types:
+
+- **Core point:** Has at least `min_samples` other points within radius `epsilon`. It is in a dense region.
+- **Border point:** Within `epsilon` of a core point but does not have enough neighbors to be a core point itself. It is on the edge of a cluster.
+- **Noise point:** Neither core nor border — isolated point in a sparse region.
+
+Clusters are formed by connecting core points that are within epsilon of each other (transitively), with border points attached to their nearest core point's cluster.
+
+Outliers are handled explicitly and elegantly: noise points are assigned label -1 and are not assigned to any cluster. This is one of DBSCAN's key advantages over K-Means — K-Means forces every point into a cluster even if it is an obvious outlier, pulling the centroid toward the outlier. DBSCAN identifies outliers as a natural byproduct of its density-based approach, which makes it directly useful for anomaly detection tasks.
+:::
+
+---
+
+### Mid Level
+
+**Q1. Your fraud model achieves 97% accuracy on the test set. Should you be happy? Walk through how you'd actually evaluate it.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+97% accuracy on a fraud detection model is a red flag, not a success signal. The first question is: what is the class distribution? If 3% of transactions are fraudulent, a model that predicts "not fraud" for everything achieves 97% accuracy. The accuracy metric is completely uninformative here.
+
+**Proper evaluation approach:**
+
+1. Check class distribution: `y_test.value_counts(normalize=True)`. If positive class is < 10%, accuracy is useless.
+
+2. Look at the confusion matrix: how many fraudulent transactions did the model actually catch (TP) vs. miss (FN)?
+
+3. Compute precision and recall separately. In fraud: recall is critical (you don't want to miss fraud), precision matters for operational cost (too many false positives overwhelms the investigation team).
+
+4. Plot the PR curve: compute AUPRC and compare to the baseline (= positive class prevalence, e.g., 0.03 for 3% fraud rate). A model with AUPRC=0.6 on a 3% positive class is excellent; AUPRC=0.05 is barely better than random.
+
+5. Plot the ROC curve and AUC. AUC should be substantially above 0.5 for a useful model.
+
+6. Select the operating threshold based on business logic: what is the cost of a missed fraud (FN) vs. the cost of a false flag (FP)? Adjust threshold to match the risk tolerance.
+
+The model might be fine — but 97% accuracy alone tells you nothing useful.
+
+**Follow-up: what if the model has AUC=0.5?**
+
+AUC=0.5 means the model has zero discriminative ability — it is equivalent to assigning random scores to transactions. This would likely indicate that your feature set contains no predictive signal for fraud, or that there is a serious data processing bug.
+:::
+
+**Q2. Explain overfitting and how you would detect and fix it in a production ML pipeline.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Overfitting occurs when a model learns the training data too well, capturing noise and idiosyncrasies that do not generalize to new data. The model's training performance is high but test/production performance is substantially worse.
+
+**Detection:**
+
+- Large gap between training and validation metric: training AUC=0.98, validation AUC=0.72 is a clear signal
+- Learning curves: as training set size increases, training error increases and validation error decreases — they should converge. If they remain far apart at full training size, the model is overfitting.
+- In production: model performs well on held-out test set but metrics degrade on live traffic — suggests distribution shift that the overfit model cannot handle
+
+**Fixes, in order of preference:**
+
+1. **More data:** the single most reliable fix for overfitting
+2. **Stronger regularization:** L2 weight decay, L1 for sparse models, dropout for neural networks
+3. **Simpler model:** reduce tree depth, fewer layers, fewer parameters
+4. **Feature selection:** remove noisy or irrelevant features; RFECV or SHAP-based selection
+5. **Ensemble methods:** bagging (Random Forest) reduces variance; averaging multiple models reduces overfitting
+6. **Early stopping:** for neural networks and gradient boosting, stop training when validation loss stops improving
+
+**Production pipeline-specific issues:**
+
+- Ensure all preprocessing is fit on training data only (scaler, imputer, encoder) — fitting on test data inflates test performance and masks overfitting
+- Use stratified k-fold CV rather than a single train/val split for more reliable estimates
+- Monitor production performance with the same metric used during training — if they diverge over time, you have distribution shift, not just overfitting
+
+```python
+from sklearn.model_selection import learning_curve
+import matplotlib.pyplot as plt
+
+train_sizes, train_scores, val_scores = learning_curve(
+    model, X, y, cv=5, n_jobs=-1,
+    train_sizes=np.linspace(0.1, 1.0, 10),
+    scoring='roc_auc'
+)
+
+plt.plot(train_sizes, train_scores.mean(axis=1), 'b-', label='Training AUC')
+plt.plot(train_sizes, val_scores.mean(axis=1), 'r-', label='Validation AUC')
+plt.fill_between(train_sizes,
+                 train_scores.mean(1) - train_scores.std(1),
+                 train_scores.mean(1) + train_scores.std(1), alpha=0.1)
+plt.fill_between(train_sizes,
+                 val_scores.mean(1) - val_scores.std(1),
+                 val_scores.mean(1) + val_scores.std(1), alpha=0.1)
+plt.xlabel('Training set size'); plt.ylabel('ROC-AUC')
+plt.legend(); plt.title('Learning Curve'); plt.show()
+```
+:::
+
+**Q3. A colleague applies K-Means to a dataset with two features: employee_age (18–65) and annual_salary_usd (30,000–300,000). The clusters don't make sense to the domain expert. What might be wrong, and how do you fix it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The almost certain culprit is feature scaling. The salary feature ranges over 270,000 units; age ranges over 47 units. When K-Means computes Euclidean distance, the salary feature dominates completely — two employees with identical salaries but 40-year age difference are numerically much closer than two employees with the same age but a $1,000 salary difference.
+
+The clustering is effectively grouping employees by salary alone, ignoring age entirely. The "clusters" are salary bands, not combinations of both features.
+
+**Fix:** Standardize both features before clustering.
+
+```python
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X[['employee_age', 'annual_salary_usd']])
+
+km = KMeans(n_clusters=k, init='k-means++', n_init=10, random_state=42)
+labels = km.fit_predict(X_scaled)
+```
+
+After scaling, age and salary each have mean 0 and standard deviation 1, so they contribute equally to distance calculations. The clusters will reflect genuine combinations of both dimensions.
+
+**Additional checks to run:**
+
+- If clusters still don't make business sense after scaling, reconsider k — use silhouette score and domain knowledge together
+- Check for outliers in salary (a few $500K executives can distort K-Means centroids) — consider RobustScaler or outlier removal
+- Consider whether Euclidean distance is even the right metric for this data — for demographic/salary segmentation, business-defined distance functions may be more appropriate than raw Euclidean
+
+**Follow-up:** Would scaling matter for a Random Forest model on this same data?
+No. Tree-based algorithms split on threshold values and are completely scale-invariant — a split at salary > $100,000 is the same whether salary is raw or standardized. Scaling is only necessary for distance-based and gradient-based algorithms.
+:::
+
+**Q4. How do you select the number of components in PCA?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+There are three practical approaches, typically used together:
+
+**1. Explained variance threshold (most common):** Choose the smallest k such that the top-k components explain X% of total variance. 95% is a common threshold; for noise-heavy data, 90% may be sufficient. In sklearn: `PCA(n_components=0.95)` does this automatically.
+
+**2. Scree plot (elbow method):** Plot each component's individual variance explained (or cumulative). Find the "elbow" — the point where the marginal gain from adding another component drops sharply. This is analogous to the elbow method for k in K-Means. The interpretation: components after the elbow are capturing noise rather than signal.
+
+**3. Downstream task performance:** If PCA is a preprocessing step for a supervised model, treat the number of components as a hyperparameter and tune it via cross-validation. `n_components=20` may produce worse downstream performance than `n_components=50` even though 20 explains 90% of variance — the remaining 10% might contain signal that matters for the task.
+
+**Practical guidance:**
+
+- Start with the variance threshold (95%) and check if it gives a reasonable number of components. If 95% variance requires 400 out of 500 components, PCA is providing little compression and may not be the right tool.
+- If you use PCA for visualization specifically, always use exactly 2 or 3 components regardless of variance explained — but add a note that these explain X% of variance so readers understand information loss.
+- Verify after applying PCA that downstream model performance is comparable to training on the original features. PCA can hurt performance if it discards features that are individually low-variance but highly predictive.
+
+```python
+pca = PCA().fit(X_scaled)
+cumvar = np.cumsum(pca.explained_variance_ratio_)
+k_95 = np.argmax(cumvar >= 0.95) + 1
+print(f"Components for 95% variance: {k_95}")
+```
+:::
+
+**Q5. What is feature leakage, and what checks would you run on a new dataset from a data team?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Feature leakage is when a feature in your training data encodes information that would not be available at prediction time — either because it was computed using the target (target leakage) or because it encodes future information (temporal leakage). The result is models that appear to perform exceptionally well in validation but fail in production because the leaked information is not available at inference.
+
+**Checks I'd run on a new dataset:**
+
+**1. Correlation audit:** Compute correlation of every feature with the target. Any feature with |correlation| > 0.7 needs investigation: is this a legitimate strong predictor, or a proxy for the target computed after the fact?
+
+```python
+corr_with_target = pd.DataFrame(X_train).corrwith(pd.Series(y_train)).abs()
+print(corr_with_target.sort_values(ascending=False).head(20))
+```
+
+**2. Temporal audit:** For each feature, ask "when was this value computed or known, relative to the event I'm predicting?" For a churn model predicting whether a user will churn in the next 30 days: any feature computed from events in those 30 days is leakage.
+
+**3. Suspicious model performance:** After a quick baseline model, check validation AUC. If it is > 0.97 on a hard problem with limited domain knowledge, be suspicious. Drop the top-1 feature and refit — if performance collapses dramatically, that feature is almost certainly leaking.
+
+**4. Feature naming audit:** Features with names like "days_until_event," "post_event_actions," "outcome_flag" or anything referencing the future are red flags.
+
+**5. Pipeline audit:** Check that any data transformations (means, percentiles, encodings) were computed only on training data. Ask the data team for their feature computation notebook to inspect directly.
+
+In one real scenario: a customer churn model had a feature "support_ticket_resolution_days" which was only populated after tickets were resolved — and customers who churn often abandon open tickets, leaving this field null. The not-null indicator was a near-perfect proxy for non-churn. This would be caught by the correlation audit and the temporal audit together.
+:::
+
+**Q6. When would you choose DBSCAN over K-Means?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Choose DBSCAN when one or more of these conditions hold:
+
+**1. You don't know k:** DBSCAN discovers the number of clusters from the data density. K-Means requires you to specify k, which may be unknown or unjustifiable.
+
+**2. Clusters have irregular shapes:** K-Means assumes spherical clusters with roughly equal size. DBSCAN handles crescents, spirals, elongated clusters, and arbitrary shapes because it is density-based, not centroid-based.
+
+**3. Outlier detection is part of the goal:** DBSCAN explicitly identifies noise points (label = -1). In fraud detection, anomaly detection, or data cleaning, these outlier labels are often the primary output of interest. K-Means forces every point into a cluster.
+
+**4. Cluster sizes and densities vary dramatically:** K-Means is biased toward similarly-sized spherical clusters. DBSCAN handles clusters of very different sizes (though it struggles with clusters of very different densities, since epsilon is global).
+
+**Use K-Means when:**
+- Dataset is large (millions of rows) — K-Means is much faster: O(nkid) vs O(n²) for naive DBSCAN
+- Clusters are approximately spherical and similarly sized
+- You need exactly k clusters for a downstream system that expects fixed segment counts
+- You want to use the cluster centroids as prototypes (e.g., vector quantization)
+
+The practical decision tree: start with K-Means for scale and speed; switch to DBSCAN when you suspect irregular shapes, need outlier detection, or domain knowledge suggests the number of clusters is emergent from the data rather than predefined.
+:::
+
+---
+
+### Senior Level
+
+**Q1. You have 1M customer records and no labels. How do you segment them? Walk through the full approach.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is an end-to-end unsupervised ML problem. The right answer covers data preparation, algorithm choice, validation, and operationalization.
+
+**Step 1: Define the business objective before touching data.** Segmentation for what purpose? Customer segments for marketing should optimize for behavioral and attitudinal similarity. Segments for churn risk should weight recent activity heavily. Segments for product recommendation should weight purchase history. The objective drives every subsequent decision. If you cannot define what "good segmentation" looks like for the business, stop here and clarify.
+
+**Step 2: Feature selection and engineering.** With 1M records, you likely have behavioral, demographic, and transactional features. Select features that are actionable (the business can actually do something different for each segment), stable over time (not day-to-day noise), and available at scoring time (no leakage). Common useful features: recency/frequency/monetary (RFM) values, product category preferences, channel preferences, tenure. Avoid features that are direct proxies for each other.
+
+**Step 3: Preprocessing at scale.**
+- Handle missing data: flag and impute (median for numeric, mode for categorical)
+- Scale: StandardScaler or RobustScaler — critical for distance-based algorithms
+- Encode categoricals: target encoding for high-cardinality; one-hot for low-cardinality
+- Dimensionality reduction: with many features, PCA to ~20-50 components to remove noise and speed up clustering
+
+**Step 4: Algorithm choice.** For 1M rows, hierarchical clustering is out (O(n²)). Realistic options:
+- **K-Means** (default starting point): fast, scalable, interpretable centroids. Use MiniBatchKMeans for 1M records.
+- **GMM** if you need soft assignments (customers can belong to multiple segments with probabilities)
+- **DBSCAN/HDBSCAN** if you suspect outlier customers and irregular segment shapes
+
+Start with K-Means. Tune k from 4 to 12 using silhouette scores on a 100K sample, then fit the best k on all 1M records.
+
+**Step 5: Validate and interpret clusters.** Internal validation alone is insufficient — silhouette score tells you if clusters are compact and separated, not if they are meaningful to the business.
+- Profile each cluster: compute mean/median of all features per cluster
+- Visualize: project to 2D with UMAP, color by cluster label
+- Business review: present cluster profiles to a domain expert and ask "does this segment make sense? Would you treat these customers differently?"
+
+**Step 6: Stability testing.** Re-run clustering with 5 different random seeds and check label stability (via Jaccard index between clusterings). Unstable clusters are not actionable — the business cannot define a strategy for a segment that changes with each refit.
+
+**Step 7: Productionization.** Assign new customers at scoring time by computing their distance to the trained K-Means centroids (no refit needed for individual records). Store cluster assignments in the customer database. Set up a pipeline to re-cluster quarterly with the same feature definitions, using cluster profile matching to maintain consistent segment naming across runs.
+
+> 🎯 **What great looks like:** A senior candidate frames this as a business problem before an ML problem, mentions the stability testing step (most candidates skip this), explicitly handles the scaling challenge of 1M records (MiniBatchKMeans, sampling for hyperparameter search), and describes how cluster labels would be maintained consistently over time in production.
+:::
+
+**Q2. Your model achieves 99% accuracy but is failing in production. Diagnose the problem systematically.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+99% accuracy on a real production problem should trigger immediate suspicion rather than confidence. There are several systematic failure modes to investigate.
+
+**Hypothesis 1: Class imbalance.** Check the class distribution immediately. If 99% of examples are class 0, a model that always predicts class 0 achieves 99% accuracy and catches nothing. Compute precision, recall, F1, and ROC-AUC. If the model has AUC near 0.5 or recall near 0, this is the answer.
+
+**Hypothesis 2: Data leakage.** A model that has learned a spurious shortcut from a leaked feature will score perfectly in validation and fail when that feature is unavailable or carries different signal in production. Symptoms: accuracy drops precipitously in production while validation accuracy remains 99%; top feature importances include features with implausible predictive power; performance degrades suddenly on certain time periods.
+
+To diagnose: audit the top 5 features by importance. For each, ask "would this value be available at prediction time, and was it computed after the event we're predicting?" Check if removing the top feature causes a dramatic performance drop (if so, it is almost certainly leakage).
+
+**Hypothesis 3: Distribution shift.** The production distribution differs from the training distribution. The model learned patterns in training data that do not generalize to the real user population. Symptoms: gradual performance decay over time; sudden drop after a product change or new user acquisition channel; performance is worse on specific subpopulations.
+
+To diagnose: compare feature distributions between training data and recent production data using KL divergence or population stability index (PSI). PSI > 0.2 on any feature indicates significant shift.
+
+**Hypothesis 4: Label quality.** 99% accuracy on noisy or mislabeled data can mean the model learned to agree with the label noise rather than the true signal. If 5% of labels in your training data are wrong and the model memorized them, it will fail on correctly labeled production data.
+
+**Hypothesis 5: Train/test data mismatch.** The test set was sampled from the same time period, same user cohort, or same data source as training — so it is not a realistic proxy for production. A properly constructed test set should reflect the production input distribution as accurately as possible.
+
+**Systematic debugging approach:**
+
+1. Deploy shadow mode: run both old and new model on production traffic, comparing predictions against eventual ground truth
+2. Compute production metrics with a time lag (wait for outcomes to be observed) — do not rely on proxy metrics
+3. Slice performance by user segment, time period, geography, and feature bins to find where the model is failing
+4. Compare the input feature distribution at training time vs. production time
+
+> 🎯 **What great looks like:** A senior candidate immediately names leakage and distribution shift as the primary hypotheses (not just "the model overfit"), asks to see the confusion matrix and ROC-AUC before commenting further on accuracy, and describes a production debugging process that includes shadow deployment and sliced metric analysis — not just re-evaluating on the training data.
+:::
+
+**Q3. How do you detect feature leakage in a dataset handed to you by a data team?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Feature leakage detection is a data audit problem, not a modeling problem. It requires both technical checks and domain knowledge. Here is the systematic approach.
+
+**Automated statistical checks:**
+
+```python
+# 1. Correlation audit — flag any feature with |corr| > 0.6 for investigation
+corr = pd.DataFrame(X_train).corrwith(pd.Series(y_train)).abs()
+leakage_candidates = corr[corr > 0.6].sort_values(ascending=False)
+print("High-correlation features to investigate:\n", leakage_candidates)
+
+# 2. Train a fast model and inspect top feature importances
+from sklearn.ensemble import GradientBoostingClassifier
+gbc = GradientBoostingClassifier(n_estimators=50, max_depth=3)
+gbc.fit(X_train, y_train)
+feature_importance = pd.Series(gbc.feature_importances_, index=feature_names)
+print("Top 10 most important features:")
+print(feature_importance.sort_values(ascending=False).head(10))
+
+# 3. Check if removing the top feature causes dramatic performance drop
+# (suggests it was doing most of the "work" via leakage)
+```
+
+**Temporal audit:** For each feature, determine when its value was computed relative to the event being predicted. Create a feature inventory table:
+
+| Feature | Data source | Computed when | Available at prediction time? |
+|---|---|---|---|
+| `days_since_last_login` | event log | daily batch | Yes |
+| `churn_reason_code` | CRM | post-churn | **No — leakage** |
+| `support_ticket_count_30d` | ticketing system | rolling 30d | Depends on prediction horizon |
+
+**Naming pattern heuristics:** Features with names containing "post_," "outcome_," "result_," "after_," "resolution_," "final_," or event timestamps that postdate the prediction event are immediate red flags.
+
+**Domain expert review:** Technical checks alone are insufficient. Walk through the top 20 features by importance with a domain expert and ask: "At the moment we would make this prediction for a real customer, do we have this value?" Any "no" or "maybe" requires investigation.
+
+**Drop-and-retrain test:** Remove the top-5 highest-importance features from the training set and retrain. If performance collapses from AUC=0.98 to AUC=0.65, those features were carrying most of the predictive signal. Investigate whether that signal is legitimate or leaked.
+
+**Production comparison test:** If you can access historical production predictions, check whether the model's feature values at prediction time match the values that appear in the "historical" training set for that same event. If they differ (different timestamps, different aggregation windows), the training features do not reflect what the model will actually see in production.
+
+> 🎯 **What great looks like:** A strong senior answer distinguishes between statistical detection (correlation audit, importance analysis) and causal/temporal reasoning (did the data team know the outcome when they computed this feature?), names both as necessary, and includes the practical step of a feature inventory table with temporal metadata.
+:::
+
+**Q4. Precision is 95% but recall is 40% in your fraud model. Your PM wants to improve recall. What happens to precision, and how do you decide the right threshold?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Precision 95%, recall 40% means: when the model flags a transaction as fraud, it is right 95% of the time — but it is catching only 40% of actual fraud. 60% of real fraud is going undetected.
+
+**What happens if you improve recall:**
+
+Precision and recall trade off against each other at the level of the classification threshold. The model already generates probability scores; the threshold of 0.5 (or whatever is current) determines where we draw the line between "flag" and "pass." Lowering the threshold to flag more transactions will:
+
+- **Increase recall:** more true fraud cases are caught (threshold drops below their probability scores)
+- **Decrease precision:** more legitimate transactions are also flagged (their probability scores, which were above the lower threshold, weren't above the old threshold)
+
+The magnitude of this tradeoff depends on the score distribution. If fraudulent and legitimate transactions have well-separated score distributions, you can increase recall substantially with little precision loss. If they heavily overlap, recall improvements cost precision rapidly.
+
+**How to decide the right threshold:**
+
+This is a business decision, not a statistical one. You need to assign costs to each type of error:
+
+- **False negative cost (FN):** A fraudulent transaction goes undetected. Cost = fraud loss amount (say, $150 on average) + reputational damage + regulatory risk.
+- **False positive cost (FP):** A legitimate transaction is flagged. Cost = manual review time ($15–$30 per review) + customer friction + potential false accusations.
+
+Given these costs, the optimal threshold minimizes expected total cost:
+
+$$\text{Cost}(\tau) = \text{FN rate}(\tau) \times P(\text{fraud}) \times C_{FN} + \text{FP rate}(\tau) \times P(\text{legit}) \times C_{FP}$$
+
+Plot this cost as a function of threshold and pick the minimum.
+
+**Practical approach:**
+
+```python
+from sklearn.metrics import precision_recall_curve
+
+precisions, recalls, thresholds = precision_recall_curve(y_test, y_prob)
+
+# Assume: FN cost = $150 (missed fraud), FP cost = $20 (manual review)
+fn_cost = 150
+fp_cost = 20
+prevalence = y_test.mean()  # fraction of fraud
+
+# Total cost per transaction at each threshold
+total_cost = ((1 - recalls) * prevalence * fn_cost +
+              (1 - precisions) * (1 - prevalence) * fp_cost)
+
+optimal_threshold = thresholds[np.argmin(total_cost)]
+print(f"Optimal threshold: {optimal_threshold:.3f}")
+print(f"Precision at optimal: {precisions[np.argmin(total_cost)]:.3f}")
+print(f"Recall at optimal: {recalls[np.argmin(total_cost)]:.3f}")
+```
+
+**For the PM conversation:**
+
+Frame it concretely: "We currently catch 40% of fraud cases and have a 5% false positive rate. If we lower the threshold to catch 70% of fraud, our false positive rate will rise to approximately 18% — meaning our review team will handle 3× more cases. We need to decide if the additional fraud caught ($X/day) justifies the additional review cost ($Y/day) and the customer experience impact."
+
+> 🎯 **What great looks like:** A senior candidate immediately converts the threshold decision into a business optimization problem with explicit cost parameters, asks the PM for the relative cost of FN vs. FP before recommending any threshold, and explains the precision-recall tradeoff in business terms rather than metric terms.
+:::
+
+**Q5. A new engineer on your team proposes using t-SNE-reduced features as inputs to a Random Forest classifier. What do you tell them?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I would walk through three specific problems with this approach.
+
+**Problem 1: t-SNE cannot generalize to new data points.** t-SNE has no `transform()` method for new examples. The 2D coordinates it produces are fitted to the entire training dataset; there is no stable mapping that you can apply at inference time to a new observation. This makes it unusable for any production pipeline where you need to score new data.
+
+**Problem 2: The t-SNE mapping is not stable.** The optimization is non-convex and stochastic — different runs with different random seeds produce different embeddings. If you retrain the t-SNE on an updated dataset, the coordinate positions of the same logical points will shift. A Random Forest trained on run-1's coordinates will receive meaningless inputs from run-2's coordinates.
+
+**Problem 3: t-SNE distorts global structure.** The distances between points in t-SNE space do not faithfully represent distances in the original feature space. Inter-cluster layout is essentially arbitrary. A classifier trained on t-SNE features is learning a representation where the coordinate positions have no reliable meaning — you are training the classifier on an artifact of the visualization algorithm, not on the underlying data structure.
+
+**What to use instead:**
+
+- **PCA:** linear, stable, fast, has `transform()`, produces interpretable variance-explained components. The correct default for dimensionality reduction before a downstream model.
+- **UMAP:** non-linear, but has a stable `transform()` for new points, faster than t-SNE, and preserves more global structure. Appropriate for non-linear feature extraction.
+- **Autoencoder:** if you want non-linear compression, train an autoencoder and use the encoder representations — these are learned to reconstruct the input, not just for visualization.
+
+**Bottom line:** t-SNE is exclusively a visualization tool. Never use its output as features for a downstream model. If you see someone doing this in a code review, flag it immediately.
+
+The engineer is likely confused because t-SNE often reveals beautiful cluster structure in 2D plots, which looks like it should be "useful" — but the beauty of the visualization does not imply that the coordinates carry reliable information for downstream learning.
+:::
+
+**Q6. You're designing the feature engineering pipeline for a credit risk model that will be retrained monthly and scored daily. What are the three most important design principles you'd enforce, and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+**Principle 1: Strict temporal integrity across the full pipeline.** Every feature must be computable from data available before the loan application date — not after. This means: no features that aggregate events in the prediction period, no features that require knowing the repayment outcome, and no features from tables that are backfilled after the fact (many CRM systems retroactively update records). Implement a "feature as of date" convention: every feature computation takes an `as_of_date` parameter that filters the underlying data to only include events before that date. Enforce this in code review.
+
+Why it matters: even a single leaked feature can inflate validation AUC from 0.72 to 0.95, leading to deployment of a model that underperforms dramatically in production and potentially misprices risk at scale.
+
+**Principle 2: Preprocessing artifacts are versioned artifacts.** The scaler fit, imputer values, encoder mappings, and feature selection masks learned from each monthly training run must be serialized and versioned alongside the model. At daily scoring time, the model uses the preprocessing from its training run — not a freshly computed one. This prevents distribution shift in the preprocessing layer from corrupting production scores silently.
+
+In practice: wrap everything in sklearn Pipelines, serialize with `joblib.dump(pipeline, 'model_v20250115.pkl')`, and store with the model version tag in your model registry. The pipeline object includes all preprocessing state.
+
+**Principle 3: Monitoring for feature distribution shift, not just model performance.** Credit risk models are particularly vulnerable to population shift: as economic conditions change (interest rates, employment), the feature distribution of applicants shifts. A model trained in low-interest conditions may severely misprice risk in high-interest conditions — but you will only know this after observing 6–12 months of repayment outcomes.
+
+To catch shift early: compute Population Stability Index (PSI) for every top-20 feature at scoring time vs. training time. PSI > 0.1 = monitor; PSI > 0.2 = trigger retraining review. Set up automated alerts. Also monitor prediction score distribution — if the average predicted probability of default shifts significantly week-over-week, that is a signal that input distribution has changed, not that default rates have actually changed.
+
+> 🎯 **What great looks like:** A senior candidate immediately identifies temporal integrity as the non-negotiable constraint (not just "avoid leakage" generically), gives a concrete implementation detail (the `as_of_date` parameter pattern), and distinguishes between offline validation performance and production monitoring — recognizing that a credit model's ground truth (repayment) lags the prediction by months, which makes proactive distribution monitoring essential rather than optional.
+:::

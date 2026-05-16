@@ -1,287 +1,823 @@
-# Neural Networks — From Perceptrons to Backprop
+---
+title: "Neural Networks — From Perceptrons to Transformers"
+---
 
 ::: {.callout-note}
-**Who this chapter is for:** Entry Level (review for Mid/FDE)
+**Who this chapter is for:** Entry Level (essential review for Mid/FDE)
 **What you'll be able to answer after reading this:**
 
-- How a perceptron makes a decision and what activation functions do
-- How backpropagation propagates error signals through a network
-- Why gradient descent converges and what can go wrong
-- The intuition behind common optimizers (SGD, Adam)
+- How a perceptron makes a decision and why stacking them unlocks non-linearity
+- What every major activation function does and why LLMs use GELU/SiLU
+- How backpropagation works step-by-step via the chain rule
+- Why vanishing/exploding gradients happen and the architectural solutions
+- How Dropout, BatchNorm, and LayerNorm work — and why transformers use LayerNorm
+- How residual connections enable training 100+ layer networks
+- The connection between MLPs and the transformer architecture
 :::
 
-## The Perceptron
+## The Perceptron and the MLP
 
-The perceptron is the fundamental building block of every neural network, from the simplest logistic regression model to a 400-billion-parameter language model. Its design was inspired loosely by the biological neuron: a cell that receives signals from many inputs, integrates them, and fires an output signal if the integrated input exceeds a threshold. The artificial perceptron formalizes this idea mathematically. Given an input vector $\mathbf{x} = [x_1, x_2, \ldots, x_n]$, each input is multiplied by a corresponding weight $w_i$, the products are summed together, and a bias term $b$ is added: $z = \mathbf{w} \cdot \mathbf{x} + b = \sum_i w_i x_i + b$. This quantity $z$ is called the pre-activation or logit. The final output is produced by passing $z$ through an activation function $\sigma$: $a = \sigma(z)$.
+**One sentence:** A perceptron is a single artificial neuron that computes a weighted sum of its inputs, adds a bias, and passes the result through an activation function to produce an output.
 
-The weights and bias are the learnable parameters of the perceptron. Conceptually, each weight $w_i$ encodes how much the corresponding feature $x_i$ contributes to the output. A large positive weight means "when this input is high, the output should be high." A large negative weight means "when this input is high, the output should be low." The bias $b$ shifts the entire activation threshold — it determines how easy or hard it is to activate the neuron independent of the input values. Without bias, the activation function is always centered at zero, which artificially constrains where the decision boundary can lie in input space.
+The perceptron is the fundamental building block of every neural network, from logistic regression to a 400-billion-parameter language model. Given an input vector $\mathbf{x} = [x_1, x_2, \ldots, x_n]$, each input is multiplied by a corresponding weight $w_i$, the products are summed, and a bias term $b$ is added: $z = \mathbf{w} \cdot \mathbf{x} + b = \sum_i w_i x_i + b$. This quantity $z$ is the *pre-activation* or *logit*. The final output is $a = \sigma(z)$ where $\sigma$ is an activation function.
 
-A single perceptron is a linear classifier. The decision boundary it draws in input space is a hyperplane — a straight line in 2D, a flat plane in 3D, and so on. This is both its strength and its critical limitation. Linear classification works perfectly well for linearly separable problems, but it fundamentally cannot learn non-linear relationships. The canonical example is the XOR (exclusive-or) problem: given two binary inputs $x_1$ and $x_2$, output 1 if exactly one of them is 1, otherwise output 0. The four input-output pairs $(0,0) \to 0$, $(1,0) \to 1$, $(0,1) \to 1$, $(1,1) \to 0$ cannot be separated by any single straight line. This was proven by Minsky and Papert in their 1969 book "Perceptrons," and it led to a temporary stagnation of neural network research — known as the first "AI winter."
+The weights encode feature importance: a large positive $w_i$ means "when this input is high, push the output higher." The bias $b$ shifts the activation threshold independently of the input — without it, the decision boundary is forced through the origin, artificially constraining the hypothesis space.
 
-The solution to the XOR problem, and to non-linear classification in general, is to stack perceptrons in multiple layers — the multilayer perceptron (MLP). The first layer learns representations of the input; subsequent layers learn representations of representations. As long as activation functions are non-linear, stacked layers can represent arbitrarily complex functions. The Universal Approximation Theorem (Hornik, 1989) formalizes this: a feedforward network with at least one hidden layer and a non-linear activation function can approximate any continuous function to arbitrary precision, given enough hidden units. This theorem established the theoretical basis for the expressive power of neural networks, and it explains why a perceptron with the right activation function is the correct building block for systems that can learn any mapping.
+**A single perceptron is a linear classifier.** Its decision boundary is always a hyperplane. This is both its strength (simple, interpretable) and its fatal limitation: the classic XOR problem — output 1 if exactly one of two binary inputs is 1 — cannot be separated by any single straight line. This was proven by Minsky and Papert in 1969 and triggered the first AI winter.
+
+**The solution: the Multilayer Perceptron (MLP).** Stack perceptrons in layers. The first layer learns representations of the raw inputs; each subsequent layer learns representations of representations. As long as the activation functions between layers are non-linear, stacking creates genuine expressive power beyond any single linear transformation.
+
+> 💡 **Senior Tip:** The proof that stacking linear layers collapses to one linear layer is a common interview question. Walk through it algebraically: $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 + b_2)$. That product $W_2 W_1$ is itself a matrix — you never gain expressiveness. Non-linear activation functions break this collapse.
+
+### Universal Approximation Theorem
+
+**One sentence:** A single-hidden-layer MLP with enough neurons and a non-linear activation can approximate any continuous function to arbitrary precision.
+
+The Universal Approximation Theorem (Hornik 1989, Cybenko 1989) guarantees that neural networks have *sufficient expressive power*. The intuition: you can tile any smooth curve with enough piecewise-linear segments, and a wide enough ReLU network approximates those segments.
+
+**What the theorem does NOT say:**
+
+- It says nothing about how to *find* those weights (training is hard)
+- The required width can be exponential for a single hidden layer — depth is more efficient
+- It says nothing about generalization — a network can perfectly fit training data and still fail on new data
+
+::: {.callout-warning title="Common Misconception"}
+"More layers always means better performance." Depth helps only when combined with non-linear activations, good initialization, and stable gradient flow. A 20-layer network with sigmoid activations trained naively will often perform worse than a 3-layer ReLU network because of vanishing gradients.
+:::
+
+**Analogy:** Think of the approximation theorem like Fourier series. Just as any periodic signal can be approximated by summing enough sine waves, any function can be approximated by summing enough neuron activations. Depth is like using fewer, better-placed components — more efficient than brute-force width.
+
+| Concept | Single Perceptron | MLP |
+|---|---|---|
+| Decision boundary | Hyperplane (linear) | Arbitrary curved boundary |
+| XOR solvable? | No | Yes (with 1 hidden layer) |
+| Expressive power | Linear functions only | Universal approximation |
+| Training | Perceptron rule | Backpropagation |
+
+---
 
 ## Activation Functions
 
-Activation functions are not a minor implementation detail — they are what give neural networks their expressive power. To understand why, consider what happens if you remove activation functions from a deep network entirely. The first layer computes $\mathbf{h}_1 = W_1 \mathbf{x} + \mathbf{b}_1$. The second layer computes $\mathbf{h}_2 = W_2 \mathbf{h}_1 + \mathbf{b}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2 = (W_2 W_1)\mathbf{x} + (W_2\mathbf{b}_1 + \mathbf{b}_2)$. The product $W_2 W_1$ is itself a matrix, and the combined bias term is a vector — so a two-layer linear network is mathematically equivalent to a single linear layer. No matter how many linear layers you stack, the result is always a single linear transformation. A 100-layer network without activation functions is equivalent to one layer with different weights. Non-linear activation functions break this collapse: $\sigma(W_2 \sigma(W_1 \mathbf{x}))$ cannot be simplified to a single linear transformation, so the network genuinely gains expressive power with depth.
+**One sentence:** An activation function introduces non-linearity into the network, allowing it to learn complex mappings beyond simple linear transformations.
 
-The sigmoid function $\sigma(x) = \frac{1}{1 + e^{-x}}$ maps any real number to the range $(0, 1)$, which makes it a natural choice for outputting probabilities. It was the dominant activation function in the early neural network era. Its critical weakness is the vanishing gradient problem: in the saturated regions ($x \ll 0$ or $x \gg 0$), the derivative $\sigma'(x) = \sigma(x)(1 - \sigma(x))$ is very close to zero. When gradients flow backward through many sigmoid layers, each multiplication by a near-zero derivative shrinks the gradient exponentially. By the time the gradient reaches the first layers of a deep network, it is so small as to be meaningless — those layers cannot learn. Sigmoid also outputs values in $(0, 1)$ rather than $(-1, 1)$, meaning the average output is positive, which causes gradients to be consistently positive or consistently negative during updates — the "zig-zagging" problem in gradient descent.
+Without activation functions, stacking layers is useless — every composition of linear maps is still linear. Non-linear activations are what make depth meaningful.
 
-Tanh, defined as $\tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}$, maps to $(-1, 1)$ and is zero-centered, addressing the zig-zagging problem. Its gradient $1 - \tanh^2(x)$ is larger than sigmoid's in the active region, but it still saturates and produces vanishing gradients in the extremes. For shallow networks, tanh often outperforms sigmoid in hidden layers; for deep networks, both suffer.
+### Why Non-Linearity Is Not Optional
 
-ReLU (Rectified Linear Unit), $\text{ReLU}(x) = \max(0, x)$, became the dominant activation function in deep learning around 2010-2012, when Nair and Hinton (2010) and other groups demonstrated its empirical advantages. Its properties are elegantly simple: for positive inputs, the gradient is exactly 1 — no vanishing. For negative inputs, the output is zero. This means gradients flow without decay through the positive units, allowing training of much deeper networks. ReLU is also computationally trivial: one comparison operation, versus the exponentiation in sigmoid or tanh. The failure mode is the "dying ReLU" problem: if a neuron's pre-activation becomes negative for all training examples (which can happen when a large gradient update pushes the weights such that $\mathbf{w} \cdot \mathbf{x} + b < 0$ for all $\mathbf{x}$), the gradient is zero for all inputs and the neuron produces no learning signal. It is permanently stuck at zero output — effectively dead. In large networks, a non-trivial fraction of neurons can die, especially with high learning rates.
+Consider a two-layer linear network: $\mathbf{h}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2 = (W_2 W_1)\mathbf{x} + (W_2 \mathbf{b}_1 + \mathbf{b}_2)$. The product $W_2 W_1$ is a matrix and the combined bias is a vector — this is exactly one linear layer. No matter how many linear layers you stack, the result is always a single linear transformation. A 100-layer network without activations has the same expressive power as one layer with different weights.
 
-Leaky ReLU addresses dying neurons by allowing a small negative slope $\alpha$ (typically 0.01) for negative inputs: $\text{LeakyReLU}(x) = \max(\alpha x, x)$. The gradient is $\alpha$ for negative inputs rather than zero, keeping a small but non-zero learning signal alive. ELU (Exponential Linear Unit) uses an exponential curve for negative inputs, producing outputs that average closer to zero and reducing bias shifts in batch statistics. GELU (Gaussian Error Linear Unit), used in BERT, GPT-2, and most modern transformers, is a smooth approximation of ReLU that weights inputs by their probability under a standard Gaussian — providing slightly better empirical performance at the cost of a more expensive computation.
+### Sigmoid
 
-For output layers, the activation function choice is determined by the task structure. Sigmoid is used for binary classification outputs (single probability). Softmax normalizes a vector of logits to a probability distribution over classes: $\text{softmax}(z_i) = \frac{e^{z_i}}{\sum_j e^{z_j}}$. Softmax ensures all output probabilities are positive and sum to 1, which is exactly what multiclass classification requires. For regression, no activation function is applied at the output — the raw linear output is the prediction. The practical rule: ReLU (or GELU for transformers) for hidden layers; sigmoid or softmax for output layers depending on the classification task; no activation for regression.
+$$\sigma(x) = \frac{1}{1 + e^{-x}} \quad \text{output} \in (0,1) \quad \sigma'(x) = \sigma(x)(1-\sigma(x))$$
+
+Sigmoid maps any real number to $(0,1)$, making it natural for binary probability outputs. Its critical flaw: **vanishing gradients**. In the saturated regions ($x \ll 0$ or $x \gg 0$), $\sigma'(x) \approx 0$. Backpropagating through many sigmoid layers multiplies together many near-zero values, making the gradient exponentially small before it reaches early layers.
+
+Secondary flaw: outputs are always positive (not zero-centered), causing gradients to be consistently positive or negative — the "zig-zagging" problem in gradient space where updates must alternate direction to converge.
+
+**Use case:** Output layer for binary classification only. Never use in hidden layers of deep networks.
+
+### Tanh
+
+$$\tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}} \quad \text{output} \in (-1,1) \quad \tanh'(x) = 1 - \tanh^2(x)$$
+
+Zero-centered (fixes sigmoid's zig-zagging), but still saturates and produces vanishing gradients in the extremes. Better than sigmoid for hidden layers in shallow networks, but not for deep networks.
+
+### ReLU (Rectified Linear Unit)
+
+$$\text{ReLU}(x) = \max(0, x) \quad \text{gradient} = \begin{cases} 1 & x > 0 \\ 0 & x \leq 0 \end{cases}$$
+
+Became dominant around 2010–2012. Key advantages: gradient is exactly 1 for positive inputs (no vanishing), computationally trivial (one comparison), and empirically trains much deeper networks.
+
+**The dying ReLU problem:** A neuron "dies" when its pre-activation $z = \mathbf{w} \cdot \mathbf{x} + b < 0$ for every training example. The gradient is zero for all inputs, so the optimizer receives no signal and cannot recover the neuron's weights. It is permanently stuck outputting zero. In large networks with high learning rates, 10–40% of neurons can silently die.
+
+Causes of dying ReLU: large learning rate updates that push weights deeply negative, poor initialization, or a large negative bias.
+
+### Leaky ReLU
+
+$$\text{LeakyReLU}(x) = \max(\alpha x, x), \quad \alpha \approx 0.01$$
+
+Addresses dying ReLU by allowing a small gradient $\alpha$ for negative inputs. The neuron can always receive a gradient and recover. **Parametric ReLU (PReLU)** learns $\alpha$ as a parameter per neuron.
+
+### GELU (Gaussian Error Linear Unit)
+
+$$\text{GELU}(x) = x \cdot \Phi(x)$$
+
+where $\Phi(x)$ is the standard Gaussian CDF. Fast approximation: $\text{GELU}(x) \approx 0.5x\left(1 + \tanh\left[\sqrt{2/\pi}(x + 0.044715x^3)\right]\right)$.
+
+GELU stochastically gates inputs by their Gaussian probability — inputs near zero are partially masked, inputs far from zero pass through nearly intact. This creates a smooth, non-zero gradient everywhere. Empirically outperforms ReLU on language modeling. **Used in BERT, GPT-2, GPT-3, and virtually all modern transformers.**
+
+### SiLU / Swish
+
+$$\text{SiLU}(x) = x \cdot \sigma(x)$$
+
+Also called Swish. Similar to GELU — smooth, non-monotonic, positive gradient everywhere. **Used in LLaMA, Mistral, and most modern open-source LLMs** (via SwiGLU, a gated variant). Slightly faster to compute than GELU.
+
+### Why LLMs Use GELU/SiLU Instead of ReLU
+
+Dying ReLU neurons in a billion-parameter model create silent capacity loss that is hard to detect. GELU and SiLU have no dead zones — the gradient is always non-zero. Their smooth, non-monotonic shape also empirically produces lower perplexity on language modeling tasks. ReLU is still common in vision models and shallow networks where dying neurons are manageable, but it has largely been replaced in LLMs.
+
+### Activation Function Comparison Table
+
+| Activation | Range | Vanishing Grad | Dying Neurons | Computationally Cheap | Used In |
+|---|---|---|---|---|---|
+| Sigmoid | (0,1) | Yes (severe) | No | Yes | Binary output layer |
+| Tanh | (-1,1) | Yes (moderate) | No | Yes | RNNs, shallow nets |
+| ReLU | [0,∞) | No (pos inputs) | Yes | Yes | CNNs, vision models |
+| Leaky ReLU | (-∞,∞) | No | No | Yes | Custom architectures |
+| GELU | (-∞,∞) | No | No | Moderate | BERT, GPT-2/3 |
+| SiLU/Swish | (-∞,∞) | No | No | Moderate | LLaMA, Mistral, Falcon |
+| Softmax | (0,1) per class | — | — | Moderate | Output: multiclass |
+
+::: {.callout-warning title="Common Misconception"}
+"ReLU is always the safe default." For transformers and LLMs, GELU or SiLU is the standard. Using ReLU in a transformer hidden layer will still train, but you leave measurable quality on the table and introduce dying neuron risk at scale.
+:::
+
+> ⚠️ **Common Mistake:** Applying softmax in the final layer AND passing those probabilities to `nn.CrossEntropyLoss` in PyTorch. `CrossEntropyLoss` applies softmax internally — double-softmax produces near-uniform predictions and near-zero gradients. Pass raw logits to `CrossEntropyLoss`.
+
+---
 
 ## Loss Functions
 
-A loss function is a scalar measure of how wrong the model's predictions are on the training data. Training is the process of adjusting model parameters to minimize this scalar. Choosing the wrong loss function is one of the most consequential and underappreciated mistakes in applied ML — it directly shapes what the model optimizes for, which may or may not align with the actual business objective.
+**One sentence:** A loss function measures how wrong the model's predictions are and defines what the model optimizes.
 
-For regression tasks, Mean Squared Error (MSE) is the standard choice: $\mathcal{L}_\text{MSE} = \frac{1}{n}\sum_{i=1}^n (y_i - \hat{y}_i)^2$. MSE penalizes large errors much more heavily than small errors because errors are squared — an error of 10 contributes 100 to the loss, while an error of 1 contributes only 1. This makes MSE appropriate when large errors are disproportionately costly, but sensitive to outliers: a single extreme prediction will dominate the loss and pull training toward fitting that outlier. Mean Absolute Error (MAE), $\mathcal{L}_\text{MAE} = \frac{1}{n}\sum_i |y_i - \hat{y}_i|$, treats all errors proportionally and is more robust to outliers, but its gradient is constant in magnitude, which can make optimization less stable near the minimum (the gradient doesn't naturally shrink as you approach the optimal solution). Huber loss combines both: quadratic for small errors, linear for large errors — often the best of both worlds for real-world regression.
+### Cross-Entropy vs MSE for Classification
 
-For classification tasks, cross-entropy is the standard loss function. For binary classification with a sigmoid output: $\mathcal{L}_\text{BCE} = -\frac{1}{n}\sum_i [y_i \log \hat{y}_i + (1-y_i)\log(1-\hat{y}_i)]$. For multiclass with a softmax output: $\mathcal{L}_\text{CE} = -\frac{1}{n}\sum_i \sum_k y_{ik} \log \hat{y}_{ik}$, where $y_{ik}$ is 1 if example $i$ belongs to class $k$ and 0 otherwise. The justification for cross-entropy is probabilistic: minimizing cross-entropy is equivalent to maximizing the log-likelihood of the correct class labels under the model's predicted probability distribution. It is derived directly from the maximum likelihood estimation principle.
+**Binary Cross-Entropy:**
+$$\mathcal{L}_\text{BCE} = -\frac{1}{n}\sum_i \left[y_i \log \hat{y}_i + (1-y_i)\log(1-\hat{y}_i)\right]$$
 
-Why not use accuracy as the loss function for classification? Accuracy is the metric we ultimately care about, but it is not differentiable — it is a step function that changes in discrete jumps when predictions flip from one class to another. Gradient descent requires a smooth, differentiable loss surface to compute meaningful gradients. A 1% improvement in the model's confidence on a correctly classified example produces zero improvement in accuracy but does produce a gradient in cross-entropy loss. Cross-entropy is thus a smooth, differentiable surrogate for accuracy that is tightly coupled to it: a model that minimizes cross-entropy loss will generally maximize classification accuracy, and it also provides well-calibrated probability estimates.
+**Multiclass Cross-Entropy:**
+$$\mathcal{L}_\text{CE} = -\frac{1}{n}\sum_i \sum_k y_{ik} \log \hat{y}_{ik}$$
+
+**Why not MSE for classification?** Two reasons:
+
+1. **Gradient behavior:** With MSE on a sigmoid output, the gradient is $(\hat{y} - y) \cdot \sigma'(z)$. When a prediction is confidently wrong ($\hat{y} = 0.99, y = 0$), $\sigma'(z) \approx 0$ and the gradient is tiny — the model learns almost nothing from its worst mistakes. Cross-entropy's gradient simplifies to $(\hat{y} - y)$, which is large when predictions are confidently wrong. This is the single most important reason to prefer cross-entropy for classification.
+
+2. **Probabilistic justification:** Cross-entropy = negative log-likelihood of the correct class. Minimizing cross-entropy is equivalent to maximum likelihood estimation — a principled statistical objective.
+
+**Why not accuracy directly?** Accuracy is a step function — not differentiable. Gradient descent needs smooth, differentiable loss surfaces. A 1% improvement in model confidence on an already-correct prediction produces zero accuracy improvement but a non-zero cross-entropy gradient. Cross-entropy is a smooth surrogate for accuracy.
+
+| Loss | Task | Gradient at confident error | Notes |
+|---|---|---|---|
+| MSE | Regression | Large | Sensitive to outliers |
+| MAE | Regression | Constant | Robust, unstable near minimum |
+| Huber | Regression | Smooth | Best of MSE + MAE |
+| Binary CE | Binary classification | Large (good!) | Probabilistic derivation |
+| Categorical CE | Multiclass | Large (good!) | Use with raw logits in PyTorch |
+
+::: {.callout-warning title="Common Misconception"}
+"MSE works fine for classification; cross-entropy is just a convention." MSE on a sigmoid output produces near-zero gradients when the model is confidently wrong — exactly the situation where you need the strongest learning signal. This can manifest as models that plateau at mediocre accuracy and stubbornly fail to improve.
+:::
+
+---
 
 ## Backpropagation
 
-Backpropagation is the algorithm that makes training deep neural networks practical. At its core, it is an efficient application of the chain rule of calculus to a computation graph. Understanding backpropagation requires understanding both the chain rule and the structure of neural network computation.
+**One sentence:** Backpropagation is an efficient application of the chain rule of calculus to compute the gradient of the loss with respect to every parameter in a neural network in two passes — one forward, one backward.
 
-The forward pass proceeds layer by layer: given an input $\mathbf{x}$, compute $\mathbf{z}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}$, then $\mathbf{a}^{(1)} = \sigma(\mathbf{z}^{(1)})$, then $\mathbf{z}^{(2)} = W^{(2)}\mathbf{a}^{(1)} + \mathbf{b}^{(2)}$, and so on until you compute the loss $\mathcal{L}$. During this pass, every intermediate value — every $\mathbf{z}^{(l)}$ and $\mathbf{a}^{(l)}$ — is stored in memory, because the backward pass will need them.
+### The Chain Rule Intuition
 
-The backward pass begins at the loss $\mathcal{L}$ and propagates gradient signals backward through the network. We want to compute $\partial \mathcal{L} / \partial W^{(l)}$ and $\partial \mathcal{L} / \partial \mathbf{b}^{(l)}$ for every layer $l$, because these are the gradients that tell us how to update the weights to reduce the loss. The chain rule is the tool: if $\mathcal{L}$ depends on $\mathbf{a}^{(2)}$, which depends on $\mathbf{z}^{(2)}$, which depends on $W^{(2)}$, then $\frac{\partial \mathcal{L}}{\partial W^{(2)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(2)}} \cdot \frac{\partial \mathbf{a}^{(2)}}{\partial \mathbf{z}^{(2)}} \cdot \frac{\partial \mathbf{z}^{(2)}}{\partial W^{(2)}}$. Each factor in this product has a simple analytical form: the loss gradient with respect to activations, the activation function derivative (the diagonal of the Jacobian), and the input to that layer (a simple matrix). The key insight is that by storing intermediate activations during the forward pass and propagating the error signal backward using the chain rule, you can compute the gradient of the loss with respect to every parameter in the network in exactly two passes through the network — one forward, one backward — rather than one pass per parameter.
+The chain rule: if $y = f(g(x))$, then $\frac{dy}{dx} = \frac{dy}{dg} \cdot \frac{dg}{dx}$. Applied to neural networks: the loss $\mathcal{L}$ depends on the output, which depends on each layer's activations, which depend on the weights. Backprop chains these dependencies to compute $\partial\mathcal{L}/\partial W^{(l)}$ for every layer $l$.
 
-The computational cost matters: a naive finite-difference approach to computing gradients would require a separate forward pass for each parameter, which for a model with billions of parameters is completely infeasible. Backpropagation reduces gradient computation to approximately the same cost as two forward passes, regardless of the number of parameters. This is why deep learning is tractable at scale. The implementation in modern frameworks (PyTorch, JAX, TensorFlow) is handled by automatic differentiation engines that build a dynamic computation graph during the forward pass and execute the backward pass automatically — engineers write forward pass code and get gradients for free.
+**Forward pass (store everything):**
+$$z^{(1)} = W^{(1)}x + b^{(1)}, \quad a^{(1)} = \sigma(z^{(1)}), \quad z^{(2)} = W^{(2)}a^{(1)} + b^{(2)}, \quad \hat{y} = \sigma(z^{(2)}), \quad \mathcal{L} = \text{Loss}(\hat{y}, y)$$
 
-A critical practical implication of backpropagation through many layers is gradient scaling. Each layer in the backward pass multiplies the incoming gradient by the Jacobian of that layer's operation. If the Jacobians have values less than 1 (common when activation functions saturate), the gradient shrinks at each layer. After 50 layers, a gradient that starts at 1.0 multiplied by 0.9 at each layer becomes $0.9^{50} \approx 0.005$ — essentially zero. If the Jacobians have values greater than 1, the gradient grows — potentially to infinity over many layers. These are the vanishing and exploding gradient problems, which are discussed in detail in the final section of this chapter.
+Every intermediate value $z^{(l)}$ and $a^{(l)}$ is stored in memory during the forward pass, because the backward pass needs them.
 
-```{python}
-#| label: backprop-numpy
+**Backward pass (chain rule):**
+$$\frac{\partial \mathcal{L}}{\partial W^{(2)}} = \frac{\partial \mathcal{L}}{\partial \hat{y}} \cdot \frac{\partial \hat{y}}{\partial z^{(2)}} \cdot \frac{\partial z^{(2)}}{\partial W^{(2)}}$$
+
+Each factor: the loss gradient with respect to the output, the activation function's derivative, and the input to that layer (a simple matrix). Each is cheap to compute given what was stored in the forward pass.
+
+**Why backprop is efficient:** Naive finite-difference gradient computation requires one forward pass per parameter — billions of passes for a large model. Backprop computes gradients for *all* parameters in approximately the cost of two forward passes, regardless of parameter count. This is why deep learning at scale is tractable.
+
+**Analogy:** Think of backprop like tracking blame in an organization. The CEO (loss) is unhappy. She traces the problem back: the VP's decision was partly responsible, which was partly driven by the manager below, which was driven by the analyst at the bottom. Each node in the chain gets a "blame score" (gradient) proportional to its contribution. You do one forward pass to gather information, then one backward pass to distribute blame. Each person only needs to talk to their direct reports — no global communication needed.
+
+### Vanishing Gradients
+
+In a network with $L$ layers, the gradient at layer $l$ involves a product of $L-l$ Jacobian matrices:
+$$\frac{\partial \mathcal{L}}{\partial W^{(l)}} \propto \prod_{k=l}^{L-1} \frac{\partial a^{(k+1)}}{\partial a^{(k)}}$$
+
+If elements of these Jacobians are consistently $< 1$ — which happens when sigmoid/tanh neurons saturate — the product shrinks exponentially. After 50 layers with a per-layer factor of 0.9: $0.9^{50} \approx 0.005$. After 100 layers: $\approx 0.000027$. Early layers receive essentially zero gradient and cannot learn.
+
+**When vanishing gradients occur:**
+- Deep networks (10+ layers) with sigmoid or tanh activations
+- RNNs processing long sequences (the "gradient through time" product gets very long)
+- Poor weight initialization (small initial weights amplify the problem)
+
+### Exploding Gradients
+
+Mirror problem: if Jacobian elements are consistently $> 1$, the product grows exponentially. Manifests as NaN loss and massive parameter updates. More visible than vanishing gradients (training obviously diverges).
+
+**When exploding gradients occur:**
+- Deep RNNs on long sequences
+- Poorly initialized weights (large initial values)
+- Large learning rates early in training
+
+**Fix: gradient clipping.** Before the optimizer step, rescale gradients if their norm exceeds a threshold:
+```python
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+```
+This is used in virtually all LLM training. It prevents catastrophic updates without affecting gradient direction for normal batches.
+
+::: {.callout-warning title="Common Misconception"}
+"Vanishing gradients are obvious — the loss will show something is wrong." No. A network with vanishing gradients in early layers can have a normally-decreasing loss driven entirely by the later layers. Early layers silently fail to learn while later layers adapt, producing a model that appears to train but has severely underutilized capacity. Check gradient norms layer-by-layer to diagnose.
+:::
+
+> 🎯 **What great looks like:** When asked about backprop, great candidates connect the chain rule to architectural choices. "This is why residual connections exist — the skip connection guarantees a direct gradient path of magnitude ≥ 1 regardless of what the residual block learns. That's why ResNet could train at 152 layers when previous architectures failed at 20."
+
+### Python: Manual Backpropagation with PyTorch
+
+```python
+#| label: mlp-pytorch-backprop
 #| eval: false
-import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 
 # -------------------------------------------------------
-# Minimal two-layer network with manual backprop in NumPy
-# Input: X (N, D_in), Labels: y (N, 1)
-# Architecture: Linear -> ReLU -> Linear -> Sigmoid -> BCE Loss
+# 3-layer MLP with manual gradient inspection
+# Architecture: Linear(4→64) → GELU → Linear(64→32) → GELU → Linear(32→1)
+# Task: binary classification
 # -------------------------------------------------------
 
-np.random.seed(42)
-N, D_in, H, D_out = 100, 4, 8, 1
+torch.manual_seed(42)
+N, D_in = 1000, 4
 
-X = np.random.randn(N, D_in)
-y = (np.random.randn(N, 1) > 0).astype(float)
+# Synthetic dataset
+X = torch.randn(N, D_in)
+y = (X[:, 0] + X[:, 1] > X[:, 2] - X[:, 3]).float().unsqueeze(1)
 
-# Initialize weights (He initialization for ReLU layers)
-W1 = np.random.randn(D_in, H) * np.sqrt(2.0 / D_in)
-b1 = np.zeros((1, H))
-W2 = np.random.randn(H, D_out) * np.sqrt(2.0 / H)
-b2 = np.zeros((1, D_out))
+dataset = TensorDataset(X, y)
+loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
-def sigmoid(z):
-    return 1.0 / (1.0 + np.exp(-z))
+class ThreeLayerMLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(4, 64),
+            nn.GELU(),              # LLM-style activation
+            nn.Linear(64, 32),
+            nn.GELU(),
+            nn.Linear(32, 1)        # Raw logit — CrossEntropyLoss handles sigmoid
+        )
+        # He initialization for layers before GELU
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                nn.init.zeros_(m.bias)
 
-def relu(z):
-    return np.maximum(0, z)
+    def forward(self, x):
+        return self.net(x)
 
-def bce_loss(y_hat, y):
-    eps = 1e-9
-    return -np.mean(y * np.log(y_hat + eps) + (1 - y) * np.log(1 - y_hat + eps))
+model = ThreeLayerMLP()
+optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
+criterion = nn.BCEWithLogitsLoss()  # Applies sigmoid internally — do NOT add sigmoid to model
 
-lr = 0.01
+print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-for epoch in range(500):
-    # ---- Forward pass ----
-    z1 = X @ W1 + b1          # (N, H)
-    a1 = relu(z1)              # (N, H)
-    z2 = a1 @ W2 + b2          # (N, 1)
-    y_hat = sigmoid(z2)        # (N, 1)
-    loss = bce_loss(y_hat, y)
+for epoch in range(10):
+    total_loss = 0
+    for X_batch, y_batch in loader:
+        optimizer.zero_grad()
+        logits = model(X_batch)
+        loss = criterion(logits, y_batch)
+        loss.backward()             # Backprop: fills .grad for every parameter
 
-    # ---- Backward pass (chain rule by hand) ----
-    # dL/d(y_hat): derivative of BCE w.r.t. sigmoid output
-    dL_dyhat = (y_hat - y) / (y_hat * (1 - y_hat) + 1e-9) / N
+        # Gradient clipping — standard in LLM training
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-    # dL/dz2: sigmoid derivative = y_hat * (1 - y_hat)
-    dL_dz2 = dL_dyhat * y_hat * (1 - y_hat)     # (N, 1)
+        optimizer.step()
+        total_loss += loss.item()
 
-    # dL/dW2 and dL/db2
-    dW2 = a1.T @ dL_dz2                          # (H, 1)
-    db2 = dL_dz2.sum(axis=0, keepdims=True)      # (1, 1)
+    if epoch % 2 == 0:
+        # Inspect gradient norms per layer — diagnose vanishing/exploding gradients
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.norm().item()
+                print(f"  {name:30s} grad_norm={grad_norm:.6f}")
+        print(f"Epoch {epoch} | Loss: {total_loss/len(loader):.4f}")
 
-    # dL/da1: propagate through W2
-    dL_da1 = dL_dz2 @ W2.T                       # (N, H)
-
-    # dL/dz1: ReLU derivative is 1 where z1 > 0, else 0
-    dL_dz1 = dL_da1 * (z1 > 0).astype(float)    # (N, H)
-
-    # dL/dW1 and dL/db1
-    dW1 = X.T @ dL_dz1                           # (D_in, H)
-    db1 = dL_dz1.sum(axis=0, keepdims=True)      # (1, H)
-
-    # ---- Parameter update (vanilla SGD) ----
-    W2 -= lr * dW2
-    b2 -= lr * db2
-    W1 -= lr * dW1
-    b1 -= lr * db1
-
-    if epoch % 100 == 0:
-        print(f"Epoch {epoch:4d} | Loss: {loss:.4f}")
+# Evaluate
+model.eval()
+with torch.no_grad():
+    preds = (torch.sigmoid(model(X)) > 0.5).float()
+    accuracy = (preds == y).float().mean()
+    print(f"\nFinal accuracy: {accuracy:.4f}")
 ```
 
-## Gradient Descent and Optimizers
+> ⚠️ **Production Gotcha:** Calling `optimizer.zero_grad()` after `loss.backward()` instead of before the forward pass will silently accumulate gradients across batches, producing incorrect updates. Always zero gradients at the start of each training step, not the end.
 
-Gradient descent is the core optimization algorithm that drives learning in neural networks. Given the loss $\mathcal{L}(\theta)$ as a function of the model parameters $\theta$, we want to find $\theta^*$ that minimizes $\mathcal{L}$. The gradient $\nabla_\theta \mathcal{L}$ points in the direction of steepest increase of the loss. To decrease the loss, we update parameters in the opposite direction: $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}$, where $\eta$ is the learning rate — the step size along the gradient direction. This update rule is gradient descent, and it is the foundation of every modern deep learning optimizer.
+> ⚠️ **Production Gotcha:** `BCEWithLogitsLoss` expects *raw logits*, not sigmoid outputs. `CrossEntropyLoss` expects *raw logits*, not softmax outputs. Using softmax + CrossEntropyLoss or sigmoid + BCEWithLogitsLoss double-squashes predictions and produces near-zero gradients. This is one of the most common bugs in PyTorch training code.
 
-The choice of how many examples to compute the gradient over on each step defines three variants. Batch gradient descent computes the gradient over the entire training dataset before each update. This gives an accurate estimate of the true gradient (low variance) but requires processing the full dataset before any parameter update — computationally expensive and impractical for datasets larger than memory. Stochastic gradient descent (SGD) computes the gradient from a single randomly chosen training example per step, enabling very frequent updates but with very noisy gradient estimates (high variance). The noise in stochastic gradient descent can actually be beneficial in some settings because it acts as a regularizer, preventing the optimizer from settling into sharp minima, but it makes convergence erratic and slow to reach high precision. Mini-batch gradient descent — the default in practice — computes gradients over a small random batch of 32 to 256 examples. This provides a reasonable tradeoff: gradients are smoother than pure stochastic updates, updates are frequent, and batches can be efficiently parallelized across GPU cores using matrix operations.
+---
 
-The learning rate is the most important hyperparameter in gradient descent. Too large a learning rate and the parameter updates overshoot the minimum, causing the loss to oscillate or diverge. Too small a learning rate and convergence is glacially slow, and the optimizer may get trapped in shallow local minima. A learning rate schedule that starts large and decays over training — either step decay, cosine annealing, or linear warmup followed by decay — typically outperforms any fixed learning rate.
+## Regularization in Neural Networks
 
-Standard SGD with momentum addresses one of SGD's key weaknesses: oscillation in directions of high curvature. Imagine a narrow valley in the loss landscape, where the gradient alternates in direction across the valley but consistently points along it. SGD oscillates back and forth across the valley rather than traveling efficiently along it. Momentum accumulates a velocity vector in the direction of persistent gradients: $v \leftarrow \beta v - \eta \nabla_\theta \mathcal{L}$, $\theta \leftarrow \theta + v$, where $\beta \approx 0.9$ is the momentum coefficient. Velocity builds up in consistent gradient directions and dampens oscillations. The physical analogy: a ball rolling down a hilly landscape builds up speed on gentle consistent slopes and decelerates when the gradient reverses.
+### Dropout
 
-Adam (Adaptive Moment Estimation, Kingma and Ba, 2014) is the dominant optimizer for deep learning and the default for virtually all LLM training. Adam maintains per-parameter adaptive learning rates by tracking both the first moment (mean of gradients, like momentum) and the second moment (uncentered variance of gradients): $m_t \leftarrow \beta_1 m_{t-1} + (1-\beta_1)g_t$, $v_t \leftarrow \beta_2 v_{t-1} + (1-\beta_2)g_t^2$. Bias-corrected estimates $\hat{m}_t = m_t/(1-\beta_1^t)$ and $\hat{v}_t = v_t/(1-\beta_2^t)$ account for the cold-start at $t=0$ when the moment estimates are initialized to zero. The update rule is: $\theta_t \leftarrow \theta_{t-1} - \eta \hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$. The intuition: parameters that receive large, consistent gradients get smaller effective learning rates (because $\sqrt{\hat{v}_t}$ is large), while parameters that receive small or inconsistent gradients get larger effective learning rates. This adapts to the curvature of the loss landscape per parameter. Default hyperparameters $\beta_1=0.9$, $\beta_2=0.999$, $\epsilon=10^{-8}$ work well across a wide range of tasks. AdamW modifies Adam by decoupling the weight decay regularization from the gradient update, which prevents the adaptive learning rate from diminishing the effect of weight decay — AdamW is the standard optimizer for LLM training (Loshchilov and Hutter, 2017).
+**One sentence:** Dropout randomly zeros a fraction $p$ of neuron activations during training, forcing the network to learn redundant representations that generalize better.
 
-## Vanishing and Exploding Gradients
+During training, each neuron is independently set to zero with probability $p$ (typically $p=0.1$–$0.5$). During inference, dropout is disabled — all neurons are active — but activations are scaled by $(1-p)$ to preserve expected magnitude (or equivalently, during training activations are scaled by $1/(1-p)$ so inference requires no scaling — PyTorch uses the latter).
 
-The vanishing and exploding gradient problems are among the most important phenomena in deep learning, and understanding them explains many architectural choices in modern neural networks that might otherwise seem arbitrary.
+**Why it works:** Dropout prevents co-adaptation — neurons cannot over-rely on specific other neurons being present. Each neuron must learn features useful in the absence of any other neuron, creating an implicit ensemble of $2^n$ sub-networks. The combined effect is regularization: reduced overfitting and better generalization.
 
-In a deep network with $L$ layers, the gradient of the loss with respect to the parameters in layer $l$ involves a product of $L - l$ Jacobian matrices — one for each layer between $l$ and the output. This is a direct consequence of the chain rule: $\frac{\partial \mathcal{L}}{\partial W^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(L)}} \cdot \prod_{k=l}^{L-1} \frac{\partial \mathbf{a}^{(k+1)}}{\partial \mathbf{a}^{(k)}} \cdot \frac{\partial \mathbf{a}^{(l)}}{\partial W^{(l)}}$. If the elements of these Jacobians are consistently less than 1 — which happens when activation functions are in their saturated regions, as with sigmoid or tanh — then this product of many sub-unity values shrinks exponentially toward zero. By layer 1 of a 100-layer network, the gradient may be so small ($< 10^{-10}$) that floating-point arithmetic cannot represent it meaningfully, and the parameters in early layers never update. This is the vanishing gradient problem, and it was the primary reason deep networks with more than a few layers were difficult to train before 2010.
+::: {.callout-warning title="Common Misconception"}
+"Dropout is applied at all stages." Dropout is only active during `model.train()`, not `model.eval()`. Forgetting to call `model.eval()` before inference is a silent bug that adds noise to predictions and can dramatically degrade performance. In PyTorch: always call `model.eval()` and `torch.no_grad()` for inference.
+:::
 
-Exploding gradients are the mirror problem: if Jacobian elements are consistently greater than 1 (which can happen with poorly initialized weights), the product grows exponentially, leading to parameter updates so large that training diverges entirely. Exploding gradients are often more visible than vanishing ones because loss divergence is obvious; vanishing gradients can silently prevent learning in early layers without any obvious signal. Exploding gradients are addressed by gradient clipping: before the optimizer step, if the norm of the gradient vector exceeds a threshold (typically 1.0 in LLM training), rescale it to that norm. This prevents a single catastrophic update without affecting the gradient direction.
+| Phase | Dropout behavior | Scale factor |
+|---|---|---|
+| Training | Random zeros with prob $p$ | $1/(1-p)$ applied to active neurons |
+| Inference | All neurons active | No scaling (baked in from training) |
 
-The modern solutions to vanishing gradients are primarily architectural. ReLU activations have a gradient of exactly 1 for positive inputs — no saturation, no shrinkage. Batch normalization (Ioffe and Szegedy, 2015) normalizes layer inputs to zero mean and unit variance before each layer, keeping activations in the non-saturating regime and providing additional gradient signal through the normalization parameters. Residual connections — the key innovation in ResNets (He et al., 2016) and adopted by every subsequent transformer — provide a direct "gradient highway": instead of $\mathbf{a}^{(l+1)} = \sigma(W^{(l)}\mathbf{a}^{(l)})$, a residual block computes $\mathbf{a}^{(l+1)} = \mathbf{a}^{(l)} + \sigma(W^{(l)}\mathbf{a}^{(l)})$. The gradient of the loss with respect to $\mathbf{a}^{(l)}$ now includes a direct path: $\frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l+1)}} \cdot (1 + \frac{\partial F}{\partial \mathbf{a}^{(l)}})$. The $+1$ term means the gradient is always at least as large as $\frac{\partial \mathcal{L}}{\partial \mathbf{a}^{(l+1)}}$, regardless of what the learned function $F$ does. This is why ResNets could be trained at depths of 100-1000 layers, and why every modern transformer architecture uses residual connections around every attention block and feed-forward block.
+### Batch Normalization
+
+**One sentence:** Batch normalization normalizes each layer's inputs across the batch dimension to zero mean and unit variance, then applies learnable scale and shift parameters.
+
+For a mini-batch of activations $\{x_i\}_{i=1}^B$:
+$$\hat{x}_i = \frac{x_i - \mu_B}{\sqrt{\sigma_B^2 + \epsilon}}, \quad y_i = \gamma \hat{x}_i + \beta$$
+
+where $\mu_B, \sigma_B^2$ are the batch mean and variance, and $\gamma, \beta$ are learned per-feature parameters.
+
+**Problem it solves:** *Internal covariate shift* — as training updates weights in earlier layers, the distribution of each layer's inputs changes, requiring later layers to constantly re-adapt. BatchNorm fixes each layer's input distribution to approximately $\mathcal{N}(0, 1)$ per batch, stabilizing training.
+
+**Benefits:** Faster training (allows larger learning rates), reduced sensitivity to weight initialization, mild regularization effect (batch statistics add noise similar to dropout).
+
+**Limitations:**
+- Statistics are noisy for small batch sizes (batch size < 8 can actually hurt)
+- Statistics depend on the batch — cannot be used with batch size 1 (e.g., single-example online inference)
+- Does not work well for variable-length sequences (statistics are uninterpretable across padded positions)
+- Couples examples within a batch — breaks for recurrent networks
+
+### Layer Normalization
+
+**One sentence:** Layer normalization normalizes across the feature dimension within each individual example, independent of batch size.
+
+For a single example's activation vector $\mathbf{x} \in \mathbb{R}^d$:
+$$\hat{x}_j = \frac{x_j - \mu}{\sqrt{\sigma^2 + \epsilon}}, \quad \mu = \frac{1}{d}\sum_j x_j, \quad \sigma^2 = \frac{1}{d}\sum_j (x_j - \mu)^2$$
+
+**Why transformers use LayerNorm, not BatchNorm:**
+
+1. **Batch size independence:** LLM training uses very small per-device batch sizes (sometimes 1). BatchNorm statistics are meaningless at batch size 1.
+2. **Variable-length sequences:** Normalizing across the batch dimension would mix statistics across padded positions, which is semantically wrong.
+3. **Consistent inference behavior:** LayerNorm statistics are computed from the example itself — inference behavior is identical to training behavior. BatchNorm must track running statistics during training to use during inference, which adds complexity and can drift.
+
+> 💡 **Senior Tip:** The "pre-norm vs post-norm" distinction matters for deep transformers. Original "Attention is All You Need" used post-norm (LayerNorm after residual). GPT-2+ use pre-norm (LayerNorm before the sublayer). Pre-norm has better gradient flow because the residual path is clean — gradients flow through the skip connection without passing through a normalization operation.
+
+| Normalization | Normalizes over | Batch-size dependent | Sequence-length dependent | Used in |
+|---|---|---|---|---|
+| Batch Norm | Batch dimension | Yes | No | CNNs, vision models |
+| Layer Norm | Feature dimension | No | No | Transformers, LLMs |
+| Instance Norm | Spatial dimensions | No | — | Style transfer |
+| Group Norm | Groups of features | No | No | Detection, small batches |
+
+---
+
+## Residual / Skip Connections
+
+**One sentence:** Residual connections add the input of a block directly to its output — $\mathbf{y} = F(\mathbf{x}) + \mathbf{x}$ — providing a direct gradient highway through the network.
+
+Introduced in ResNets (He et al., 2016), residual connections solved the "degradation problem": adding more layers to a plain network actually hurt training accuracy, not because of overfitting, but because deep networks are harder to optimize. A 56-layer plain network performed *worse* than a 20-layer one on CIFAR-10. ResNets with residual connections trained successfully at 100–1,000 layers.
+
+### Why They Enable Deep Networks: The Gradient Highway
+
+Without residual connections, the gradient at layer $l$ flows entirely through the learned transformations:
+$$\frac{\partial \mathcal{L}}{\partial \mathbf{x}^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}^{(l+1)}} \cdot \frac{\partial F(\mathbf{x}^{(l)})}{\partial \mathbf{x}^{(l)}}$$
+
+With a residual connection $\mathbf{y}^{(l)} = F(\mathbf{x}^{(l)}) + \mathbf{x}^{(l)}$:
+$$\frac{\partial \mathcal{L}}{\partial \mathbf{x}^{(l)}} = \frac{\partial \mathcal{L}}{\partial \mathbf{x}^{(l+1)}} \cdot \left(1 + \frac{\partial F(\mathbf{x}^{(l)})}{\partial \mathbf{x}^{(l)}}\right)$$
+
+The $+1$ is the gradient highway. Even if $\partial F / \partial x \approx 0$ (the residual block learned something small), the gradient still flows with magnitude equal to the upstream gradient. Residual connections guarantee that depth cannot hurt more than shallowness — the network can always learn the identity function (just set $F \approx 0$) and do no worse than the skip connection alone.
+
+**Analogy:** Imagine a relay race where each runner might trip and drop the baton. A residual connection is like running a parallel direct path alongside the runners — if a runner fails, the baton still arrives via the shortcut. The relay runners (learned transformations) add refinements; the shortcut ensures nothing is lost.
+
+::: {.callout-tip title="Senior Tip"}
+Every modern transformer uses residual connections around both the attention block and the feed-forward block. This is the primary reason transformers can be stacked to 96+ layers (GPT-3: 96 layers) without vanishing gradient pathology. If you remove residual connections from a large transformer and try to train it, it diverges or achieves much worse quality.
+:::
+
+---
+
+## Connection to Transformers: Transformers = Attention + MLP
+
+**One sentence:** A transformer layer is two sublayers: a multi-head attention block (which mixes information across sequence positions) and a position-wise MLP (which applies a non-linear transformation to each position independently).
+
+The transformer architecture (Vaswani et al., 2017) is built entirely from the components covered in this chapter:
+
+```
+Transformer Layer:
+  x → LayerNorm → MultiHeadAttention → + x  (residual)
+                                           ↓
+  x → LayerNorm → MLP(Linear→GELU→Linear) → + x  (residual)
+```
+
+The MLP sublayer of a transformer is literally a 2-layer MLP applied independently to each token position:
+$$\text{MLP}(x) = W_2 \cdot \text{GELU}(W_1 x + b_1) + b_2$$
+
+where $W_1 \in \mathbb{R}^{4d \times d}$ expands the dimension by 4× and $W_2 \in \mathbb{R}^{d \times 4d}$ projects back. The GELU activation is the same one discussed above. Residual connections and LayerNorm wrap every sublayer, exactly as described.
+
+**What the MLP does in a transformer:** The attention block routes information between positions (which token should look at which other tokens). The MLP block processes each position's representation independently — it is where "factual knowledge" is primarily stored (Geva et al., 2021 showed that transformer MLP layers act as key-value memories). The MLP component contains roughly 2/3 of a transformer's total parameters.
+
+> 🎯 **What great looks like:** A senior candidate explains not just that transformers use these components, but *why* each choice was made. "LayerNorm instead of BatchNorm because batch size per device is small and sequences are variable-length. GELU instead of ReLU because it has no dead zones and empirically improves language modeling. Residual connections around every sublayer because 96-layer networks otherwise can't maintain gradient flow. These aren't arbitrary — each solves a specific training stability problem."
+
+---
+
+## Putting It All Together: Building a Deep MLP with PyTorch
+
+```python
+#| label: full-mlp-pytorch
+#| eval: false
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
+
+# -------------------------------------------------------
+# Production-style MLP with:
+# - GELU activations (LLM-style)
+# - Layer Normalization
+# - Residual connections
+# - Dropout regularization
+# - AdamW optimizer with weight decay
+# -------------------------------------------------------
+
+class ResidualBlock(nn.Module):
+    """Single residual block: LayerNorm → Linear → GELU → Dropout → Linear → + skip"""
+    def __init__(self, dim: int, dropout: float = 0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.ff = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * 4, dim),
+        )
+
+    def forward(self, x):
+        return x + self.ff(self.norm(x))   # Pre-norm residual (GPT-2 style)
+
+class DeepMLP(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, num_classes: int,
+                 num_blocks: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
+        self.blocks = nn.ModuleList([
+            ResidualBlock(hidden_dim, dropout) for _ in range(num_blocks)
+        ])
+        self.output_norm = nn.LayerNorm(hidden_dim)
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+
+        # He initialization
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.input_proj(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.output_norm(x)
+        return self.classifier(x)
+
+# Training setup
+torch.manual_seed(42)
+model = DeepMLP(input_dim=20, hidden_dim=128, num_classes=5, num_blocks=6)
+optimizer = optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Label smoothing: mild regularization
+
+# Synthetic multiclass data
+X = torch.randn(2000, 20)
+y = torch.randint(0, 5, (2000,))
+
+print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+train_losses = []
+for epoch in range(50):
+    model.train()
+    logits = model(X)
+    loss = criterion(logits, y)
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    optimizer.step()
+    scheduler.step()
+    train_losses.append(loss.item())
+
+    if epoch % 10 == 0:
+        model.eval()
+        with torch.no_grad():
+            acc = (model(X).argmax(1) == y).float().mean()
+        print(f"Epoch {epoch:3d} | Loss: {loss:.4f} | Acc: {acc:.4f} | LR: {scheduler.get_last_lr()[0]:.6f}")
+```
+
+> ⚠️ **Production Gotcha:** `scheduler.step()` must be called after `optimizer.step()`, not before. Calling it before the first optimizer step (a common mistake) means the scheduler never sees step 0 and the LR schedule shifts by one step — usually harmless but technically incorrect and can cause subtle issues with warmup schedules.
+
+> ⚠️ **Production Gotcha:** When using `nn.DataParallel` or `DistributedDataParallel`, BatchNorm statistics are computed per-GPU, not globally. For very small per-GPU batch sizes, use `SyncBatchNorm` or switch to LayerNorm. Large LLM training almost always uses LayerNorm for this reason.
+
+---
+
+## Cheat Sheet
+
+- **Perceptron:** $a = \sigma(\mathbf{w} \cdot \mathbf{x} + b)$ — the atomic unit of every neural network
+- **UAT:** Any continuous function is approximable by a 1-hidden-layer MLP; depth is more efficient than width
+- **XOR:** Not linearly separable → requires at least 1 hidden layer → proves single perceptron is insufficient
+- **Linear layers stack = 1 linear layer** — activation functions are the only thing making depth useful
+- **Sigmoid flaws:** Vanishing gradients (saturates), not zero-centered (zig-zagging)
+- **ReLU:** Gradient = 1 for positive inputs, 0 for negative; dying ReLU when $z < 0$ for all examples
+- **Dying ReLU:** 10–40% of neurons can silently die in poorly tuned networks; use Leaky ReLU or GELU
+- **GELU/SiLU:** Smooth, no dead zones, empirically better on language tasks — default for transformers
+- **LLM activation choice:** SiLU (via SwiGLU) in LLaMA/Mistral; GELU in GPT/BERT family
+- **Cross-entropy gradient:** Simplifies to $(\hat{y} - y)$ — strong signal when model is confidently wrong
+- **MSE for classification:** Near-zero gradient when model is confidently wrong — avoid
+- **Backprop:** Chain rule applied backward; 2 passes for gradients of all parameters regardless of count
+- **Vanishing gradients:** Product of Jacobians < 1 per layer → exponential shrinkage → early layers don't learn
+- **Exploding gradients:** Product of Jacobians > 1 → fix with gradient clipping (`max_norm=1.0`)
+- **Dropout:** Zeros neurons with prob $p$ during training; disabled at inference; prevents co-adaptation
+- **BatchNorm vs LayerNorm:** BatchNorm normalizes across batch (batch-size dependent); LayerNorm normalizes across features within example (batch-size independent)
+- **Why LayerNorm in transformers:** Small per-device batch sizes + variable-length sequences + consistent train/inference behavior
+- **Pre-norm vs post-norm:** Pre-norm (LayerNorm before sublayer) = better gradient flow; used in GPT-2+
+- **Residual connections:** $y = F(x) + x$ — gradient highway; the $+1$ ensures gradients always flow
+- **Why ResNets work at 1000 layers:** Residual gradient is $1 + \partial F/\partial x$ — never vanishes even if $F \approx 0$
+- **Transformer = attention + MLP:** Attention mixes information across positions; MLP transforms per position
+- **MLP in transformer:** $W_2 \cdot \text{GELU}(W_1 x)$ with 4× hidden expansion; stores "factual knowledge"
+- **AdamW over Adam:** Decouples weight decay from adaptive gradient scaling — critical for LLM fine-tuning
+- **He initialization:** $\mathcal{N}(0, 2/n_\text{in})$ for ReLU/GELU — compensates for half of neurons being zeroed
 
 ---
 
 ## Interview Questions
 
-::: {.callout-tip title="Entry Level"}
+### 🟢 Entry Level (0–2 years)
 
-**Q1. What does an activation function do, and why is non-linearity necessary in a neural network?**
-
-::: {.callout-note collapse="true" title="Model Answer"}
-An activation function transforms the weighted sum of a neuron's inputs (the pre-activation $z = \mathbf{w} \cdot \mathbf{x} + b$) into the neuron's output activation. It introduces non-linearity into the network's computations. Without activation functions, or with purely linear activation functions like $f(x) = x$, every layer is just a linear transformation. Composing linear transformations always produces another linear transformation — so a 100-layer linear network is mathematically equivalent to a single linear layer with different weights. You gain depth but not expressive power.
-
-Non-linearity is what allows stacked layers to represent complex, curved decision boundaries rather than just hyperplanes. The Universal Approximation Theorem states that a network with even one hidden layer and a non-linear activation can approximate any continuous function — but in practice, depth with non-linearity is what makes modern deep networks so powerful. Each layer learns a non-linear transformation of the previous layer's representation, building increasingly abstract features. Without non-linearity, a network distinguishing cats from dogs can only draw straight-line boundaries; with non-linearity, it can learn complex curved boundaries that capture the actual structure of visual categories.
-
-In practice, ReLU ($\max(0, x)$) is the standard choice for hidden layers in most architectures because it is computationally cheap, does not saturate for positive inputs (avoiding vanishing gradients), and empirically trains well across a wide range of tasks.
-:::
-
-**Q2. Explain backpropagation in plain English.**
+**Q1. What does an activation function do, and why is non-linearity necessary?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Backpropagation is the algorithm neural networks use to learn from their mistakes. Here is the intuition: when you make a prediction that is wrong, you want to figure out which parameters in the network were responsible for that mistake, and by how much. Backpropagation answers that question efficiently by working backward from the error.
+**Weak answer:** "It adds non-linearity so the network can learn complex patterns."
 
-First, a forward pass runs the input through the network layer by layer, producing a prediction. A loss function measures how wrong that prediction is — this is a single number. Then, the backward pass asks at each layer: "How much did the parameters in this layer contribute to the total error?" Using the chain rule of calculus, the error signal is propagated backward from the output to the input, through every layer in reverse order. Each parameter gets a gradient — a number that says "if you increase this parameter slightly, the loss goes up by this much." Parameters whose gradient is large contributed more to the error; parameters with small gradients contributed less.
+**Strong answer:** An activation function transforms the pre-activation $z = \mathbf{w} \cdot \mathbf{x} + b$ into the neuron's output. Without non-linear activations, composing layers is useless — each layer is a linear transformation, and the composition of linear transformations is always another linear transformation. A 100-layer linear network is mathematically equivalent to a single linear layer with different weights (you can prove this: $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + \text{const}$). Non-linearity breaks this collapse and allows each layer to genuinely increase expressive power.
 
-The chain rule is the mathematical engine that makes this efficient: $\frac{\partial \mathcal{L}}{\partial W} = \frac{\partial \mathcal{L}}{\partial a} \cdot \frac{\partial a}{\partial z} \cdot \frac{\partial z}{\partial W}$. You chain together local gradients that each layer can compute cheaply. The result is that you get gradients for every parameter in the network in two passes — one forward, one backward — rather than one expensive pass per parameter.
+In practice, ReLU is the standard for most hidden layers. GELU and SiLU are used in transformers because they have no dead zones and perform better on language tasks empirically.
 :::
 
-**Q3. What is the difference between batch gradient descent, mini-batch gradient descent, and stochastic gradient descent?**
+**Q2. Explain backpropagation in plain English. What is the chain rule's role?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The difference lies in how many training examples are used to compute the gradient before each parameter update.
+Backpropagation is the algorithm that efficiently computes the gradient of the loss with respect to every parameter in the network. The key insight is the chain rule: if $\mathcal{L}$ depends on $y$, which depends on $z$, which depends on $w$, then $\frac{\partial \mathcal{L}}{\partial w} = \frac{\partial \mathcal{L}}{\partial y} \cdot \frac{\partial y}{\partial z} \cdot \frac{\partial z}{\partial w}$.
 
-Batch gradient descent uses all $N$ training examples to compute a single gradient estimate and performs one update. This gives an accurate, low-variance estimate of the true gradient but requires processing the entire dataset before any learning happens. For large datasets (millions of examples), one update may take minutes, making this impractical.
+Forward pass: run the input through the network, store every intermediate activation. Backward pass: start at the loss, apply the chain rule layer by layer back to the inputs, computing the gradient contribution of each parameter. Each layer's backward operation is cheap — it just multiplies the incoming gradient by the local Jacobian.
 
-Stochastic gradient descent (SGD) uses a single randomly selected training example per update. Updates are extremely frequent — one per example — but each gradient estimate is very noisy (high variance). The noise can help escape local minima and has a regularizing effect, but convergence is erratic and it struggles to reach high-precision solutions.
-
-Mini-batch gradient descent — the standard in all modern deep learning — uses a small random subset (typically 32 to 256 examples, called a "batch") per update. This balances the tradeoffs: gradient estimates are smooth enough for stable convergence, updates are frequent enough for fast learning, and batches can be efficiently parallelized across GPU matrix operations. When practitioners say "SGD" in the context of PyTorch or modern frameworks, they almost always mean mini-batch SGD. The batch size is itself a hyperparameter: larger batches give more accurate gradients but generalize slightly worse (sharp minima); smaller batches introduce noise that acts as regularization.
+The efficiency advantage: computing gradients for all parameters takes approximately 2× the cost of one forward pass, regardless of how many parameters exist. Naive finite-difference would require one forward pass per parameter — billions of passes for a large model.
 :::
 
-**Q4. Why is cross-entropy loss used for classification instead of mean squared error?**
+**Q3. What is the vanishing gradient problem and what causes it?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-There are two complementary reasons: probabilistic justification and gradient behavior.
+The vanishing gradient problem occurs when gradients shrink exponentially as they propagate backward through deep networks, reaching near-zero values in early layers.
 
-The probabilistic justification: a classification model with a softmax output produces a probability distribution over classes. The natural way to measure how well a probability distribution fits observed data is likelihood — specifically, the log-likelihood of the correct class labels under the model's predicted distribution. Cross-entropy loss is exactly the negative log-likelihood of the correct classes: $\mathcal{L} = -\sum_i \log P(\text{correct class}_i)$. Minimizing cross-entropy is therefore equivalent to maximum likelihood estimation of the model parameters — a principled statistical objective.
+The cause: backprop multiplies together the Jacobians of each layer's transformation. If each Jacobian has elements consistently less than 1 — which happens when sigmoid or tanh neurons are in their saturated regions (very large or small inputs where the derivative $\approx 0$) — then the product of many such values shrinks exponentially. A 50-layer network with per-layer gradient factor 0.9 has a first-layer gradient $\approx 0.9^{50} \approx 0.005$.
 
-The gradient behavior reason: consider a sigmoid output neuron. With MSE loss on a sigmoid, the gradient is $\frac{\partial \mathcal{L}}{\partial z} = (\hat{y} - y) \cdot \sigma'(z)$. When the prediction is confidently wrong (say, $\hat{y} = 0.99$ but $y = 0$), $\sigma'(z)$ is nearly zero because the sigmoid is saturated. The gradient is tiny, so the network learns very slowly from its most egregious mistakes. With cross-entropy, the gradient simplifies beautifully to $(\hat{y} - y)$ — it is large when the prediction is confidently wrong, regardless of saturation. This is the cross-entropy gradient's famous property: it provides strong learning signal for confident errors, which is exactly where learning should be fastest. Using MSE for classification is not catastrophically wrong, but it produces slower and less stable training than cross-entropy.
+The practical consequence: early layers receive nearly zero gradient and their weights barely update. Those layers never learn meaningful representations. The network appears to train (later layers adapt) but has severely underutilized capacity.
+
+Modern solutions: ReLU activations (gradient = 1 for positive inputs), residual connections (gradient highway), LayerNorm (keeps activations in non-saturating regime), and careful weight initialization (He/Glorot).
 :::
 
-:::
-
-::: {.callout-warning title="Mid Level"}
-
-**Q5. Why does ReLU suffer from "dying neurons" and how do variants like Leaky ReLU address it?**
+**Q4. Why is cross-entropy used for classification instead of MSE?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-ReLU computes $\max(0, x)$. For inputs $x > 0$, the output is $x$ and the gradient is 1. For inputs $x \leq 0$, the output is 0 and the gradient is 0. The dying neuron problem occurs when a neuron's pre-activation $z = \mathbf{w} \cdot \mathbf{x} + b$ becomes negative for every example in the training set. Once this happens, the gradient for that neuron is zero for every forward and backward pass — the optimizer receives no signal and cannot update the neuron's weights to bring them out of the dead zone. The neuron is permanently stuck outputting zero.
+Two reasons: gradient behavior and probabilistic correctness.
 
-This can happen when a large gradient update pushes the weights or bias such that $z < 0$ for all inputs, or when learning rates are too high and produce large weight updates early in training. In practice, 10-50% of neurons in a ReLU network can die in poorly tuned training runs, which effectively reduces network capacity.
+**Gradient behavior:** Consider a model that is confidently wrong — sigmoid output $\hat{y} = 0.99$ but true label $y = 0$. With MSE loss on a sigmoid, the gradient is $(\hat{y} - y) \cdot \sigma'(z)$. Since the sigmoid is saturated at $\hat{y} = 0.99$, $\sigma'(z) \approx 0$, and the gradient is nearly zero. The model barely learns from its worst mistakes. With binary cross-entropy, the gradient simplifies to $(\hat{y} - y) = 0.99$. Large confident errors produce large gradients — exactly the learning signal you want.
 
-Leaky ReLU ($\max(\alpha x, x)$ with $\alpha \approx 0.01$) addresses this by allowing a small but non-zero gradient for negative inputs. The dying neuron problem cannot occur because the gradient is always at least $\alpha$, no matter how negative the pre-activation. Parametric ReLU (PReLU) learns $\alpha$ as a parameter rather than fixing it. ELU uses $\alpha(e^x - 1)$ for $x < 0$, producing negative outputs that push the mean activation closer to zero, reducing bias shift. In practice, GELU (used in all modern transformers) provides further improvements by weighting inputs by their cumulative Gaussian probability, producing smooth gradients throughout. For most modern work, GELU or SiLU has replaced ReLU in large models.
+**Probabilistic correctness:** Minimizing cross-entropy is equivalent to maximizing the log-likelihood of the correct class labels under the model's predicted distribution — a principled maximum likelihood objective. MSE would be the right loss if we believed the true labels were generated by adding Gaussian noise to the predictions, which is wrong for classification.
 :::
 
-**Q6. Compare Adam and SGD with momentum — when does each perform better and why?**
+**Q5. What is dropout and why is it only applied during training?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-Adam and SGD with momentum implement fundamentally different update strategies. SGD with momentum accumulates a velocity vector in the direction of persistent gradients, providing a global learning rate with a directional bias. Adam tracks per-parameter first and second moment estimates, implementing adaptive learning rates per parameter — parameters with historically large gradients get smaller effective learning rates, and vice versa.
+Dropout randomly sets each neuron's output to zero with probability $p$ during training. It forces the network to learn redundant representations — no neuron can over-rely on specific other neurons being present, because any of them might be dropped on the next forward pass. This is an implicit ensemble: you're training $2^n$ different sub-networks that share parameters.
 
-Adam generally wins in practice for most deep learning tasks because it is far less sensitive to learning rate choice, converges faster in early training, and handles sparse gradients well (which is critical for NLP models where word embeddings for rare words receive infrequent gradient updates). When someone wants to get a model training quickly with minimal hyperparameter tuning, Adam is the correct default — its bias correction and per-parameter adaptation make it robust. AdamW, which adds proper weight decay decoupled from the adaptive gradient scaling, is the standard for LLM training.
+Dropout is disabled during inference because we want deterministic, maximum-quality predictions. During inference, all neurons are active. To maintain consistent expected activations, PyTorch applies a scaling factor of $1/(1-p)$ to active neurons during training (inverted dropout), so no scaling is needed at inference.
 
-SGD with momentum has a well-documented advantage in some computer vision tasks: models trained with SGD + momentum + careful learning rate schedules achieve slightly higher test accuracy than Adam on benchmarks like CIFAR-10 and ImageNet. The explanation, supported by work from Keskar et al. (2017) and Wilson et al. (2017), is that SGD's noisy updates cause it to converge to wider, flatter minima that generalize better, while Adam's aggressive adaptation can converge to sharper minima that overfit slightly. This matters when: you have abundant training data, the task is a well-studied vision problem with established training recipes, and you are willing to tune the learning rate schedule carefully. For most practical applications — particularly anything involving language — Adam or AdamW is the right choice.
+The most common bug: forgetting to call `model.eval()` before inference. In `train()` mode, dropout adds noise to predictions, producing non-deterministic and degraded outputs. Always: `model.eval()` + `torch.no_grad()` for inference.
 :::
 
-**Q7. What is the vanishing gradient problem? What causes it and what are the modern architectural solutions?**
+**Q6. What is the difference between BatchNorm and LayerNorm? Why do transformers use LayerNorm?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-The vanishing gradient problem occurs when gradients diminish exponentially as they propagate backward through deep networks, becoming so small that early layers cannot learn. The cause is multiplicative: backpropagation computes gradients via the chain rule, which multiplies together the Jacobians of each layer's transformation. For a network with $L$ layers, the gradient at layer $l$ involves a product of $L - l$ Jacobians. If those Jacobians have elements consistently less than 1 — which happens when sigmoid or tanh neurons are in their saturated regions, where the derivative is nearly zero — the product shrinks exponentially. A network with 50 sigmoid layers might have gradients in early layers smaller than $10^{-10}$, making learning there effectively impossible.
+BatchNorm normalizes across the *batch dimension* for each feature — it computes the mean and variance of feature $j$ across all examples in the batch. LayerNorm normalizes across the *feature dimension* within each example — it computes the mean and variance of all features for one example.
 
-The practical consequence: in early deep networks (pre-2012), training networks deeper than 4-5 layers was difficult or impossible. The early layers would barely update while later layers learned normally, resulting in models that could not exploit depth.
+Transformers use LayerNorm for three reasons:
+1. LLM training uses very small per-device batch sizes (sometimes 1). BatchNorm statistics are meaningless at batch size 1.
+2. Sequences have variable lengths with padding. Normalizing across a padded batch mixes statistics across real and padding tokens, which is semantically wrong.
+3. LayerNorm has the same behavior at training and inference — no running statistics to track or sync across GPUs.
 
-Modern solutions: (1) ReLU activations — gradient is exactly 1 for positive inputs, eliminating saturation-driven gradient shrinkage. (2) Careful weight initialization — He initialization ($\mathcal{N}(0, 2/n_\text{in})$ for ReLU) and Xavier/Glorot initialization keep activation and gradient magnitudes consistent across layers at the start of training. (3) Batch normalization — normalizes layer inputs to zero mean and unit variance, keeping activations in the non-saturating regime throughout training. (4) Residual connections — the single most important solution. Adding $F(\mathbf{x}) + \mathbf{x}$ provides a direct gradient path from output to input: the gradient is always at least 1 along the skip connection, enabling training of networks hundreds of layers deep. Every modern transformer architecture uses residual connections around each sub-block for exactly this reason.
+BatchNorm is still used in CNNs and vision models where batch sizes are large and spatial dimensions are consistent.
 :::
 
-**Q8. Prove that stacking linear layers without activation functions is equivalent to a single linear transformation.**
+**Q7. What is a residual connection and what problem does it solve?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-This is a straightforward proof by induction on the number of layers. Consider a network with two linear layers (no activation functions). Layer 1 computes $\mathbf{h}_1 = W_1 \mathbf{x} + \mathbf{b}_1$, where $W_1 \in \mathbb{R}^{d_1 \times d_0}$ and $\mathbf{b}_1 \in \mathbb{R}^{d_1}$. Layer 2 computes $\mathbf{h}_2 = W_2 \mathbf{h}_1 + \mathbf{b}_2 = W_2(W_1 \mathbf{x} + \mathbf{b}_1) + \mathbf{b}_2$.
+A residual connection adds the input of a block directly to its output: $\mathbf{y} = F(\mathbf{x}) + \mathbf{x}$ where $F$ is the learned transformation (e.g., two linear layers with activation).
 
-Expanding: $\mathbf{h}_2 = (W_2 W_1)\mathbf{x} + (W_2 \mathbf{b}_1 + \mathbf{b}_2)$.
+The problem it solves: in very deep networks (20+ layers), training accuracy degrades even on the training set — not from overfitting, but because deep networks are harder to optimize. The gradient flowing to early layers passes through many Jacobians and can vanish.
 
-Define $W^* = W_2 W_1$ (a matrix, since matrix multiplication is closed) and $\mathbf{b}^* = W_2 \mathbf{b}_1 + \mathbf{b}_2$ (a vector). Then $\mathbf{h}_2 = W^* \mathbf{x} + \mathbf{b}^*$, which is exactly the form of a single linear layer with weight $W^*$ and bias $\mathbf{b}^*$.
+Residual connections solve this by providing a gradient highway. The gradient is $\frac{\partial \mathcal{L}}{\partial x} = \frac{\partial \mathcal{L}}{\partial y} \cdot (1 + \frac{\partial F}{\partial x})$. The $+1$ guarantees the gradient is always at least as large as the upstream gradient, regardless of what $F$ learned. The network can also easily learn the identity function (set $F \approx 0$), ensuring adding a layer can never hurt.
 
-By induction, for $L$ layers: $\mathbf{h}_L = W_L W_{L-1} \cdots W_1 \mathbf{x} + \text{constant bias vector}$. The product of matrices $W_L \cdots W_1$ is itself a matrix, so the entire $L$-layer linear network is equivalent to one matrix multiplication and one bias addition. Adding layers increases computation and parameter count but does not increase expressive power — the function represented is still an affine map from input to output. This is why activation functions are not optional: they are what makes depth useful. The proof also explains the rank limitation: if any intermediate layer has fewer units than the input or output, the effective linear map $W^*$ is rank-limited by that bottleneck, regardless of other layer sizes.
+Every transformer uses residual connections around both the attention block and the feed-forward block. This is why GPT-3 can be trained at 96 layers without vanishing gradient pathology.
 :::
 
-:::
+---
 
-::: {.callout-important title="Forward Deployed Engineer"}
+### 🟡 Mid Level (2–5 years)
 
-**Q9. A customer's model is overfitting severely. Walk through your diagnostic process and the mitigations you would apply in order of preference.**
+**Q1. Walk me through backpropagation on a 3-layer network. What happens to gradients as the network gets deeper?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-I start by confirming the diagnosis: overfitting means training loss is low but validation loss is significantly higher and diverging over epochs. I check the learning curves — if validation loss decreases then plateaus while training loss continues falling, that is classic overfitting. I also check for data leakage first, because leakage can masquerade as a training/validation discrepancy.
+Consider: Input $x$ → $[W_1, b_1]$ → ReLU → $[W_2, b_2]$ → ReLU → $[W_3, b_3]$ → Softmax → Cross-entropy loss $\mathcal{L}$.
 
-My mitigations in order of preference, from least disruptive to most: First, regularization on the existing model. L2 weight decay (increase the weight decay coefficient in the optimizer) penalizes large weights and is virtually free to add. Dropout (adding dropout layers with $p=0.1$-$0.3$ in fully connected layers) randomly zeros activations during training, forcing the network to learn redundant representations. Both are easy wins.
+Forward pass (store all intermediates):
+- $z_1 = W_1 x + b_1$, $a_1 = \text{ReLU}(z_1)$
+- $z_2 = W_2 a_1 + b_2$, $a_2 = \text{ReLU}(z_2)$
+- $z_3 = W_3 a_2 + b_3$, $\hat{y} = \text{softmax}(z_3)$, $\mathcal{L} = \text{CE}(\hat{y}, y)$
 
-Second, data augmentation — if the task is image classification, adding flips, crops, color jitter, and CutMix can multiply the effective dataset size. For text, synonym substitution, back-translation, or paraphrasing augment the training distribution. Augmentation is often the highest-impact intervention for overfitting in practice.
+Backward pass (chain rule):
+- $\delta_3 = \frac{\partial \mathcal{L}}{\partial z_3} = \hat{y} - y$ (cross-entropy + softmax gradient simplifies beautifully)
+- $\frac{\partial \mathcal{L}}{\partial W_3} = \delta_3 \cdot a_2^T$, $\frac{\partial \mathcal{L}}{\partial b_3} = \delta_3$
+- $\delta_2 = (W_3^T \delta_3) \odot \text{ReLU}'(z_2)$ where $\text{ReLU}'(z) = \mathbb{1}[z > 0]$
+- $\frac{\partial \mathcal{L}}{\partial W_2} = \delta_2 \cdot a_1^T$
+- $\delta_1 = (W_2^T \delta_2) \odot \text{ReLU}'(z_1)$
+- $\frac{\partial \mathcal{L}}{\partial W_1} = \delta_1 \cdot x^T$
 
-Third, reduce model capacity — if the model is too large for the dataset, shrink the number of layers or hidden dimensions. A simpler model has less capacity to memorize training examples. Fourth, get more data — often the most impactful solution but also the most expensive. Even a 2× increase in training data typically reduces overfitting more than any regularization technique. Fifth, early stopping — monitor validation loss and stop training when it stops improving, saving the checkpoint at the validation minimum. This is free and should always be on. Finally, if budget permits, techniques like mixup or label smoothing can further reduce overfitting in classification tasks by softening the training targets.
+As the network gets deeper, each step multiplies the gradient by a weight matrix transpose ($W^T$) and the activation derivative. For ReLU, the activation derivative is 1 for active neurons and 0 for dead neurons — so deep ReLU networks maintain gradient magnitude through active neurons. For sigmoid/tanh, the derivative can be $\ll 1$, causing exponential shrinkage. With residual connections, the $+1$ in the gradient expression ensures deep networks always have at least a direct gradient path.
+
+**Follow-up:** "What does `retain_graph=True` in PyTorch do?" The computation graph is freed after `loss.backward()`. `retain_graph=True` keeps it in memory so you can call `backward()` again — needed when computing gradients with respect to multiple losses or doing second-order optimization. Has a significant memory cost.
 :::
 
-**Q10. A customer asks why their neural network isn't learning at all (loss not decreasing). What are the five most common causes you'd check?**
+**Q2. Prove that stacking linear layers without activation functions is equivalent to one linear layer.**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
-When loss is flat from the first epoch, I work through these five causes in order. First, learning rate. A learning rate that is too small ($< 10^{-6}$ for Adam) will produce negligible updates; too large ($> 0.1$ for Adam) causes divergence. I would run a learning rate finder — sweep from $10^{-7}$ to $10^{-1}$ over a few hundred steps and plot loss versus learning rate. The optimal rate is just before the loss starts diverging. This catches ~60% of "model not learning" bugs.
+By induction. Base case (2 layers):
+- Layer 1: $h_1 = W_1 x + b_1$
+- Layer 2: $h_2 = W_2 h_1 + b_2 = W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 + b_2)$
 
-Second, data pipeline bugs. Are the labels aligned with the inputs? I have seen customers accidentally shuffle features without shuffling labels, producing a perfectly misaligned dataset. Are the inputs normalized? Raw pixel values in [0, 255] instead of [0, 1] can make training erratic. Print a batch, verify manually.
+Define $W^* = W_2 W_1$ (a matrix, since the product of two matrices is a matrix) and $b^* = W_2 b_1 + b_2$ (a vector). Then $h_2 = W^* x + b^*$ — a single linear layer.
 
-Third, vanishing gradients — especially in custom architectures. Check gradient norms layer by layer. If gradients in early layers are $< 10^{-7}$ while later layers have gradients of $0.1$-$1.0$, vanishing gradients are the problem. Switch to ReLU activations, add batch normalization, or add residual connections.
+Inductive step: assume $L$ layers collapse to $W_L^* x + b_L^*$. Adding one more layer: $h = W_{L+1}(W_L^* x + b_L^*) + b_{L+1} = (W_{L+1} W_L^*)x + (W_{L+1} b_L^* + b_{L+1})$ — still one linear layer.
 
-Fourth, weight initialization. Weights initialized too small (all near zero) mean activations collapse, gradients vanish, and the network is stuck in a symmetric state where all neurons learn the same function. Check that you are using He or Glorot initialization, not all-zeros.
+Therefore by induction, any number of stacked linear layers (without activations) is equivalent to a single linear layer.
 
-Fifth, incorrect loss function setup. Applying softmax inside the loss and also as an activation function doubles the squashing, producing near-uniform predictions. In PyTorch, `nn.CrossEntropyLoss` expects raw logits, not softmax outputs. Verify the loss function matches the output layer activation, and confirm that the loss is averaging over examples correctly (not accidentally summing, which would produce loss values that grow with batch size).
+**Important extension:** Even with more parameters (large intermediate dimensions), you cannot escape this. A 100-layer network with 1000 hidden units per layer without activations has the same expressive power as a single $d_\text{in} \times d_\text{out}$ matrix. The rank of the effective transformation is bounded by $\min(d_\text{in}, d_\text{out})$ — intermediate "wide" layers don't help because the final matrix product is still rank-limited by the narrowest layer.
 :::
 
+**Q3. Compare Adam and AdamW. Why does AdamW matter for fine-tuning LLMs?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Adam maintains per-parameter first moment (gradient mean, $m_t$) and second moment (gradient variance, $v_t$). Update rule: $\theta_t = \theta_{t-1} - \eta \cdot \hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$.
+
+In standard Adam, weight decay (L2 regularization) is implemented by adding $\lambda\theta$ to the gradient: $g_t' = g_t + \lambda\theta$. This gradient is then scaled by Adam's adaptive factor $1/\sqrt{\hat{v}_t}$. For parameters with large, frequent gradients (large $\hat{v}_t$), the weight decay term gets scaled *down* — parameters that are updated frequently receive *less* regularization than parameters updated rarely. This is the opposite of the intended behavior.
+
+AdamW (Loshchilov & Hutter, 2017) decouples weight decay from the gradient update:
+$$\theta_t = \theta_{t-1}(1 - \eta\lambda) - \eta \cdot \hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$$
+
+Weight decay is applied directly to the parameters at a fixed rate, independent of gradient history.
+
+For LLM fine-tuning, this matters enormously. Weight decay is one of the main tools for preventing catastrophic forgetting — keeping parameters close to the pre-trained initialization while adapting to new data. With Adam's coupled weight decay, heavily-updated parameters (e.g., those in task-relevant attention heads) lose their pre-trained values faster than intended, while rarely-updated parameters are under-regularized. AdamW applies uniform regularization, producing more stable fine-tuning with better retention of base model capabilities.
 :::
+
+**Q4. Why does batch normalization fail in some NLP contexts? What is used instead and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+BatchNorm computes statistics (mean and variance) across the batch dimension for each feature. This fails in NLP for three compounding reasons:
+
+1. **Small batch sizes:** LLM training on a single GPU might use batch size 1–8 due to memory constraints. Statistics from 4 examples are too noisy to be useful for normalization — the batch may not represent the population distribution.
+
+2. **Variable-length sequences with padding:** A batch of sentences padded to the same length contains a mix of real tokens and [PAD] tokens. Computing batch statistics across both mixes semantically meaningful positions with semantically empty padding, producing statistics that don't reflect the real distribution.
+
+3. **Inconsistent train/inference behavior:** BatchNorm tracks running statistics during training to use during inference (when batch size is 1). These running statistics can drift from what inference actually sees, especially in fine-tuning settings.
+
+LayerNorm solves all three: it normalizes across the feature dimension within a single example, so it's batch-size independent, works correctly with padding (each position is normalized independently), and has no separate inference behavior.
+
+One nuance: in RNN/LSTM-based sequence models, another option is Group Normalization, which normalizes across groups of features and is batch-size independent. But transformers universally use LayerNorm, usually in the pre-norm position (before the sublayer), which also improves gradient flow.
+:::
+
+**Q5. A training run has a large loss spike at step 50,000. How do you diagnose and fix it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Large mid-training loss spikes are caused by one of three things: a bad data batch, an optimizer state issue, or gradient explosion.
+
+**Diagnosis steps:**
+1. Check if the spike is followed by recovery. If loss shoots up then returns to the previous trend, it was likely a bad batch (corrupted data, extreme outliers). Check for NaN/Inf values in the batch at that step.
+2. Check gradient norms at step 50,000. Log `torch.nn.utils.clip_grad_norm_` output — if gradient norm was 100× the normal value just before the spike, gradient explosion is the cause.
+3. Check if a data pipeline change or checkpoint load happened around step 50,000.
+
+**Fixes:**
+- **Gradient clipping** (if not already enabled): `clip_grad_norm_(model.parameters(), max_norm=1.0)`. This is standard in all LLM training and should be present from step 1.
+- **Data filtering**: scan training data for examples with extreme token lengths, corrupted encoding, or unusual loss values. Log per-example loss to identify outliers.
+- **Learning rate warmup**: if the spike happens early (first few thousand steps), add linear warmup from 0 to the target LR over 1,000–5,000 steps. Early training is most vulnerable to large updates.
+- **Z-loss regularization** (used in PaLM training): adds $z_\text{loss} = \epsilon \cdot \log^2 Z$ where $Z$ is the softmax normalizer. This prevents the logits from growing unboundedly, which is a common cause of late-training spikes in large models.
+:::
+
+**Q6. How does He initialization prevent vanishing/exploding gradients at the start of training?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The goal of weight initialization is to keep activation and gradient variances approximately constant across layers at the start of training.
+
+For a layer with $n_\text{in}$ inputs and ReLU activation: if weights are drawn from $\mathcal{N}(0, \sigma^2)$, the variance of the output is $\text{Var}(z) = n_\text{in} \cdot \sigma^2 \cdot \text{Var}(x) \cdot \mathbb{E}[\text{ReLU}^2]$. Since ReLU zeroes roughly half of its inputs, $\mathbb{E}[\text{ReLU}^2] \approx 1/2$. To maintain $\text{Var}(z) = \text{Var}(x)$: $n_\text{in} \cdot \sigma^2 \cdot 1/2 = 1$, so $\sigma^2 = 2/n_\text{in}$.
+
+This is He (Kaiming) initialization: $W \sim \mathcal{N}(0, 2/n_\text{in})$.
+
+Xavier/Glorot initialization is derived similarly for sigmoid/tanh (no zeroing): $\sigma^2 = 2/(n_\text{in} + n_\text{out})$.
+
+**Why this matters:** With all-zeros initialization, all neurons compute the same function (symmetry problem) and gradients are identical — the network can never learn diverse features. With too-large initialization, activations saturate (sigmoid/tanh) or explode (ReLU), and training diverges. With too-small initialization, activations collapse toward zero and vanish. He initialization places you in the sweet spot where signal propagates cleanly at training start, giving gradient descent a meaningful starting point.
+:::
+
+---
+
+### 🔴 Senior / Lead / Staff (5+ years)
+
+**Q1. Walk me through backpropagation on a 3-layer network. What happens to gradients as the network gets much deeper? How do modern architectures solve this?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+[Full derivation as in Mid Q1, then extend:]
+
+As depth increases beyond ~20 layers with sigmoid/tanh: the product of Jacobians $\prod_{k=l}^{L-1} \frac{\partial a^{(k+1)}}{\partial a^{(k)}}$ shrinks exponentially. With per-layer factor 0.9 at 100 layers: $0.9^{100} \approx 2.6 \times 10^{-5}$ — effectively zero gradient in early layers.
+
+Modern architectures solve this through three complementary mechanisms:
+
+**1. Residual connections:** $y = F(x) + x$ gives gradient $1 + \partial F/\partial x$. Even if $\partial F/\partial x \approx 0$, the gradient magnitude equals the upstream gradient. Depth cannot hurt. Pre-norm transformers use this around every sublayer.
+
+**2. Pre-LayerNorm:** Original transformers used post-norm (LN after residual). Pre-norm (LN before sublayer, as in GPT-2+) keeps the residual path completely clean — gradients flow through the skip connection without passing through any normalization. This matters at depths beyond 48 layers.
+
+**3. GELU/SiLU activation:** No saturation-induced gradient suppression. Gradient is positive everywhere (no dead zones). In a 96-layer transformer, all 96 MLP sublayers maintain gradient flow.
+
+**4. Careful initialization scaling:** Large models sometimes use $1/\sqrt{2L}$ scaling for residual branch weights (GPT-J style) to prevent residual outputs from dominating the skip connection at initialization.
+
+> 🎯 **What great looks like:** Connect every architectural choice back to gradient flow. "Pre-norm, residual connections, and GELU are not arbitrary choices — they are a coherent system designed to maintain gradient signal through 96+ layers. Remove any one of them and training becomes noticeably harder. The transformer architecture is optimized for trainability, not just expressiveness."
+:::
+
+**Q2. Why does batch normalization fail in some NLP contexts? What's used instead and why?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+[Full answer as in Mid Q4, then extend:]
+
+**The deeper issue — covariate shift in language models:** In language, the distribution of activations at position $i$ depends heavily on the sequence context. A sentence-initial [CLS] token has systematically different activation statistics from sentence-final punctuation tokens. Batch normalization cannot distinguish these semantic/positional differences — it normalizes across all positions in all examples in the batch, conflating semantically distinct distributions. LayerNorm normalizes within each position's feature vector, preserving these positional distinctions.
+
+**The latest development — RMSNorm:** Used in LLaMA, Mistral, and Gemma. RMSNorm removes the mean-centering step, normalizing only by root mean square: $\hat{x} = x / \sqrt{\frac{1}{d}\sum_j x_j^2 + \epsilon}$. This is ~10–15% faster to compute than LayerNorm, with minimal quality difference on language tasks. The reasoning: in practice, the re-centering step of LayerNorm rarely matters — the learned $\beta$ absorbs any mean offset — so it's computation that can be removed.
+
+**When BatchNorm IS appropriate in NLP:** For models with large, fixed-length batch dimensions — e.g., embedding lookup tables in recommendation systems, or some audio processing models — BatchNorm can be appropriate. The key question is always: do batch statistics meaningfully represent the population?
+
+> ⚠️ **Common Mistake:** Assuming "pre-norm always beats post-norm." Pre-norm improves training stability for deep networks, but some work (e.g., T5, original BERT) achieves competitive results with post-norm and careful tuning. The difference matters most at depth > 48 layers and during aggressive fine-tuning where gradient flow is most fragile.
+:::
+
+**Q3. A customer's large model is training well until step 80,000, then destabilizes with loss spikes and never recovers. What are the root causes specific to large model training and how do you address them?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Late-training instability in large models (this pattern — stable then sudden destabilization) is a well-documented phenomenon. The causes are different from early-training spikes.
+
+**Root cause 1: Softmax logit growth (most common in very large models).** As training progresses, attention logits grow in magnitude. At some point, softmax becomes nearly one-hot — the attention head focuses entirely on one token. The gradient through near-one-hot softmax is very small (the output barely changes when logits shift), but the logit values themselves grow unboundedly, causing numerical instability when they overflow float16. Fix: z-loss regularization ($\lambda \log^2 Z$, where $Z$ is the softmax partition function), used by PaLM and others. This adds a penalty that prevents logit growth.
+
+**Root cause 2: Optimizer momentum accumulation.** After 80,000 steps, Adam's first and second moment estimates have accumulated over many gradient updates. If the loss landscape changes abruptly (e.g., due to a different data distribution in a curriculum), the accumulated momentum points in the "wrong" direction and takes many steps to correct. Fix: learning rate decay + optionally resetting the optimizer state when switching curriculum phases.
+
+**Root cause 3: Gradient norm growth.** Monitor the p99 gradient norm throughout training. If it trends upward over 80,000 steps, gradient clipping threshold may need adjustment, or you may need a lower learning rate in later training.
+
+**Root cause 4: Data quality cliff.** Some training pipelines run out of high-quality data around a certain step and begin repeating lower-quality data or shift to noisier web text. Log the source distribution of batches around step 80,000.
+
+**Monitoring strategy for production LLM training:** Log per-step gradient norm, per-layer activation norm, loss per data source, and attention entropy. Alert on: (a) gradient norm exceeding 2× rolling average, (b) attention entropy dropping below 0.5 bits (heads becoming too sharp), (c) loss variance increasing over a rolling 1,000-step window.
+
+> 🎯 **What great looks like:** A strong senior candidate gives specific mechanisms, references concrete papers (z-loss from PaLM, gradient clipping norms from LLaMA training), and discusses monitoring/alerting strategy — not just "I would check the gradients."
+
+> ⚠️ **Common Mistake:** Treating all training instabilities the same way. Early spikes (first 5% of training) are usually learning rate or initialization problems. Mid-training spikes are usually data quality or bad batches. Late-training destabilization is usually logit growth, momentum issues, or data curriculum shifts. Each has a different root cause and fix.
+:::
+
+**Q4. You need to train a 7B parameter model from scratch. Walk through your architectural decisions: activation function, normalization, initialization, optimizer, and residual strategy.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+This is a systems question — the answer should reflect knowledge of what modern LLM training actually uses, not textbook defaults.
+
+**Activation function: SwiGLU** (SiLU gated linear unit). $\text{SwiGLU}(x, W, V, b, c) = \text{SiLU}(xW + b) \odot (xV + c)$. Used in LLaMA 2/3, Mistral, PaLM. The gating mechanism gives the activation a multiplicative interaction that empirically reduces perplexity vs. pure GELU or ReLU at equivalent parameter count. Reduces FFN hidden dim by $2/3$ to maintain FLOP parity (since SwiGLU uses two weight matrices vs one).
+
+**Normalization: RMSNorm (pre-norm).** Pre-norm for gradient flow, RMSNorm over LayerNorm for ~12% compute savings with equivalent quality on language tasks. Place before both attention and FFN sublayers. No normalization at the output of each sublayer (the residual stream stays unnormalized, which recent work suggests is actually beneficial for representation quality).
+
+**Initialization:** $W \sim \mathcal{N}(0, 0.02^2)$ for most layers (GPT-2 convention), with $1/\sqrt{2L}$ scaling for residual projection weights (output projections of attention and FFN) — this prevents residual outputs from dominating the skip connection at initialization, which becomes important at 32+ layers.
+
+**Optimizer: AdamW** with $\beta_1=0.9$, $\beta_2=0.95$ (lower $\beta_2$ than default 0.999 — this is the LLaMA/GPT-3 convention and prevents second moment from being dominated by early gradient estimates), $\epsilon=10^{-5}$ (larger than default to prevent division instability in mixed precision), weight decay 0.1 on all parameters except embeddings and LN parameters.
+
+**Learning rate schedule:** Warmup for 2,000 steps from $10^{-7}$ to $3 \times 10^{-4}$, then cosine decay to $10^{-5}$ at end of training. Gradient clipping at `max_norm=1.0`.
+
+**Residual strategy:** Every attention block and every FFN block has a residual connection. No dropout in the residual stream for pretraining (it hurts token prediction quality); add dropout only during fine-tuning if overfitting is observed.
+:::
+
+---
 
 ## Further Reading
 
-- [Neural Networks and Deep Learning (Nielsen)](http://neuralnetworksanddeeplearning.com/)
-- [Deep Learning (Goodfellow, Bengio, Courville)](https://www.deeplearningbook.org/)
-- [Adam: A Method for Stochastic Optimization (Kingma and Ba, 2014)](https://arxiv.org/abs/1412.6980)
-- [Deep Residual Learning for Image Recognition (He et al., 2016)](https://arxiv.org/abs/1512.03385)
-- [Decoupled Weight Decay Regularization / AdamW (Loshchilov and Hutter, 2017)](https://arxiv.org/abs/1711.05101)
+- [Neural Networks and Deep Learning (Nielsen)](http://neuralnetworksanddeeplearning.com/) — intuitive, free, excellent for entry level
+- [Deep Learning (Goodfellow, Bengio, Courville)](https://www.deeplearningbook.org/) — comprehensive reference
+- [Batch Normalization (Ioffe & Szegedy, 2015)](https://arxiv.org/abs/1502.03167) — original paper
+- [Deep Residual Learning for Image Recognition (He et al., 2016)](https://arxiv.org/abs/1512.03385) — ResNet paper
+- [Adam: A Method for Stochastic Optimization (Kingma & Ba, 2014)](https://arxiv.org/abs/1412.6980)
+- [Decoupled Weight Decay Regularization / AdamW (Loshchilov & Hutter, 2017)](https://arxiv.org/abs/1711.05101)
+- [Gaussian Error Linear Units — GELU (Hendrycks & Gimpel, 2016)](https://arxiv.org/abs/1606.08415)
+- [LLaMA 2 Technical Report (Touvron et al., 2023)](https://arxiv.org/abs/2307.09288) — see architectural choices section
