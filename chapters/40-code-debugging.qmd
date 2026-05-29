@@ -1,0 +1,580 @@
+---
+title: "Live Code Debugging — ML Pipeline Bugs"
+---
+
+# Live Code Debugging
+
+Live debugging sessions in ML interviews test whether you can read unfamiliar code quickly, form hypotheses, and communicate your reasoning out loud. This chapter presents 10 realistic bugs — 8 Python and 2 SQL — each with the broken code, a structured hint, the fix, and the production context that makes the bug dangerous.
+
+## How to Approach a Live Debugging Session
+
+```
+1. READ ALOUD — narrate what the code is supposed to do
+2. IDENTIFY THE CONTRACT — what should go in, what should come out?
+3. TRACE ONE EXAMPLE — pick concrete input, walk through manually
+4. FORM A HYPOTHESIS — "I think the bug is here because..."
+5. VERIFY — show how you'd confirm (print, assert, unit test)
+6. FIX + EXPLAIN — write the fix, explain why it solves the root cause
+```
+
+Interviewers are watching your reasoning process, not just the final answer. A correct fix with no explanation scores lower than a slightly-wrong fix with clear causal reasoning.
+
+---
+
+## Bug 1: Data Leakage via Scaler Fit on Full Dataset
+
+### Broken Code
+
+```python
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+import numpy as np
+
+def train_model(X, y):
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)   # BUG: fit on entire dataset
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, test_size=0.2, random_state=42
+    )
+
+    model = LogisticRegression()
+    model.fit(X_train, y_train)
+    return model, scaler, model.score(X_test, y_test)
+```
+
+### Hint
+
+The scaler is fitted before the train/test split. What information does `fit_transform` use from the data?
+
+### Fix
+
+```python
+def train_model(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)  # fit only on train
+    X_test_scaled = scaler.transform(X_test)         # transform only — no refit
+
+    model = LogisticRegression()
+    model.fit(X_train_scaled, y_train)
+    return model, scaler, model.score(X_test_scaled, y_test)
+```
+
+### Why It Matters
+
+`fit` computes mean and standard deviation from all rows, including test rows. The test set's statistics leak into the scaler parameters. Reported accuracy is optimistically biased — sometimes by several points. The same bug applies to `LabelEncoder`, `KBinsDiscretizer`, imputers, and PCA: always fit on train only, transform on test.
+
+---
+
+## Bug 2: `model.train()` Called at Inference
+
+### Broken Code
+
+```python
+import torch
+
+class SentimentClassifier:
+    def __init__(self, model_path):
+        self.model = torch.load(model_path)
+        self.model.train()   # BUG: should be eval()
+
+    def predict(self, text_batch):
+        with torch.no_grad():
+            inputs = self.tokenizer(text_batch, return_tensors="pt", padding=True)
+            outputs = self.model(**inputs)
+            return outputs.logits.argmax(dim=-1)
+```
+
+### Hint
+
+What does `model.train()` change about the model's forward pass?
+
+### Fix
+
+```python
+class SentimentClassifier:
+    def __init__(self, model_path):
+        self.model = torch.load(model_path)
+        self.model.eval()   # disables dropout, sets BatchNorm to use running stats
+
+    def predict(self, text_batch):
+        with torch.no_grad():
+            inputs = self.tokenizer(text_batch, return_tensors="pt", padding=True)
+            outputs = self.model(**inputs)
+            return outputs.logits.argmax(dim=-1)
+```
+
+### Why It Matters
+
+`model.train()` enables dropout (randomly zeroes activations) and sets BatchNorm to compute statistics from the current batch rather than the running statistics from training. At inference this causes:
+
+- **Non-deterministic outputs** — same input returns different predictions
+- **High variance on small batches** — BatchNorm on batch_size=1 is pathological
+- **Accuracy regression** — can drop 5-15% depending on dropout rate
+
+This bug is easy to miss because the model still runs without errors.
+
+---
+
+## Bug 3: Bare `except` Swallowing Errors
+
+### Broken Code
+
+```python
+def classify_document(text: str, model) -> dict:
+    try:
+        result = model.predict(text)
+        category = result["category"]
+        confidence = result["confidence"]
+        return {"category": category, "confidence": confidence, "error": None}
+    except:   # BUG: catches everything, including KeyboardInterrupt, SystemExit
+        return {"category": "unknown", "confidence": 0.0, "error": None}
+```
+
+### Hint
+
+What kinds of errors might occur inside the try block? Which of those should actually be caught?
+
+### Fix
+
+```python
+def classify_document(text: str, model) -> dict:
+    try:
+        result = model.predict(text)
+        category = result["category"]
+        confidence = result["confidence"]
+        return {"category": category, "confidence": confidence, "error": None}
+    except KeyError as e:
+        # model response missing expected field — log and return fallback
+        logger.warning(f"Model response missing key: {e}, response: {result}")
+        return {"category": "unknown", "confidence": 0.0, "error": f"missing_key:{e}"}
+    except (ValueError, RuntimeError) as e:
+        # model raised a known recoverable error
+        logger.error(f"Model prediction error: {e}")
+        return {"category": "unknown", "confidence": 0.0, "error": str(e)}
+    # Other exceptions (OOM, network errors, SystemExit) propagate as expected
+```
+
+### Why It Matters
+
+Bare `except:` catches `KeyboardInterrupt`, `SystemExit`, `MemoryError`, and `GeneratorExit`. This means:
+- You cannot Ctrl-C a stuck job
+- OOM errors are silently swallowed, creating zombie processes
+- The `error: None` field lies — callers cannot detect that an error occurred
+- Silent failures in production make incidents much harder to diagnose
+
+---
+
+## Bug 4: Mutable Default Argument
+
+### Broken Code
+
+```python
+def build_feature_vector(
+    text: str,
+    metadata: dict = {}   # BUG: mutable default shared across all calls
+) -> dict:
+    metadata["text_length"] = len(text)
+    metadata["word_count"] = len(text.split())
+    return metadata
+```
+
+### Hint
+
+In Python, when is the default value `{}` evaluated?
+
+### Fix
+
+```python
+def build_feature_vector(
+    text: str,
+    metadata: dict | None = None   # None is immutable — safe default
+) -> dict:
+    if metadata is None:
+        metadata = {}
+    metadata["text_length"] = len(text)
+    metadata["word_count"] = len(text.split())
+    return metadata
+```
+
+### Why It Matters
+
+Python evaluates default argument values **once** at function definition, not at each call. The same `{}` object is reused across all calls. After:
+
+```python
+build_feature_vector("hello")         # metadata = {"text_length": 5, "word_count": 1}
+build_feature_vector("hello world")   # metadata = {"text_length": 5, "word_count": 1, "text_length": 11, ...}
+```
+
+State accumulates across requests. In a web service, this becomes a cross-request state contamination bug — earlier requests' data appears in later requests' features.
+
+---
+
+## Bug 5: NaN Features Passed to Model
+
+### Broken Code
+
+```python
+import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier
+
+def train_classifier(df: pd.DataFrame):
+    features = ["age", "account_days", "transaction_count", "avg_amount"]
+    X = df[features]
+    y = df["label"]
+    model = GradientBoostingClassifier()
+    model.fit(X, y)   # BUG: no null check — NaNs cause silent bad behavior
+    return model
+```
+
+### Hint
+
+What does `GradientBoostingClassifier` do when it encounters NaN in training data? What about at inference?
+
+### Fix
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+
+def train_classifier(df: pd.DataFrame):
+    features = ["age", "account_days", "transaction_count", "avg_amount"]
+    X = df[features]
+    y = df["label"]
+
+    # Assert no NaN at this stage — make the contract explicit
+    null_counts = X.isnull().sum()
+    if null_counts.any():
+        raise ValueError(
+            f"NaN features detected before training:\n{null_counts[null_counts > 0]}"
+        )
+
+    # Or use a pipeline that handles imputation explicitly
+    pipeline = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", GradientBoostingClassifier()),
+    ])
+    pipeline.fit(X, y)
+    return pipeline
+```
+
+### Why It Matters
+
+Sklearn's `GradientBoostingClassifier` will raise an error on NaN. But some estimators (e.g., `XGBoostClassifier`) handle NaN internally by assigning it to a default branch — silently producing predictions without warning the caller. At inference, if the imputer used in training is not part of the pipeline, test-time imputation may use different statistics, causing feature drift. Always make null handling explicit and part of the fitted artifact.
+
+---
+
+## Bug 6: Async Deadlock — `await` Inside a Sync Context
+
+### Broken Code
+
+```python
+import asyncio
+import httpx
+
+async def fetch_embedding(text: str) -> list[float]:
+    async with httpx.AsyncClient() as client:
+        response = await client.post("/embed", json={"text": text})
+        return response.json()["embedding"]
+
+def process_document(doc: dict) -> dict:
+    # BUG: calling async function from sync context using loop.run_until_complete
+    # inside an already-running event loop causes deadlock
+    loop = asyncio.get_event_loop()
+    embedding = loop.run_until_complete(fetch_embedding(doc["text"]))
+    return {**doc, "embedding": embedding}
+```
+
+### Hint
+
+What happens when you call `loop.run_until_complete()` from inside a context where the event loop is already running?
+
+### Fix
+
+```python
+import asyncio
+import httpx
+
+async def fetch_embedding(text: str) -> list[float]:
+    async with httpx.AsyncClient() as client:
+        response = await client.post("/embed", json={"text": text})
+        return response.json()["embedding"]
+
+async def process_document(doc: dict) -> dict:
+    # Option A: make the caller async too (preferred)
+    embedding = await fetch_embedding(doc["text"])
+    return {**doc, "embedding": embedding}
+
+# Option B: if you truly need sync, use asyncio.run() at the top level
+def process_document_sync(doc: dict) -> dict:
+    embedding = asyncio.run(fetch_embedding(doc["text"]))
+    return {**doc, "embedding": embedding}
+
+# Option C: for Jupyter / already-running loops, use nest_asyncio (testing only)
+# import nest_asyncio; nest_asyncio.apply()
+```
+
+### Why It Matters
+
+`loop.run_until_complete()` blocks until the coroutine finishes, but it cannot run if the loop is already running (raises `RuntimeError: This event loop is already running`). In FastAPI, Celery workers, or Jupyter notebooks where a loop is already active, this causes either a crash or a deadlock (if the nested call blocks the outer loop from completing). The fix is to propagate `async` consistently up the call stack.
+
+---
+
+## Bug 7: PyTorch Memory Leak — Tensor Accumulated in List
+
+### Broken Code
+
+```python
+import torch
+
+def compute_embeddings(model, dataloader):
+    embeddings = []
+    for batch in dataloader:
+        output = model(batch["input_ids"])
+        cls_embedding = output.last_hidden_state[:, 0, :]
+        embeddings.append(cls_embedding)   # BUG: appends live tensor with grad graph
+    return torch.cat(embeddings)
+```
+
+### Hint
+
+What is attached to `cls_embedding` after the forward pass if `torch.no_grad()` is not active?
+
+### Fix
+
+```python
+import torch
+import numpy as np
+
+def compute_embeddings(model, dataloader):
+    model.eval()
+    all_embeddings = []
+
+    with torch.no_grad():    # no gradient tracking
+        for batch in dataloader:
+            output = model(batch["input_ids"])
+            cls_embedding = (
+                output.last_hidden_state[:, 0, :]
+                .detach()    # sever from computation graph
+                .cpu()       # move to CPU before numpy
+                .numpy()     # Python array — no PyTorch memory held
+            )
+            all_embeddings.append(cls_embedding)
+
+    return np.vstack(all_embeddings)
+```
+
+### Why It Matters
+
+Without `torch.no_grad()`, every `model()` call allocates a computation graph (all intermediate activations needed for backprop). Appending the tensor to a list keeps the graph alive. After N batches, N computation graphs are live in memory simultaneously. Memory grows linearly with dataset size — see Incident 8 in the previous chapter for a real-world example of this exact bug causing an OOM kill.
+
+---
+
+## Bug 8: Label Encoder Drift at Inference
+
+### Broken Code
+
+```python
+from sklearn.preprocessing import LabelEncoder
+import joblib
+
+def train(df):
+    le = LabelEncoder()
+    df["category_encoded"] = le.fit_transform(df["category"])
+    model.fit(df[features], df["label"])
+    joblib.dump(model, "model.pkl")
+    # BUG: le is not saved — a new LabelEncoder at inference will have different mapping
+
+def predict(text, category):
+    model = joblib.load("model.pkl")
+    le = LabelEncoder()   # BUG: new encoder, not fitted on training categories
+    category_encoded = le.fit_transform([category])[0]  # BUG: fit on single value
+    return model.predict([[text_len, category_encoded]])
+```
+
+### Hint
+
+What is the relationship between the `LabelEncoder` used at training time and the one used at inference? What happens if a new category appears at inference?
+
+### Fix
+
+```python
+from sklearn.preprocessing import LabelEncoder
+import joblib
+
+def train(df):
+    le = LabelEncoder()
+    df["category_encoded"] = le.fit_transform(df["category"])
+    model.fit(df[features], df["label"])
+
+    # Save both model AND encoder together
+    joblib.dump({"model": model, "label_encoder": le}, "model_bundle.pkl")
+
+def predict(text, category):
+    bundle = joblib.load("model_bundle.pkl")
+    model = bundle["model"]
+    le = bundle["label_encoder"]   # same encoder from training
+
+    # Handle unseen categories gracefully
+    if category not in le.classes_:
+        raise ValueError(
+            f"Unknown category '{category}'. "
+            f"Known: {list(le.classes_)}"
+        )
+    category_encoded = le.transform([category])[0]
+    return model.predict([[text_len, category_encoded]])
+```
+
+### Why It Matters
+
+`LabelEncoder.fit_transform([x])` on a single value always returns 0 — every category gets encoded as 0 at inference. This is a silent bug: the model runs without error but every categorical feature is mapped to the same value. Training/inference skew guarantees degraded performance. Bundle all encoders with the model artifact and version them together.
+
+---
+
+## Bug 9 (SQL): `WHERE` vs `HAVING` — Filtering Aggregates
+
+### Broken Code
+
+```sql
+-- Find users with more than 5 failed model predictions today
+SELECT
+    user_id,
+    COUNT(*) AS failure_count
+FROM prediction_logs
+WHERE
+    result = 'failed'
+    AND DATE(created_at) = CURRENT_DATE
+    AND COUNT(*) > 5    -- BUG: cannot use aggregate in WHERE clause
+GROUP BY user_id;
+```
+
+### Hint
+
+At what stage of query execution does `WHERE` filter rows? What about `HAVING`?
+
+### Fix
+
+```sql
+SELECT
+    user_id,
+    COUNT(*) AS failure_count
+FROM prediction_logs
+WHERE
+    result = 'failed'
+    AND DATE(created_at) = CURRENT_DATE
+GROUP BY user_id
+HAVING COUNT(*) > 5;    -- correct: HAVING filters after GROUP BY
+```
+
+### Why It Matters
+
+SQL execution order: `FROM` → `WHERE` → `GROUP BY` → `HAVING` → `SELECT` → `ORDER BY`. `WHERE` runs before aggregation and cannot reference aggregate functions. `HAVING` runs after `GROUP BY` and can. Mixing them causes a syntax error in most databases. The secondary issue here is that `DATE(created_at)` prevents index use on `created_at` — for large tables, rewrite as a range: `created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + INTERVAL 1 DAY`.
+
+---
+
+## Bug 10 (SQL): JOIN Fan-Out — Counting Duplicates
+
+### Broken Code
+
+```sql
+-- Count total model predictions per user for users who have feedback
+SELECT
+    u.user_id,
+    COUNT(p.prediction_id) AS prediction_count
+FROM users u
+JOIN predictions p ON u.user_id = p.user_id
+JOIN feedback f ON u.user_id = f.user_id   -- BUG: 1:many join multiplies rows
+WHERE u.created_at >= '2024-01-01'
+GROUP BY u.user_id;
+```
+
+### Hint
+
+If a user has 10 predictions and 3 feedback records, how many rows does the `JOIN` to `feedback` produce?
+
+### Fix
+
+```sql
+-- Option A: pre-aggregate feedback before joining
+SELECT
+    u.user_id,
+    COUNT(DISTINCT p.prediction_id) AS prediction_count
+FROM users u
+JOIN predictions p ON u.user_id = p.user_id
+JOIN (
+    SELECT DISTINCT user_id FROM feedback
+) f ON u.user_id = f.user_id
+WHERE u.created_at >= '2024-01-01'
+GROUP BY u.user_id;
+
+-- Option B: EXISTS instead of JOIN (cleaner, no COUNT DISTINCT needed)
+SELECT
+    u.user_id,
+    COUNT(p.prediction_id) AS prediction_count
+FROM users u
+JOIN predictions p ON u.user_id = p.user_id
+WHERE u.created_at >= '2024-01-01'
+  AND EXISTS (SELECT 1 FROM feedback f WHERE f.user_id = u.user_id)
+GROUP BY u.user_id;
+```
+
+### Why It Matters
+
+A `JOIN` to a table with multiple rows per key multiplies the result — 10 predictions × 3 feedback rows = 30 rows before `GROUP BY`. `COUNT(p.prediction_id)` then returns 30, not 10. This is a fan-out bug. It inflates all aggregates and is invisible without checking row counts at each join step. `COUNT(DISTINCT p.prediction_id)` is a workaround but is O(n log n) and slower. `EXISTS` or a pre-aggregated subquery is cleaner and more performant.
+
+---
+
+## Quick-Reference Bug Taxonomy
+
+| Bug | Category | Silent? | How to Detect |
+|-----|----------|---------|---------------|
+| Data leakage via scaler | Preprocessing | Yes | Offline accuracy too high, drops at deploy |
+| `model.train()` at inference | PyTorch | Yes | Non-deterministic predictions, accuracy drop |
+| Bare `except` | Error handling | Yes | Logs show no errors but results are wrong |
+| Mutable default argument | Python footgun | Yes | State bleeds across requests |
+| NaN features | Data quality | Sometimes | NaN in model output, or silent wrong predictions |
+| Async deadlock | Concurrency | No | `RuntimeError: This event loop is already running` |
+| PyTorch memory leak | Memory | Yes | RSS grows linearly with data size |
+| Label encoder drift | Feature pipeline | Yes | All categorical features become 0 |
+| WHERE vs HAVING | SQL | No | Syntax error at parse time |
+| JOIN fan-out | SQL | Yes | Aggregate counts inflated |
+
+---
+
+## Interview Questions
+
+**Q1 (Entry).** You train a model with 95% accuracy. At deployment, accuracy drops to 80%. What are three data leakage patterns that could explain this gap?
+
+> (1) Preprocessing fit on full dataset before split — scaler/encoder learned test statistics. (2) Target leakage — a feature derived from or correlated with the label included in training but unavailable at inference. (3) Time leakage — training used future data for time-series features (e.g., 7-day trailing average computed with future rows). Confirm by checking whether accuracy drop is consistent across all segments or concentrated in specific feature ranges.
+
+**Q2 (Entry/Mid).** What is the difference between `model.eval()` and `torch.no_grad()`? Do you need both?
+
+> `model.eval()` changes the **behavior** of specific layers: disables dropout (no random zeroing) and switches BatchNorm from batch statistics to running statistics. `torch.no_grad()` is a **memory optimization** that disables gradient tracking for all operations inside its context. They are independent: `model.eval()` does not stop gradient computation, and `torch.no_grad()` does not change dropout/BatchNorm behavior. For inference, you need both.
+
+**Q3 (Mid).** Walk through why `LabelEncoder` must be saved with the model and what goes wrong if you create a new one at inference.
+
+> `LabelEncoder.classes_` is the ordered list of unique values seen at fit time. The encoding is positional: index 0 = first class alphabetically. A new encoder fitted on a single inference value always produces 0. A new encoder fitted on the current production data may have a different ordering if the category set changed. Both cases cause the model to receive wrong integer values for categorical features — predictions degrade silently because no error is raised.
+
+**Q4 (Mid).** You have a SQL query with two JOINs that returns inflated aggregate counts. How do you diagnose a fan-out bug?
+
+> Add `COUNT(*)` to an intermediate CTE that captures the state after each JOIN. If the count grows beyond what you expect (e.g., exceeds the number of rows in the driving table), a 1:many JOIN is multiplying rows. Fix by pre-aggregating the many-side table before joining (so it becomes 1:1), or by using `EXISTS`/`IN` to filter without joining, or by adding `COUNT(DISTINCT pk_column)` if only the count is needed.
+
+**Q5 (Senior).** You're reviewing a PR that processes 1M documents in a batch embedding job. What specifically do you check in the inference loop to prevent OOM?
+
+> (1) `torch.no_grad()` wrapping the entire loop — missing this allocates computation graphs for every batch. (2) `.detach().cpu().numpy()` on all tensor outputs before appending to any list — ensures no tensor holds a reference to the computation graph. (3) Explicit `del outputs; torch.cuda.empty_cache()` after each batch if GPU memory is tight. (4) Output written to disk in chunks rather than accumulated in a list — a 1M × 768 float32 embedding matrix is 3GB, which may exceed available RAM. (5) Log RSS memory every N batches to detect linear growth early.
+
+| Question | Level | Tests |
+|----------|-------|-------|
+| Data leakage patterns | Entry | Feature engineering fundamentals |
+| eval() vs no_grad() | Entry/Mid | PyTorch inference mechanics |
+| LabelEncoder serialization | Mid | Feature pipeline discipline |
+| Fan-out SQL diagnosis | Mid | SQL aggregation mechanics |
+| Batch inference OOM review | Senior | Systems-level ML code review |

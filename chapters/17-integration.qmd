@@ -1043,6 +1043,496 @@ This is the classic reliability vs. quality gap in LLM systems. 99.9% uptime mea
 
 ---
 
+## Adapter Layer Design: Extending Pipelines Without Touching the Core
+
+One of the most common enterprise integration patterns is the need to add AI capabilities to an existing data pipeline without refactoring the core system. The failure mode: modifying the core pipeline directly, introducing AI-specific failure modes into a system that was previously stable.
+
+The correct pattern is the **adapter layer**: a thin translation and orchestration component that sits between the existing pipeline and the AI system, translating data formats in both directions without requiring changes to either.
+
+### The Adapter Pattern
+
+```python
+# adapter.py — wraps the AI extraction system for an existing pipeline
+from dataclasses import dataclass
+from typing import Optional
+import json
+
+@dataclass
+class LegacyDocument:
+    """Format the existing pipeline produces."""
+    document_id: str
+    raw_text: str
+    source_system: str
+    metadata: dict
+
+@dataclass
+class EnrichedDocument:
+    """Format the downstream system expects."""
+    document_id: str
+    raw_text: str
+    source_system: str
+    metadata: dict
+    # New AI-extracted fields — defaulted so existing consumers are unaffected
+    extracted_entities: list[dict] = None
+    confidence_score: float = None
+    extraction_status: str = "pending"  # pending | success | failed | skipped
+
+class AIExtractionAdapter:
+    """
+    Adapter layer: wraps AI extraction so the core pipeline never changes.
+    Transforms LegacyDocument → EnrichedDocument.
+    If AI extraction fails, returns the document with extraction_status=failed
+    rather than raising — never lets AI failure break the core pipeline.
+    """
+
+    def __init__(self, extractor, confidence_threshold: float = 0.75):
+        self.extractor = extractor
+        self.confidence_threshold = confidence_threshold
+
+    def enrich(self, doc: LegacyDocument) -> EnrichedDocument:
+        enriched = EnrichedDocument(
+            document_id=doc.document_id,
+            raw_text=doc.raw_text,
+            source_system=doc.source_system,
+            metadata=doc.metadata,
+        )
+        try:
+            result = self.extractor.extract(doc.raw_text)
+            enriched.extracted_entities = result.entities
+            enriched.confidence_score = result.confidence
+            enriched.extraction_status = (
+                "success" if result.confidence >= self.confidence_threshold
+                else "low_confidence"
+            )
+        except Exception as e:
+            # AI failure is never a pipeline failure
+            enriched.extraction_status = "failed"
+            enriched.metadata["extraction_error"] = str(e)
+        return enriched
+
+# Production Gotcha: The adapter must never raise. Any exception from the AI
+# system is caught here and recorded in the extraction_status field.
+# Downstream consumers check extraction_status before using AI fields.
+```
+
+### When to Use the Adapter Pattern
+
+- **Adding AI enrichment to an existing ETL pipeline:** The adapter runs as a parallel step after ingestion but before storage; the storage layer receives an enriched document with nullable AI fields.
+- **Gradual migration:** Run the adapter in "shadow mode" first (enrich but don't write AI fields to the live system). Compare results against manual annotation before activating.
+- **Multi-vendor AI:** If you want to swap AI providers (or run multiple), the adapter normalizes the output format so downstream consumers are provider-agnostic.
+
+---
+
+## Rules vs. ML vs. LLM Decision Framework
+
+Every component in an enterprise AI pipeline has a decision point: should this component be a rule, an ML model, or an LLM call? Getting this wrong wastes money, reduces reliability, and creates brittle systems.
+
+```
+DECISION FRAMEWORK FOR COMPONENT TYPE
+
+IF the logic is deterministic and exhaustively listable:
+    → Use a rule (regex, lookup table, conditional)
+    Examples: format validation, field extraction from structured data,
+              routing by document type when document type is reliably detectable
+
+IF the logic requires pattern recognition from labeled examples
+   AND training data exists (≥1000 labeled examples)
+   AND output is a fixed set of classes or a numeric value:
+    → Use a trained ML model (GBT, logistic regression, neural classifier)
+    Examples: document priority scoring, spam/not-spam, category classification
+              when categories are predefined
+
+IF the logic requires semantic understanding or generation
+   AND the output space cannot be fully enumerated
+   AND accuracy on edge cases matters more than latency/cost:
+    → Use an LLM
+    Examples: free-text extraction with semantic understanding,
+              summarization, Q&A over documents, anomaly explanation
+
+IF you are unsure:
+    → Start with rules, measure where rules fail, train ML for those cases
+    → Only introduce LLM where ML accuracy ceiling is insufficient
+```
+
+| Component Type | Latency | Cost | Determinism | When to Use |
+|---|---|---|---|---|
+| Rule / Regex | < 1 ms | ~\$0 | 100% | Fixed format, enumerable logic |
+| Trained ML model | 1–100 ms | Low | High | Labeled data exists, fixed output space |
+| LLM (small/fast) | 200–800 ms | Low-Med | Low | Semantic understanding, short output |
+| LLM (large) | 1–10 s | High | Low | Complex reasoning, long generation |
+
+**The layered approach:** Build the cheapest component that works for the majority case; use the expensive component only for the cases the cheap one fails. A document classifier that handles 70% of cases with a rule (document type is in the filename) and 25% with a GBT model (document type from structural features) and 5% with an LLM (ambiguous documents requiring content understanding) costs a fraction of a pure-LLM approach.
+
+---
+
+## Config-Driven Output Mapping (Taxonomy Translation Pattern)
+
+Enterprise customers have their own taxonomies, field names, and category structures. A system that hard-codes output field names or category labels becomes a custom build for every customer. The taxonomy translation pattern makes the mapping customer-configurable without code changes.
+
+```python
+# taxonomy_mapper.py
+from typing import Any
+import json
+
+class TaxonomyMapper:
+    """
+    Maps from canonical AI output schema to customer-specific schema.
+    Configuration is loaded from a per-customer config file — no code changes
+    required to support a new customer's taxonomy.
+    """
+
+    def __init__(self, config_path: str):
+        with open(config_path) as f:
+            config = json.load(f)
+        self.field_mapping = config.get("field_mapping", {})
+        self.category_mapping = config.get("category_mapping", {})
+        self.default_values = config.get("default_values", {})
+
+    def translate(self, canonical_output: dict) -> dict:
+        """Translate canonical schema to customer schema."""
+        result = {}
+        for canonical_field, value in canonical_output.items():
+            # Map field name
+            customer_field = self.field_mapping.get(canonical_field, canonical_field)
+            # Map categorical value if applicable
+            if canonical_field in self.category_mapping:
+                value = self.category_mapping[canonical_field].get(value, value)
+            result[customer_field] = value
+
+        # Apply defaults for fields not present in canonical output
+        for field, default in self.default_values.items():
+            if field not in result:
+                result[field] = default
+
+        return result
+
+# Customer config example (stored per-customer, not in code):
+EXAMPLE_CONFIG = {
+    "field_mapping": {
+        "document_type": "doc_category",    # canonical → customer field name
+        "confidence_score": "ai_confidence",
+        "extracted_date": "proc_date"
+    },
+    "category_mapping": {
+        "document_type": {
+            "invoice": "VENDOR_INVOICE",     # canonical value → customer value
+            "contract": "LEGAL_CONTRACT",
+            "receipt": "EXPENSE_RECEIPT"
+        }
+    },
+    "default_values": {
+        "review_status": "PENDING",
+        "source_system": "AI_EXTRACTION"
+    }
+}
+```
+
+**Why this matters:** A customer taxonomy change (renaming "invoice" to "VENDOR_INVOICE") is a config file edit, not a code deployment. Multiple customers can share the same AI system with completely different output formats. Onboarding a new customer is a config authoring exercise, not an engineering sprint.
+
+---
+
+## Human-in-the-Loop Review Queues
+
+Not every AI output should be served directly to downstream systems. For high-stakes extractions (compliance documents, medical records, financial instruments) or low-confidence outputs, a human review step before final ingestion is essential.
+
+```python
+# review_queue.py — route low-confidence extractions to human review
+from dataclasses import dataclass, field
+from enum import Enum
+from datetime import datetime
+import uuid
+
+class ReviewStatus(Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EDITED = "edited"  # Human corrected and approved
+
+@dataclass
+class ReviewItem:
+    item_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    document_id: str = ""
+    ai_output: dict = field(default_factory=dict)
+    confidence_score: float = 0.0
+    reason_for_review: str = ""
+    status: ReviewStatus = ReviewStatus.PENDING
+    reviewer_id: str = None
+    reviewed_output: dict = None  # Populated if human edits
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    reviewed_at: datetime = None
+
+class ReviewQueue:
+    """Routes AI outputs to human review based on configurable criteria."""
+
+    def __init__(self, storage_backend, confidence_threshold: float = 0.80):
+        self.storage = storage_backend
+        self.confidence_threshold = confidence_threshold
+
+    def should_review(self, result) -> tuple[bool, str]:
+        """Determine if an extraction result needs human review."""
+        if result.confidence_score < self.confidence_threshold:
+            return True, f"Low confidence: {result.confidence_score:.2f}"
+        if result.has_conflicting_fields():
+            return True, "Conflicting extracted fields"
+        if result.document_type in self.high_stakes_types:
+            return True, "High-stakes document type requires review"
+        return False, ""
+
+    def enqueue(self, document_id: str, ai_output: dict,
+                confidence_score: float, reason: str) -> ReviewItem:
+        item = ReviewItem(
+            document_id=document_id,
+            ai_output=ai_output,
+            confidence_score=confidence_score,
+            reason_for_review=reason
+        )
+        self.storage.save(item)
+        return item
+
+    def approve(self, item_id: str, reviewer_id: str,
+                edited_output: dict = None) -> ReviewItem:
+        item = self.storage.get(item_id)
+        item.status = ReviewStatus.APPROVED if not edited_output else ReviewStatus.EDITED
+        item.reviewer_id = reviewer_id
+        item.reviewed_output = edited_output or item.ai_output
+        item.reviewed_at = datetime.utcnow()
+        self.storage.save(item)
+        return item
+
+# Integration pattern:
+# AI extraction → review check → if low confidence → enqueue for human review
+#                                                   → hold downstream pipeline
+# Human approves/edits → downstream pipeline resumes with approved output
+# SLA alerting: flag items in PENDING status > N hours to prevent bottleneck
+```
+
+**SLA management for review queues:** Every item in the review queue needs a deadline. An item that sits in PENDING for 72 hours while the downstream process waits is a production SLA violation. Implement: age-based alerts, daily queue depth reports to the customer's operations team, and an escalation path for items approaching SLA.
+
+---
+
+## Data Pipeline Design for Multi-Format Inputs
+
+Enterprise data arrives in every format: email bodies, PDF attachments, CSV exports, API payloads, scanned images, Excel files. A pipeline that handles each format independently becomes unmaintainable. The canonical approach is a **format-agnostic ingestion layer** that normalizes all inputs to a canonical intermediate format before any AI processing.
+
+```python
+# ingestion_layer.py — normalize multi-format inputs to canonical text
+from pathlib import Path
+import mimetypes
+
+class DocumentIngestionPipeline:
+    """
+    Multi-format ingestion pipeline.
+    Normalizes all document types to (text, metadata) pairs.
+    """
+
+    def __init__(self):
+        self.extractors = {
+            "application/pdf": self._extract_pdf,
+            "text/plain": self._extract_text,
+            "text/html": self._extract_html,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                self._extract_docx,
+            "text/csv": self._extract_csv,
+            "message/rfc822": self._extract_email,
+        }
+
+    def ingest(self, source: str | bytes,
+               mime_type: str = None,
+               metadata: dict = None) -> dict:
+        """
+        Returns canonical document dict:
+        {text, pages, source_type, metadata, extraction_quality}
+        """
+        if mime_type is None:
+            mime_type = self._detect_mime_type(source)
+
+        extractor = self.extractors.get(mime_type)
+        if extractor is None:
+            return {"text": "", "extraction_quality": "unsupported",
+                    "source_type": mime_type, "metadata": metadata or {}}
+
+        try:
+            text, doc_metadata = extractor(source)
+            return {
+                "text": text,
+                "extraction_quality": self._assess_quality(text),
+                "source_type": mime_type,
+                "metadata": {**(metadata or {}), **doc_metadata}
+            }
+        except Exception as e:
+            return {
+                "text": "",
+                "extraction_quality": "failed",
+                "source_type": mime_type,
+                "error": str(e),
+                "metadata": metadata or {}
+            }
+
+    def _assess_quality(self, text: str) -> str:
+        """Heuristic quality check on extracted text."""
+        if not text or len(text) < 50:
+            return "empty"
+        # Heuristic: high ratio of non-ASCII chars often indicates OCR artifacts
+        non_ascii = sum(1 for c in text if ord(c) > 127)
+        if non_ascii / len(text) > 0.3:
+            return "degraded"
+        return "good"
+
+    def _extract_pdf(self, source) -> tuple[str, dict]:
+        import pdfplumber
+        text_parts = []
+        with pdfplumber.open(source) as pdf:
+            for page in pdf.pages:
+                text_parts.append(page.extract_text() or "")
+        return "\n\n".join(text_parts), {"page_count": len(pdf.pages)}
+
+    def _extract_email(self, source) -> tuple[str, dict]:
+        import email
+        msg = email.message_from_bytes(source if isinstance(source, bytes)
+                                       else source.encode())
+        parts = []
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    parts.append(part.get_payload(decode=True).decode(errors="replace"))
+        else:
+            parts.append(msg.get_payload(decode=True).decode(errors="replace"))
+        return "\n".join(parts), {
+            "from": msg.get("From", ""),
+            "subject": msg.get("Subject", ""),
+            "date": msg.get("Date", "")
+        }
+
+# Production Gotcha: PDF extraction quality varies drastically by PDF type.
+# Digitally-native PDFs extract cleanly. Scanned PDFs may need OCR (Tesseract,
+# AWS Textract, or similar). Always log extraction_quality and alert on high
+# rates of "degraded" or "empty" — these indicate upstream data quality issues.
+```
+
+---
+
+## Idempotency Patterns for Submission and Event Ingestion
+
+When a document submission event is processed more than once — due to network retry, queue redelivery, or system restart — the result must be the same as if it had been processed once. Without idempotency, retries cause duplicate records, doubled charges, and inconsistent state.
+
+```python
+# idempotency.py — idempotent event processing
+import hashlib
+import time
+from typing import Optional
+
+class IdempotencyStore:
+    """Tracks processed event IDs to prevent duplicate processing."""
+
+    def __init__(self, redis_client, ttl_seconds: int = 86400 * 7):
+        self.redis = redis_client
+        self.ttl = ttl_seconds
+        self.key_prefix = "idempotency:"
+
+    def _make_key(self, idempotency_key: str) -> str:
+        return f"{self.key_prefix}{idempotency_key}"
+
+    def is_already_processed(self, idempotency_key: str) -> bool:
+        return self.redis.exists(self._make_key(idempotency_key)) == 1
+
+    def mark_processing(self, idempotency_key: str) -> bool:
+        """
+        Atomically set if not exists. Returns True if this process
+        acquired the lock, False if another process is already handling it.
+        """
+        key = self._make_key(idempotency_key)
+        # SET NX: only set if key doesn't exist (atomic)
+        result = self.redis.set(key, "processing", nx=True, ex=300)  # 5 min lock
+        return result is not None
+
+    def mark_complete(self, idempotency_key: str, result_summary: str = ""):
+        """Mark as permanently processed with result."""
+        key = self._make_key(idempotency_key)
+        self.redis.set(key, f"done:{result_summary}", ex=self.ttl)
+
+
+def make_idempotency_key(doc_id: str, event_type: str, version: str) -> str:
+    """Create a deterministic idempotency key from event fields."""
+    payload = f"{doc_id}:{event_type}:{version}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+class IdempotentEventProcessor:
+    """Wraps event processing with idempotency guarantee."""
+
+    def __init__(self, processor_fn, idempotency_store: IdempotencyStore):
+        self.process = processor_fn
+        self.store = idempotency_store
+
+    def handle(self, event: dict) -> dict:
+        idem_key = make_idempotency_key(
+            event["doc_id"], event["event_type"], event.get("version", "")
+        )
+
+        # Already processed — return early
+        if self.store.is_already_processed(idem_key):
+            return {"status": "already_processed", "idempotency_key": idem_key}
+
+        # Acquire processing lock
+        if not self.store.mark_processing(idem_key):
+            return {"status": "being_processed", "idempotency_key": idem_key}
+
+        try:
+            result = self.process(event)
+            self.store.mark_complete(idem_key, result.get("summary", ""))
+            return {"status": "processed", "result": result}
+        except Exception as e:
+            # Do not mark complete on failure — allow retry
+            raise
+
+# Production Gotcha: The idempotency store itself can fail (Redis down).
+# When Redis is unavailable, the safest fallback is to process anyway
+# (accept occasional duplicates) rather than block all processing.
+# Log a warning and proceed — duplicate detection is best-effort.
+# The alternative (blocking all events when Redis is down) causes total
+# pipeline failure, which is much worse than occasional duplicates.
+```
+
+**The Redis-down fallback question** comes up in interviews: if your idempotency check depends on Redis, and Redis goes down, what do you do? The answer is: process anyway with a log warning. Occasional duplicate processing is recoverable (downstream deduplication, idempotent downstream writes). A complete pipeline halt while Redis recovers is not recoverable in many SLA contexts.
+
+---
+
+**Q3. Design a near-real-time RAG index freshness system that gets from document change to searchable in under 3 minutes. What are the failure modes and how do you handle them?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+> **What great looks like:** A full pipeline design with latency budget, idempotency analysis, failure mode enumeration, and a specific approach for each failure mode.
+
+**Pipeline architecture:**
+
+1. **Change detection** (0-10 s): Register webhooks with the source system (SharePoint, Confluence, S3 event notifications). For database sources, use CDC (Debezium on Postgres, DynamoDB Streams). Each event carries: `(doc_id, event_type: created|updated|deleted, source_url, timestamp)`.
+
+2. **Event queue** (1-5 s): Route events to a durable message queue (SQS, Pub/Sub). Queue provides retry, ordering guarantee (FIFO queue), and decoupling between ingestion rate and processing speed. Set visibility timeout to 3× the expected processing time.
+
+3. **Document processor** (15-60 s): Consumer fetches the full document, runs the ingestion pipeline (text extraction, chunking, embedding generation), and writes to the vector index. Use `doc_id` as the idempotent key — reprocessing the same document ID converges to the correct state.
+
+4. **Index writer** (1-5 s): Delete stale chunks (`DELETE WHERE doc_id = X`), insert new chunks. Wrap in a transaction where the vector DB supports it; otherwise, soft-delete stale chunks first (mark `status=stale`), then insert new chunks, then hard-delete stale.
+
+5. **Deletion handler** (same pipeline): When `event_type == deleted`, retrieve all chunk IDs with `doc_id = X` from the chunk-to-source mapping table, delete them from the vector index, then delete the mapping record.
+
+**Latency budget:** Webhook delivery 1-10 s + queue wait 1-5 s + embedding generation 10-40 s + index write 1-5 s = **13-60 s total** — well within 3 minutes.
+
+**Failure modes and mitigations:**
+
+| Failure | Impact | Mitigation |
+|---|---|---|
+| Webhook not delivered | Event lost; doc not re-indexed | Supplemental batch reconciliation job (hourly diff between source and index) |
+| Embedding API timeout | Event stuck in queue | Retry with exponential backoff; DLQ after 5 failures; alert on DLQ depth |
+| Vector DB write fails | Stale index | Soft-delete + transactional write; idempotent retry safe |
+| Out-of-order events (update received before create) | Incorrect state | Idempotent processing by doc_id; last-write-wins semantics |
+| Document deleted from source but event missed | Zombie chunks in index | Periodic full reconciliation: scan index for chunks whose `source_url` returns 404 |
+
+> **Common Mistake:** Building the happy path only and assuming events are delivered exactly once in order. Real-world event systems deliver events at-least-once and occasionally out of order. Idempotent processing with a last-write-wins key is mandatory, not optional.
+:::
+
+:::
+
+---
+
 ## Further Reading
 
 - [Anthropic Python SDK streaming documentation](https://docs.anthropic.com/en/api/streaming) — official reference for SSE streaming patterns

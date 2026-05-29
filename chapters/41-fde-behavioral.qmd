@@ -1,0 +1,349 @@
+---
+title: "Behavioral Interviews for FDE and Customer-Facing ML Roles"
+---
+
+# Behavioral Interviews for FDE and Customer-Facing ML Roles
+
+Behavioral interviews for Forward Deployed Engineer roles are not the same as behavioral interviews for pure engineering roles. The questions look similar on the surface — "tell me about a time you handled a conflict" — but interviewers are probing for a different combination of skills: **technical depth under pressure, customer empathy, commercial awareness, and the ability to influence without authority**.
+
+This chapter provides the framework, 15 high-frequency questions, and complete STAR answers — all generic and applicable to any ML deployment context.
+
+## Why FDE Behavioral Interviews Are Different
+
+A backend engineer's behavioral interview tests whether they can collaborate and communicate. An FDE's behavioral interview tests whether they can do that **in front of a customer, under deadline, with incomplete information, when the stakes include a contract renewal**.
+
+| Dimension | Standard Engineering | FDE/Customer-Facing ML |
+|-----------|---------------------|------------------------|
+| Communication audience | Internal team | External customers, executives |
+| Conflict context | Sprint planning, code review | Customer expectations, contract scope |
+| Failure stakes | Technical debt | Customer churn, reputational damage |
+| Ambiguity type | Requirements | Business goals, success metrics |
+| Influence without authority | Across teams | Across companies |
+
+Interviewers are looking for:
+- **Composure:** Did you stay calm and professional when the customer was wrong or upset?
+- **Root cause thinking:** Did you find the actual problem or just fix the symptom?
+- **Commercial awareness:** Did you protect the business relationship while solving the technical problem?
+- **Learning:** What changed in how you work as a result of this experience?
+
+## The Five-Story Framework
+
+Prepare five core stories that can flex across multiple question types. Each story should contain:
+
+1. **A technical problem** you owned end-to-end
+2. **A people challenge** (disagreement, miscommunication, escalation)
+3. **A commercial or business dimension** (timeline, scope, cost, churn risk)
+4. **A moment of ambiguity** where you had to act without complete information
+5. **A concrete outcome** with a number or before/after comparison
+
+Five stories × five dimensions gives you 25 angles. Most behavioral questions ask you to emphasize one dimension — you pick which story fits best.
+
+## STAR + Third Act
+
+Standard STAR (Situation, Task, Action, Result) is necessary but not sufficient for FDE roles. Add a **Third Act**:
+
+```
+SITUATION  — What was happening? Who were the stakeholders?
+TASK       — What were you specifically responsible for?
+ACTION     — What did you do? (Make this 60% of the answer. Be specific.)
+RESULT     — What was the outcome? (Quantify if possible.)
+THIRD ACT  — What did you learn? How did it change how you work?
+```
+
+The Third Act is where senior candidates separate themselves. It signals intellectual honesty (you can admit what you got wrong) and growth (the lesson is already applied to future work).
+
+::: {.callout-tip}
+**The Third Act Rule**
+
+If your STAR answer has no third act, it sounds like a closed case. With a third act, it sounds like you are the kind of person who improves systems — not just fixes incidents.
+:::
+
+---
+
+## The 15 High-Frequency Questions
+
+### Q1. Tell me about a time a customer was unhappy with your team's output.
+
+**Situation:** We had delivered the first iteration of an automated document classification system to an enterprise customer. Their operations lead reviewed the results and said the system "felt unreliable" — they couldn't use it in their workflow.
+
+**Task:** I was the primary technical contact. I needed to understand whether this was a perception problem (customer didn't trust what they couldn't see) or a real quality problem (the model was actually wrong).
+
+**Action:** I scheduled a working session with their operations lead and two reviewers. Before the meeting, I pulled a random sample of 50 predictions and labeled them myself — this gave me ground truth without bias. In the meeting, I walked through each prediction: the input, what the model decided, and why (feature weights and confidence score). The reviewers disagreed with 8 of 50. I categorized the 8 disagreements: 5 were borderline cases where a human would also be uncertain, 2 were genuine model errors on a specific document subtype, and 1 was actually correct but the reviewer had applied the wrong policy.
+
+I acknowledged the 2 genuine errors immediately, explained the subtype gap, and proposed adding 200 labeled examples of that subtype in the next two-week iteration. For the borderline cases, I showed the confidence score distribution — anything below 0.75 could be routed to human review.
+
+**Result:** The customer agreed to continue. After the two-week iteration with the additional examples, accuracy on that subtype improved from 71% to 89%. The confidence-based routing reduced human review volume by 63% from the baseline. They expanded the deployment three months later.
+
+**Third Act:** I stopped waiting for customers to surface dissatisfaction. Now I run proactive sample reviews at week 2 and week 6 of every deployment. By the time a customer says something "feels wrong," the data has usually been telling you for two weeks.
+
+---
+
+### Q2. Describe a time you had to explain a technical limitation to a non-technical stakeholder.
+
+**Situation:** During a pilot, an executive asked why the AI system couldn't "just read the whole document and understand what it means" — they wanted free-form summarization, but the system was built for extraction of specific structured fields.
+
+**Task:** I needed to explain the boundary without making the system sound limited — and without making the executive feel dismissed.
+
+**Action:** I used an analogy: "Our system is like a highly trained specialist — it reads thousands of these documents per day and extracts exactly the fields your downstream process needs, with very high precision. A generalist summarizer is like a smart intern who can describe what they read — but the description varies, and your ERP system can't consume free-text." I then asked what they actually needed the summary for. It turned out they wanted a one-sentence routing label for a separate workflow — which was actually an extraction task, not summarization. I pulled up the field schema and showed them we could add a "routing_category" field in the next iteration with about two days of labeling effort.
+
+**Result:** The executive left the conversation asking for a scoped addition, not a platform rethink. The routing category field was added in the next sprint. It also surfaced that two other downstream teams needed the same field — expanding the business case.
+
+**Third Act:** Executives often describe a solution when they mean a need. Now I always ask "what decision does this enable?" before scoping a technical request. This has surfaced misaligned requirements in three out of four cases since then.
+
+---
+
+### Q3. Tell me about a time you pushed back on a customer request.
+
+**Situation:** A customer requested that we remove all confidence thresholds from the system and serve every prediction, regardless of score, to reduce the human review queue. They said the queue was blocking their team.
+
+**Task:** I was responsible for both the technical implementation and the customer relationship. I needed to decide whether to comply, push back, or find a third option.
+
+**Action:** I acknowledged their problem first — a backed-up review queue is a real operational pain. Then I pulled the data: predictions below our 0.65 confidence threshold had a 31% error rate, versus 4% above the threshold. Removing the threshold would triple their error rate in production. I showed them this breakdown in a three-minute screen share.
+
+Then I reframed the problem: the issue wasn't the threshold, it was queue throughput. I proposed two alternatives — a tiered routing model where low-confidence predictions went to a lighter review form, and a batch processing mode for lower-stakes document types that could bypass review entirely. I also offered to audit the review queue backlog to identify whether it was driven by overall volume or concentrated in one document type.
+
+**Result:** The customer chose the tiered routing option. The audit revealed 40% of the backlog was one document type with consistently high model confidence — we removed it from the review queue entirely. Overall queue depth dropped 58% within two weeks without changing the threshold.
+
+**Third Act:** I almost complied the first time because I wanted to be responsive. Now I have a rule: when a customer asks me to change a quality gate, I first show them the impact on error rates before discussing options. Data makes the conversation easier.
+
+---
+
+### Q4. Tell me about a time you had to learn something quickly under pressure.
+
+**Situation:** A customer escalated an issue during a go-live week — their legal team had flagged that all predictions needed a full audit trail: what data was used, what model version, and what the confidence score was at decision time. This was not in the original requirements and the existing system did not capture model versioning.
+
+**Task:** I had 48 hours before go-live to implement a logging solution. I had not worked with the specific audit database schema they required (a regulatory format I hadn't used before).
+
+**Action:** I spent the first two hours reading the schema specification and identifying the 4 fields I actually needed. Then I scoped the smallest possible change: add a structured log entry at prediction time that captured model version, feature hash, confidence score, and timestamp. I used the existing logging infrastructure rather than building a new pipeline — this kept the blast radius small.
+
+I wrote the implementation in four hours, including tests. I asked a colleague to review it while I briefed the customer on the approach, setting the expectation that this was an MVP audit log, not a full audit dashboard — the full UI would come in a follow-up sprint.
+
+**Result:** The implementation was deployed in 29 hours. Legal reviewed the log format and accepted it. Go-live happened on schedule.
+
+**Third Act:** I now include an "audit and compliance requirements" question in every discovery call. Requirements like these almost always exist but rarely surface until someone panics. Asking early converts a crisis into a sprint.
+
+---
+
+### Q5. Describe a situation where you disagreed with a teammate's technical approach.
+
+**Situation:** During a system design review, a teammate proposed fine-tuning the base model on the customer's domain data before deployment. I thought the data volume (800 labeled examples) was too low and that fine-tuning would overfit and hurt generalization.
+
+**Task:** I needed to either get alignment or escalate — we had a one-week deadline to agree on the architecture.
+
+**Action:** I proposed a structured experiment instead of a debate. We would run three approaches on a held-out test set: zero-shot (baseline), few-shot prompting with the 800 examples, and fine-tuned. I estimated 2 days of work. My teammate agreed. After running the experiment, fine-tuning on 800 examples achieved 79% accuracy, few-shot prompting achieved 83%, and the baseline was 74%. The data confirmed my concern while also showing that my teammate's instinct to use domain data was right — just via prompting, not fine-tuning.
+
+**Result:** We shipped with few-shot prompting. We also documented the 800 examples in a format that would support fine-tuning later if the dataset grew to 5K+ examples. No escalation required.
+
+**Third Act:** I default to experiments over arguments now. Most technical disagreements are empirically resolvable, especially in ML where the performance difference is measurable. "Let's test both" has ended more debates for me than any amount of theoretical reasoning.
+
+---
+
+### Q6. Tell me about a time you made a mistake that affected a customer.
+
+**Situation:** I deployed a configuration change to a production pipeline to fix a performance issue. The change inadvertently modified the document chunking overlap parameter, which reduced retrieval recall on long documents. I didn't notice for three days.
+
+**Task:** The customer had been silently getting degraded results. I needed to fix the issue, communicate honestly, and rebuild confidence.
+
+**Action:** As soon as I identified the cause, I reverted the parameter and deployed within 30 minutes. Then I called the customer — I didn't email, because this needed a conversation. I explained exactly what changed, when it changed, how long it had been degraded, and which document types were most affected. I had already queried their feedback logs and found 12 cases during those three days where users had flagged incomplete answers — I showed them this evidence alongside my diagnosis. I offered to re-run any queries from that window through the restored system.
+
+**Result:** The customer appreciated the transparency. They re-ran six queries, all returned to expected quality. We updated the deployment checklist to include a post-deploy recall spot check on long documents.
+
+**Third Act:** I added automated regression tests for recall@10 on a fixed golden query set — run automatically after every config change. This catches the class of regression I missed. Being proactively transparent when you've made a mistake is almost always better than waiting for the customer to surface it.
+
+---
+
+### Q7. Tell me about a time you had to manage competing priorities.
+
+**Situation:** I was simultaneously managing the final week of a go-live for one customer and the discovery phase for a new customer whose technical evaluation needed to be completed within the same two-week window.
+
+**Task:** Both were high visibility. I had to deliver both without dropping quality.
+
+**Action:** I created explicit time-boxing: mornings (9am-1pm) were blocked for the go-live customer — this was the highest-stakes work. Afternoons were the new customer discovery. I communicated this structure to both customers upfront, giving each a specific point-of-contact window, so they knew when to expect responses.
+
+For the go-live, I identified the three critical-path items and delegated the remaining five items to teammates with clear specs. For discovery, I front-loaded the data and infrastructure questions in the first week so the second week could focus on modeling and integration design.
+
+**Result:** The go-live shipped on schedule with no severity-1 issues. The technical evaluation was completed on day 12 of the 14-day window, giving the new customer two days to review before a decision meeting.
+
+**Third Act:** I learned that context-switching is the enemy, not workload. Explicit time-boxing and transparent communication of availability windows reduced the cognitive load and kept both customers confident. I now default to this structure when managing multiple concurrent engagements.
+
+---
+
+### Q8. Tell me about a time you influenced a decision without having formal authority.
+
+**Situation:** The product roadmap included a feature a key customer had requested: bulk re-labeling of past predictions when a model is updated. I believed the implementation approach being planned (re-running the model on all historical records synchronously) would cause a 4-hour service outage for other customers.
+
+**Task:** I was not the decision-maker. I needed to change the implementation plan without being the person who owned the roadmap.
+
+**Action:** I wrote a one-page technical brief: the proposed approach, the projected impact (4-hour outage affecting 6 customers), and two alternative implementations — an async background job with progress tracking, and a lazy-recompute approach triggered by the next access. I included rough engineering estimates for all three options.
+
+I shared this with the product manager and the engineering lead as "thoughts before we finalize the design." I framed it as "I want to make sure we've considered the customer impact before committing" — not "this plan is wrong." The PM hadn't thought through the downtime impact because it wasn't obvious from the feature spec.
+
+**Result:** The async background job approach was adopted. Implementation took one extra day of engineering. The feature shipped with no service impact.
+
+**Third Act:** Framing matters as much as the technical content. "Here's a risk I want to make sure we've considered" lands very differently than "this plan is wrong." I lead with the concern, not the conclusion, and let the data make the argument.
+
+---
+
+### Q9. Describe a time you dealt with an ambiguous problem where the requirements were unclear.
+
+**Situation:** A customer asked us to build a system that would "flag unusual activity" in their document streams. No further definition was provided. The business owner who made the request was not available for follow-up for two weeks.
+
+**Task:** I needed to make progress without waiting two weeks, while not building the wrong thing.
+
+**Action:** I broke "unusual" into three hypotheses: (1) statistical outliers in document structure (unusual length, field count, format), (2) content anomalies (topics the model had not seen before), (3) process anomalies (documents from unusual sources, times, or senders). I built a lightweight version of each — one day of work each — and scheduled a demo for when the business owner returned.
+
+I also interviewed the operations team in the interim. They had a concrete example of the "unusual" they cared about — documents that bypassed the standard intake queue. This was hypothesis 3. The first two hypotheses were technically more interesting but not what they needed.
+
+**Result:** The demo confirmed the operations team's interpretation. We shipped a narrow process anomaly detector in two weeks. The other two hypotheses were documented as future features, which the customer eventually prioritized six months later.
+
+**Third Act:** When requirements are ambiguous, parallel prototyping is more useful than waiting for clarity. Three small experiments give you a conversation tool — the customer can react to something concrete rather than trying to articulate a requirement in the abstract.
+
+---
+
+### Q10. Tell me about a time you had to deliver bad news to a customer.
+
+**Situation:** Three weeks before a committed go-live date, we identified that one of the core use cases — real-time classification of incoming documents within 200ms — was not achievable with the current architecture. The model inference time alone was 180-220ms on the customer's document sizes, leaving no headroom for any pipeline overhead.
+
+**Task:** I had to tell the customer that either the deadline or the latency requirement had to change — and I had to do it before they had already built downstream integrations that assumed 200ms.
+
+**Action:** I called the customer's technical lead the day we confirmed the issue — I did not wait for a scheduled sync. I walked through the diagnosis: model size, inference time measurements, network overhead budget. I presented three concrete paths: (1) accept 350ms latency with current architecture, (2) hit 200ms by switching to a smaller model with slightly lower accuracy (I had the accuracy numbers), (3) use async processing with a webhook callback, which had no latency constraint but required downstream integration changes.
+
+I was explicit that option 1 was the no-change path and would miss the SLA, but I presented all three as genuine options — not a recommendation to abandon the requirement.
+
+**Result:** The customer chose option 3. Their downstream system was not actually latency-sensitive — the 200ms requirement had been inherited from an older spec that predated the current workflow. The async path was actually better for their architecture. Go-live happened on the original date.
+
+**Third Act:** Latency requirements often come from documents that were written before the actual workflow existed. Now I validate every SLA by asking "what breaks if you're 50% slower?" Often the answer is "nothing" — the requirement is inherited, not real. This has prevented two similar near-misses since.
+
+---
+
+### Q11. Tell me about a time you went above and beyond for a customer.
+
+**Situation:** A customer was preparing for a board review of the AI deployment and asked for a summary of results. Their success metrics had been informally tracked — no formal reporting infrastructure existed.
+
+**Task:** This was not in scope. But a good result at the board review would directly influence continued investment in the platform.
+
+**Action:** I spent a weekend building a one-page executive summary: before/after processing time, error rate reduction, cost per document comparison, and projected annual savings based on their volume. I sourced the numbers from their system logs (with their permission) and cross-checked against their original success criteria from the kickoff. I also included two quotes from their operations staff who had been early adopters — I'd collected these informally during weekly syncs.
+
+I sent the draft to their project lead on Sunday night so they had Monday to review and adjust.
+
+**Result:** The board approved a follow-on phase with expanded scope. The project lead specifically mentioned the executive summary as a factor in the presentation's success.
+
+**Third Act:** The relationship between technical delivery and commercial success is not automatic — someone has to translate the technical results into business language. I now treat the customer's internal advocacy as part of my job, not an extra. The best technical outcome is worthless if the sponsor can't communicate it up the chain.
+
+---
+
+### Q12. Tell me about a time you had to set boundaries on scope.
+
+**Situation:** Mid-pilot, a customer began sending requests for features outside the agreed scope: custom reporting, a mobile interface, integration with a third system that wasn't in the original design. Each request was reasonable individually, but collectively they represented 6 additional weeks of work.
+
+**Task:** I needed to protect the original delivery commitment without damaging the relationship.
+
+**Action:** I acknowledged each request in writing, captured them all in a shared backlog document, and scheduled a scope review. In the review, I explained the trade-off explicitly: adding these features before go-live would push the date by 6 weeks. Alternatively, we could go live with the original scope on schedule and work through the backlog in a post-launch phase.
+
+I also showed the customer what they would lose by delaying: 6 weeks of production data, which would actually make the backlog features better (the reporting would be richer, the integration more informed).
+
+**Result:** The customer chose on-schedule go-live. The backlog became the roadmap for the next three-month engagement, which they extended the contract for. Ironically, two of the originally requested features turned out to be unnecessary once they were in production.
+
+**Third Act:** Scope creep is usually not bad faith — it is enthusiasm. The customer is excited about the system and is imagining all the things it could do. Channeling that enthusiasm into a structured backlog turns scope risk into a sales pipeline.
+
+---
+
+### Q13. Describe a time when two stakeholders had conflicting requirements.
+
+**Situation:** The operations lead at a customer wanted the AI system to flag any prediction below 90% confidence for human review. The IT lead wanted to minimize review queue volume to reduce headcount cost. A 90% confidence threshold would send 34% of predictions to review; IT was targeting under 10%.
+
+**Task:** I was stuck in the middle. Both stakeholders had legitimate positions, and I was their shared technical resource.
+
+**Action:** I first verified the numbers: I pulled the prediction confidence distribution and the error rate by confidence band. At 90% threshold, 34% would be reviewed, and the error rate in the below-threshold bucket was 18%. At a threshold that yielded 10% review volume, the error rate was 8% — still higher than operations was comfortable with, but the actual error count was lower due to lower volume.
+
+I then facilitated a meeting with both stakeholders. I presented the data as a shared fact base, not my recommendation. The key insight: the disagreement was about absolute error rate (operations) versus error count (IT). Once they saw both framings, they could have a productive conversation. They agreed on a tiered approach: high-stakes document types at 85% threshold (operations' priority), standard types at 70% (IT's priority).
+
+**Result:** The tiered threshold reduced overall review volume by 41% while keeping error rates on high-stakes documents at 4%. Both stakeholders signed off.
+
+**Third Act:** Stakeholder conflicts are often framing conflicts. Making the trade-off visible in a shared data view — instead of arguing positions — almost always moves the conversation forward. I now build a "decision matrix" view whenever I know stakeholders have different success criteria.
+
+---
+
+### Q14. Tell me about a time you had to quickly build trust with a new customer.
+
+**Situation:** I inherited a customer relationship mid-pilot after the previous engineer left the company. The customer had already experienced one deadline slip and had concerns about continuity.
+
+**Task:** I had two weeks to establish credibility before a milestone review.
+
+**Action:** In the first 48 hours, I did three things: read every email, doc, and Slack thread from the previous three months; scheduled a 30-minute call with the customer's technical lead to listen (not present); and sent a written summary of my understanding of the current state and open items within 24 hours of that call.
+
+On the call, I asked: "What has frustrated you most about this engagement so far?" and "What would make this milestone review a success for you?" Both questions required genuine listening — I didn't prepare answers, I took notes.
+
+The technical lead said two things: they felt updates were reactive (they had to ask for status), and they weren't sure the original scope was still the right scope after what they'd learned in the pilot. I addressed both: I set up a weekly written update (sent Monday morning, no meeting required) and I proposed a half-day scope review session before the milestone.
+
+**Result:** The milestone review was the best one in the engagement. The scope review surfaced three changes that made the final product significantly more useful. The customer renewed for a follow-on phase.
+
+**Third Act:** Trust is rebuilt through follow-through on small things before you get the chance to deliver on big things. A weekly written status update that arrives when you said it would arrive is worth more than a brilliant technical solution delivered late and without communication.
+
+---
+
+### Q15. Tell me about your most technically complex customer engagement.
+
+**Situation:** A customer needed to unify document classification across three legacy systems, each with different schemas, different label taxonomies, and 7 years of historical data with no consistency in labeling conventions. They had attempted this internally twice before and abandoned it.
+
+**Task:** I was responsible for both the technical design and the customer relationship. There was no prior template for this problem.
+
+**Action:** I broke the problem into three phases. Phase 0 (two weeks): audit the three schemas, sample 500 documents from each system, manually label a subset to understand actual distribution. This revealed that 60% of documents across all three systems fell into 8 common categories — the divergence was in the long tail and in naming conventions, not in actual content types.
+
+Phase 1 (four weeks): build a unified taxonomy mapping with config-driven aliases (so "Invoice", "INV", "invoice_document" all mapped to the same canonical class). Train a single classifier on the merged training set, stratified by source system. Test accuracy by source system separately — not just overall.
+
+Phase 2 (two weeks): shadow deployment against all three systems simultaneously, comparing model output to historical human decisions. Present disagreement cases to the customer for adjudication — this both validated the model and updated the unified taxonomy.
+
+**Result:** The classifier achieved 88% accuracy across all three systems — better than any single-system model the customer had run before. The config-driven taxonomy mapping became reusable infrastructure for three subsequent customer engagements.
+
+**Third Act:** The biggest risk in legacy system integrations is starting to build before you understand what the data actually looks like — not what it's supposed to look like. The two-week audit phase saved six weeks of rework. I now require a data audit before any legacy integration project.
+
+---
+
+## Question Reference Table
+
+| Question | Dimension Tested | Primary Story Element |
+|----------|-----------------|----------------------|
+| Q1: Customer unhappy with output | Customer relationship + technical diagnosis | Proactive quality review |
+| Q2: Explaining technical limitations | Communication + customer empathy | Analogy + needs reframing |
+| Q3: Pushing back on a request | Commercial awareness + data-driven | Data before alternatives |
+| Q4: Learning quickly under pressure | Adaptability + delivery | Scope down, ship fast |
+| Q5: Disagreeing with a teammate | Collaboration + intellectual honesty | Structured experiment |
+| Q6: Mistake affecting a customer | Accountability + trust | Proactive transparency |
+| Q7: Competing priorities | Execution + time management | Time-boxing + delegation |
+| Q8: Influencing without authority | Leadership + communication | Risk framing, not blame |
+| Q9: Ambiguous requirements | Ambiguity + proactivity | Parallel prototyping |
+| Q10: Delivering bad news | Honesty + problem-solving | Options, not bad news alone |
+| Q11: Going above and beyond | Customer advocacy | Technical-to-business translation |
+| Q12: Setting scope boundaries | Commercial awareness + relationship | Backlog as sales pipeline |
+| Q13: Conflicting stakeholders | Facilitation + data framing | Shared decision matrix |
+| Q14: Building trust quickly | Relationship + follow-through | Small commitments, kept fast |
+| Q15: Most complex engagement | Technical depth + structure | Phase 0 audit discipline |
+
+---
+
+## Preparation Checklist
+
+Before your interview, have written answers for:
+
+- [ ] Your five core stories (one per dimension in the five-story framework)
+- [ ] At least two stories where you made a mistake or failed
+- [ ] At least one story where you influenced a decision without authority
+- [ ] At least one story about a difficult customer interaction
+- [ ] Quantified results for every story (%, time saved, revenue impact, churn prevented)
+
+During the interview:
+
+- [ ] Lead with context (30 seconds) before diving into action
+- [ ] Use "I" not "we" — interviewers want to know what you specifically did
+- [ ] Include the third act — what changed in how you work as a result?
+- [ ] If the story is longer than 3 minutes, pause and ask if they want more detail
+
+::: {.callout-warning}
+**Common Behavioral Interview Mistakes for FDE Roles**
+
+- Describing what the team did without specifying your individual contribution
+- Presenting only successes — interviewers expect and value failures with learning
+- Omitting the customer's perspective — FDE stories without customer context sound like standard engineering stories
+- Forgetting the business outcome — "accuracy improved" is incomplete; "accuracy improvement reduced customer churn by X%" is an FDE answer
+:::

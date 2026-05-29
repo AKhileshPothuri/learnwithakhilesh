@@ -905,6 +905,544 @@ Two hard requirements reshape the entire architecture: EU data residency and hum
 :::
 :::
 
+---
+
+## Design Pattern: AI-Powered Document Triage and Routing System
+
+**Problem statement:** Build a system that ingests incoming documents (emails, PDFs, forms), enriches them with ML-derived signals, scores their priority and routing destination, and delivers them to the correct downstream workflow — with a feedback loop to improve routing accuracy over time.
+
+### 7-Layer Architecture
+
+```
+Layer 1: INGESTION
+  Webhook/SFTP/Email listener → document normalization → deduplication →
+  idempotent event queue
+
+Layer 2: DATA PIPELINE
+  Format extraction (PDF/email/HTML) → OCR for scanned docs →
+  field extraction (structured) → text cleaning →
+  metadata enrichment (source, timestamp, sender)
+
+Layer 3: ML MODEL (dual scoring)
+  Structured features → GBT classifier (category, priority score)
+  Document text → LLM extraction (entities, intent, urgency signals)
+  Both scores → fusion layer → final routing decision
+
+Layer 4: SERVING
+  Rules engine (hard constraints, SLA thresholds) →
+  routing API → downstream system dispatch
+
+Layer 5: OUTPUT / ROUTING
+  Route to: human review queue | automated processing | escalation queue
+  Taxonomy mapper → customer-specific field names/categories
+
+Layer 6: MONITORING
+  Document volume / latency / error rates →
+  routing accuracy metrics (requires ground truth feedback) →
+  score distribution vs. baseline (detect drift)
+
+Layer 7: FEEDBACK LOOP
+  Reviewer corrections → label store → periodic retraining trigger
+  Outcome labels (was routing correct?) → model performance dashboard
+```
+
+### Component Design
+
+```python
+# document_router.py — dual-score routing with configurable thresholds
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional
+
+class RoutingDestination(Enum):
+    AUTOMATED_PROCESSING = "automated"
+    STANDARD_REVIEW_QUEUE = "standard_review"
+    PRIORITY_REVIEW_QUEUE = "priority_review"
+    ESCALATION = "escalation"
+    REJECT = "reject"
+
+@dataclass
+class RoutingDecision:
+    destination: RoutingDestination
+    confidence: float
+    ml_category: str
+    ml_priority_score: float
+    llm_urgency_signals: list[str]
+    reasoning: str
+
+class DocumentRouter:
+    def __init__(self, ml_classifier, llm_extractor, routing_config: dict):
+        self.classifier = ml_classifier
+        self.llm = llm_extractor
+        self.config = routing_config
+
+    def route(self, document: dict) -> RoutingDecision:
+        # Structured ML features: sender, volume metrics, metadata signals
+        ml_result = self.classifier.predict(document["structured_features"])
+
+        # LLM semantic enrichment: only if ML confidence is below threshold
+        # (avoid expensive LLM calls for clear-cut cases)
+        llm_result = None
+        if ml_result.confidence < self.config["llm_threshold"]:
+            llm_result = self.llm.extract(document["text"])
+
+        priority_score = self._fuse_scores(ml_result, llm_result)
+
+        # Hard routing rules (override ML for regulatory/SLA reasons)
+        if document.get("source") in self.config["always_escalate_sources"]:
+            return RoutingDecision(
+                destination=RoutingDestination.ESCALATION,
+                confidence=1.0,
+                ml_category=ml_result.category,
+                ml_priority_score=priority_score,
+                llm_urgency_signals=llm_result.signals if llm_result else [],
+                reasoning="Hard rule: source always escalates"
+            )
+
+        # Score-based routing
+        dest = self._score_to_destination(priority_score, ml_result.confidence)
+        return RoutingDecision(
+            destination=dest,
+            confidence=ml_result.confidence,
+            ml_category=ml_result.category,
+            ml_priority_score=priority_score,
+            llm_urgency_signals=llm_result.signals if llm_result else [],
+            reasoning=f"Score {priority_score:.2f}, confidence {ml_result.confidence:.2f}"
+        )
+
+    def _score_to_destination(self, score: float, confidence: float) -> RoutingDestination:
+        if score >= 0.85 and confidence >= 0.80:
+            return RoutingDestination.AUTOMATED_PROCESSING
+        if score >= 0.65:
+            return RoutingDestination.STANDARD_REVIEW_QUEUE
+        if score >= 0.40:
+            return RoutingDestination.PRIORITY_REVIEW_QUEUE
+        return RoutingDestination.ESCALATION
+```
+
+### Cold Start Strategy
+
+| Phase | Approach | When to transition |
+|---|---|---|
+| Phase 0 | Pure rules: routing table based on keywords, sender, document type | When rules cover ≥ 80% of volume with < 5% manual override rate |
+| Phase 1 | Transfer learning: fine-tune a pre-trained text classifier on labeled examples | When labeled examples ≥ 500; measure vs. rules baseline |
+| Phase 2 | Full ML: GBT on structured features + fine-tuned classifier fusion | When labeled examples ≥ 2,000; routing accuracy ≥ 85% |
+| Phase 3 | LLM augmentation: add LLM enrichment for low-confidence cases only | When Phase 2 accuracy plateaus; measure LLM lift on edge cases |
+
+### Key Tradeoffs
+
+| Decision | Option A | Option B | Recommendation |
+|---|---|---|---|
+| Routing logic | Rules-based | ML-based | Rules first for cold start; ML once labeled data available |
+| Structured features | GBT | Small neural net | GBT: faster to train, interpretable, fewer examples needed |
+| LLM use | All documents | Low-confidence only | Low-confidence only: 5% of volume, 80% cost reduction |
+| Latency | Synchronous (real-time) | Async (SLA-based) | Async if P95 SLA > 5 s; synchronous if < 2 s required |
+
+---
+
+## Design Pattern: Portfolio / Constraint Monitoring System
+
+**Problem statement:** Build a real-time system that monitors a set of items (portfolio positions, transactions, submissions) against configurable constraint rules, detects threshold violations, and routes alerts to the appropriate team — with zero false negatives on hard constraints.
+
+### Architecture
+
+```python
+# constraint_monitor.py — event-driven constraint monitoring
+import json
+from dataclasses import dataclass
+from typing import Callable
+
+@dataclass
+class Constraint:
+    name: str
+    level: str          # "soft" | "hard"
+    threshold: float
+    aggregation: str    # "point_in_time" | "rolling_7d" | "rolling_30d"
+    alert_channel: str  # slack_channel, pagerduty, email
+
+@dataclass
+class ConstraintViolation:
+    item_id: str
+    constraint_name: str
+    level: str
+    current_value: float
+    threshold: float
+    pct_over: float
+
+class ConstraintMonitor:
+    """
+    Event-driven constraint monitor.
+    Constraints are loaded from config (zero TTL cache: invalidated on any config change).
+    Hard constraints generate immediate alerts.
+    Soft constraints use rolling averages to suppress noise.
+    """
+
+    def __init__(self, state_store, config_store, alerter):
+        self.state = state_store
+        self.config = config_store      # cache with event-driven invalidation
+        self.alerter = alerter
+
+    def on_event(self, event: dict) -> list[ConstraintViolation]:
+        """Process a submission/position update event."""
+        item_id = event["item_id"]
+
+        # Update running state for this item
+        self.state.update(item_id, event)
+        current_state = self.state.get(item_id)
+
+        # Load constraints (from cache; invalidated on config change)
+        constraints = self.config.get_constraints(event["item_type"])
+
+        violations = []
+        for constraint in constraints:
+            value = self._compute_value(current_state, constraint)
+            if value > constraint.threshold:
+                violation = ConstraintViolation(
+                    item_id=item_id,
+                    constraint_name=constraint.name,
+                    level=constraint.level,
+                    current_value=value,
+                    threshold=constraint.threshold,
+                    pct_over=(value - constraint.threshold) / constraint.threshold
+                )
+                violations.append(violation)
+                self.alerter.send(violation, constraint.alert_channel)
+
+        return violations
+
+    def _compute_value(self, state: dict, constraint: Constraint) -> float:
+        if constraint.aggregation == "point_in_time":
+            return state.get(constraint.name, 0.0)
+        elif constraint.aggregation == "rolling_7d":
+            return state.get(f"{constraint.name}_7d_avg", 0.0)
+        elif constraint.aggregation == "rolling_30d":
+            return state.get(f"{constraint.name}_30d_avg", 0.0)
+        raise ValueError(f"Unknown aggregation: {constraint.aggregation}")
+```
+
+### Zero TTL Config Cache with Event-Driven Invalidation
+
+```python
+# config_cache.py — never serve stale constraint config
+import redis
+import json
+from typing import Optional
+
+class ConstraintConfigCache:
+    """
+    Constraint config is served from Redis cache.
+    Cache is invalidated immediately on config change (publish to config-update channel).
+    Zero TTL means the cache never expires on its own — only invalidated by events.
+    This ensures constraint changes take effect immediately, not "eventually."
+    """
+
+    def __init__(self, redis_client, config_db):
+        self.redis = redis_client
+        self.db = config_db
+        self.prefix = "constraints:"
+
+        # Subscribe to config change events
+        self.pubsub = redis_client.pubsub()
+        self.pubsub.subscribe("config-updates")
+
+    def get_constraints(self, item_type: str) -> list[Constraint]:
+        key = f"{self.prefix}{item_type}"
+        cached = self.redis.get(key)
+        if cached:
+            return [Constraint(**c) for c in json.loads(cached)]
+        # Cache miss → load from DB, populate cache
+        constraints = self.db.fetch_constraints(item_type)
+        self.redis.set(key, json.dumps([c.__dict__ for c in constraints]))
+        # No expiry — only invalidated by config-updates events
+        return constraints
+
+    def invalidate(self, item_type: str):
+        """Called by config change event handler."""
+        self.redis.delete(f"{self.prefix}{item_type}")
+
+# Production Gotcha: Zero TTL means if the invalidation event is missed
+# (network partition), the cache serves stale data indefinitely.
+# Mitigate: max TTL of 300 seconds as a safety backstop,
+# plus a periodic reconciliation job that compares cached vs. DB constraints.
+```
+
+### Alert Fatigue Mitigation
+
+| Alert strategy | Pros | Cons | Use when |
+|---|---|---|---|
+| Point-in-time threshold | Zero latency, never misses a spike | Noisy on volatile metrics | Hard constraints, binary violations |
+| Rolling average threshold | Low noise, reflects trend | Misses short spikes | Soft constraints, trend monitoring |
+| Trend alert (slope detection) | Catches gradual drift early | Complex to tune | Quality drift over days/weeks |
+| Rate-of-change alert | Catches sudden jumps | Sensitive to noise | Anomaly detection, security events |
+
+---
+
+## Design Pattern: Multi-Source RAG System
+
+**Problem statement:** Build a RAG system that retrieves from three separate knowledge sources (primary documents, third-party data, internal guidelines), routes queries to the correct source(s), surfaces conflicts when sources disagree, and uses semantic caching for cost efficiency.
+
+### Architecture
+
+```python
+# multi_source_rag.py — intent routing across three indexes
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+
+class QueryIntent(Enum):
+    PRIMARY_DOCS = "primary_docs"
+    THIRD_PARTY = "third_party"
+    GUIDELINES = "guidelines"
+    MULTI_SOURCE = "multi_source"
+
+@dataclass
+class RetrievalResult:
+    content: str
+    source_type: str
+    source_id: str
+    source_version: str
+    score: float
+
+@dataclass
+class RAGResponse:
+    answer: str
+    sources: list[RetrievalResult]
+    conflict_detected: bool
+    conflict_description: Optional[str]
+    cached: bool
+
+class MultiSourceRAG:
+    def __init__(self, doc_index, third_party_index, guidelines_index,
+                 intent_router, llm, semantic_cache):
+        self.indexes = {
+            QueryIntent.PRIMARY_DOCS: doc_index,
+            QueryIntent.THIRD_PARTY: third_party_index,
+            QueryIntent.GUIDELINES: guidelines_index,
+        }
+        self.router = intent_router
+        self.llm = llm
+        self.cache = semantic_cache
+
+    def query(self, user_query: str) -> RAGResponse:
+        # Check semantic cache first
+        cached = self.cache.get(user_query)
+        if cached:
+            return RAGResponse(**cached, cached=True)
+
+        # Classify query intent
+        intent = self.router.classify(user_query)
+        target_indexes = (
+            list(self.indexes.values())
+            if intent == QueryIntent.MULTI_SOURCE
+            else [self.indexes[intent]]
+        )
+
+        # Retrieve from target index(es) with hybrid BM25 + semantic + RRF
+        all_results = []
+        for index in target_indexes:
+            results = index.hybrid_retrieve(user_query, top_k=5)
+            all_results.extend(results)
+
+        # Re-rank with RRF fusion
+        fused = self._rrf_fusion(all_results)[:8]
+
+        # Detect conflicts across sources
+        conflict = self._detect_conflict(fused)
+
+        # Generate answer
+        answer = self.llm.generate(
+            query=user_query,
+            context=fused,
+            conflict_note=conflict.description if conflict else None
+        )
+
+        response = RAGResponse(
+            answer=answer,
+            sources=fused,
+            conflict_detected=conflict is not None,
+            conflict_description=conflict.description if conflict else None,
+            cached=False
+        )
+
+        # Cache the response keyed by query + source versions
+        cache_key = self._make_cache_key(user_query, fused)
+        self.cache.set(cache_key, response)
+        return response
+
+    def _rrf_fusion(self, results: list[RetrievalResult],
+                    k: int = 60) -> list[RetrievalResult]:
+        """Reciprocal Rank Fusion across multiple ranked lists."""
+        scores = {}
+        for i, result in enumerate(results):
+            doc_id = result.source_id
+            scores[doc_id] = scores.get(doc_id, 0) + 1 / (k + i + 1)
+        sorted_ids = sorted(scores, key=scores.get, reverse=True)
+        id_to_result = {r.source_id: r for r in results}
+        return [id_to_result[doc_id] for doc_id in sorted_ids
+                if doc_id in id_to_result]
+
+    def _detect_conflict(self, results: list[RetrievalResult]):
+        """Surface conflicting information across sources."""
+        by_source_type = {}
+        for r in results:
+            by_source_type.setdefault(r.source_type, []).append(r.content)
+
+        if len(by_source_type) < 2:
+            return None
+
+        # LLM-based conflict detection (fast call, small model)
+        sources_text = "\n\n".join(
+            f"[{st}]: {' '.join(contents[:2])}"
+            for st, contents in by_source_type.items()
+        )
+        conflict_check = self.llm.check_conflict(sources_text)
+        return conflict_check if conflict_check.has_conflict else None
+
+    def _make_cache_key(self, query: str, results: list[RetrievalResult]) -> str:
+        """Cache key includes source versions — invalidate when sources update."""
+        import hashlib
+        source_versions = sorted(set(r.source_version for r in results))
+        payload = f"{query}|{','.join(source_versions)}"
+        return hashlib.sha256(payload.encode()).hexdigest()
+```
+
+### Semantic Cache with Source-Version Invalidation
+
+The cache key includes the version hash of the source documents used in the response. When any contributing document is updated, the version hash changes → cache miss → fresh retrieval. This prevents serving cached answers that are no longer accurate after a document update.
+
+---
+
+## Design Pattern: ML Monitoring System (4-Layer Framework)
+
+**Problem statement:** Design a monitoring system for a production AI system that detects infrastructure issues, data quality degradation, model quality drift, and business outcome changes — with appropriate alerting strategies at each layer.
+
+### The 4-Layer Stack
+
+```
+Layer 1: INFRASTRUCTURE
+  Latency (P50/P95/P99) → alert on P95 > SLA
+  Error rates by type (timeout, 4xx, 5xx) → alert on > 1% error rate
+  Cache hit rate → alert on drop > 20% from baseline (indicates traffic pattern change)
+  Token usage vs. budget → alert at 80% of daily budget
+
+Layer 2: DATA QUALITY
+  Null rate per field → alert on increase > 5 percentage points from baseline
+  Score distribution → KS test vs. training distribution; alert on p < 0.05
+  Feature drift → PSI (Population Stability Index) per feature; PSI > 0.2 = significant drift
+  Input volume → alert on ±50% deviation from expected (may indicate upstream issue)
+
+Layer 3: MODEL QUALITY
+  Faithfulness score (LLM-as-judge on sample) → alert on 7-day average drop > 5 points
+  Hallucination rate → trend alert (slope over 7 days), not point-in-time threshold
+  Human override rate (how often reviewers correct AI output) → weekly trend report
+  Low-confidence rate → alert on increase (model encountering distribution it wasn't trained on)
+
+Layer 4: BUSINESS OUTCOMES
+  Task completion rate → weekly cohort analysis
+  Outcome metric by segment (decile analysis) → monthly report
+  Cycle time vs. SLA → alert on SLA breach rate > 5%
+  User satisfaction (explicit ratings) → 7-day moving average
+```
+
+### Implementation
+
+```python
+# ml_monitor.py — 4-layer monitoring with appropriate alert strategies
+import statistics
+from scipy import stats
+
+class MLMonitoringSystem:
+    """4-layer monitoring for production AI systems."""
+
+    def __init__(self, metrics_store, alerter, baseline: dict):
+        self.metrics = metrics_store
+        self.alerter = alerter
+        self.baseline = baseline
+
+    # Layer 1: Infrastructure — point-in-time alerts
+    def check_infrastructure(self, window_minutes: int = 5):
+        current = self.metrics.get_infra(window_minutes)
+
+        if current["p95_latency_ms"] > self.baseline["sla_latency_p95_ms"]:
+            self.alerter.critical(f"P95 latency {current['p95_latency_ms']}ms exceeds SLA")
+
+        if current["error_rate"] > 0.01:
+            self.alerter.warning(f"Error rate {current['error_rate']:.1%}")
+
+        budget_used = current["daily_tokens"] / self.baseline["daily_token_budget"]
+        if budget_used > 0.80:
+            self.alerter.warning(f"Token budget {budget_used:.0%} consumed")
+
+    # Layer 2: Data quality — distribution comparison
+    def check_data_quality(self):
+        current_scores = self.metrics.get_score_distribution(days=7)
+        baseline_scores = self.baseline["score_distribution"]
+
+        ks_stat, p_value = stats.ks_2samp(current_scores, baseline_scores)
+        if p_value < 0.05:
+            self.alerter.warning(
+                f"Score distribution drift detected: KS stat={ks_stat:.3f}, p={p_value:.4f}"
+            )
+
+        for feature in self.baseline["feature_list"]:
+            psi = self._compute_psi(feature)
+            if psi > 0.2:
+                self.alerter.warning(f"Feature drift: {feature} PSI={psi:.3f} (>0.2)")
+            elif psi > 0.1:
+                self.alerter.info(f"Moderate feature shift: {feature} PSI={psi:.3f}")
+
+    def _compute_psi(self, feature: str) -> float:
+        """Population Stability Index: PSI > 0.2 = significant shift."""
+        current = self.metrics.get_feature_distribution(feature, days=7)
+        expected = self.baseline[f"{feature}_distribution"]
+        eps = 1e-7
+        return sum(
+            (c - e) * (c / (e + eps))
+            for c, e in zip(current, expected)
+        )
+
+    # Layer 3: Model quality — trend alerting (not threshold alerting)
+    def check_model_quality(self):
+        faithfulness_7d = self.metrics.get_faithfulness_scores(days=7)
+        faithfulness_30d = self.metrics.get_faithfulness_scores(days=30)
+
+        # Trend alert: is quality declining over 7 days?
+        if len(faithfulness_7d) >= 7:
+            x = list(range(len(faithfulness_7d)))
+            slope, _, r_value, p_value, _ = stats.linregress(x, faithfulness_7d)
+            if slope < -0.5 and p_value < 0.05:
+                self.alerter.warning(
+                    f"Faithfulness declining: slope={slope:.2f}/day, "
+                    f"7d avg={statistics.mean(faithfulness_7d):.1f}"
+                )
+
+        # Absolute threshold only for severe cases
+        current_avg = statistics.mean(faithfulness_7d[-3:]) if faithfulness_7d else 0
+        if current_avg < self.baseline["faithfulness_floor"]:
+            self.alerter.critical(f"Faithfulness below floor: {current_avg:.1f}")
+
+    # Layer 4: Business outcomes — weekly reporting, not real-time alerts
+    def generate_weekly_business_report(self) -> dict:
+        return {
+            "task_completion_rate": self.metrics.get_task_completion(days=7),
+            "sla_breach_rate": self.metrics.get_sla_breach_rate(days=7),
+            "satisfaction_7d_avg": self.metrics.get_satisfaction_avg(days=7),
+            "satisfaction_trend": self._compute_trend("satisfaction", days=30),
+            "top_failure_modes": self.metrics.get_top_failure_modes(days=7, limit=5),
+        }
+```
+
+### The Trend Alerting Principle
+
+> **Key insight:** Threshold alerts ("alert when metric drops below X") work for infrastructure and hard quality floors. But for model quality degradation, which is gradual, a threshold alert either fires too late (threshold set too low) or fires too often on noise (threshold set too high). Use trend alerting for quality metrics: alert when the 7-day slope is negative and statistically significant, not when the point-in-time value crosses a threshold.
+
+| Metric type | Alert strategy | Why |
+|---|---|---|
+| Latency, error rate | Point-in-time threshold | Sudden change, needs immediate action |
+| Score distribution shift | Statistical test (KS, PSI) | Compare distribution shape, not level |
+| Faithfulness, quality | Trend (slope) + floor threshold | Gradual drift is the risk, not spikes |
+| Business outcomes | Weekly cohort report | Noisy day-to-day; trend matters |
+
 ::: {.callout-important title="Forward Deployed Engineer"}
 **Q14. Design a content moderation system for user-generated content using LLMs at 100k submissions/day with a strict cost budget.**
 

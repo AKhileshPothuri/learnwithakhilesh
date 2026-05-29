@@ -89,6 +89,11 @@ book:
         - chapters/36-tokenization.qmd
         - chapters/37-model-merging.qmd
         - chapters/38-coding-interview.qmd
+    - part: "Part XI — Debugging & Behavioral"
+      chapters:
+        - chapters/39-incident-debugging.qmd
+        - chapters/40-code-debugging.qmd
+        - chapters/41-fde-behavioral.qmd
   appendices:
     - chapters/appendix-ml-fundamentals.qmd
 

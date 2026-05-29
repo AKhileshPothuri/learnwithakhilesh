@@ -1,0 +1,814 @@
+---
+title: "Debugging Production AI Systems — Incident Logs & Root Cause Analysis"
+---
+
+# Debugging Production AI Systems
+
+Production AI failures are different from ordinary software bugs. The system may have worked perfectly in staging. The model may be unchanged. But something in the environment — a third-party API, a schema drift, a cache becoming stale — causes silent or loud failure. This chapter teaches a systematic framework for diagnosing these failures, using realistic incident logs.
+
+## The Debugging Framework
+
+Every production incident follows the same five-step path:
+
+```
+1. CUSTOMER IMPACT       → Who is affected, what are they seeing?
+2. ISOLATE               → Is this the model, the data pipeline, or infrastructure?
+3. HYPOTHESIZE           → What could have changed? What is consistent with the symptoms?
+4. FIX                   → Smallest change that restores service, then root fix
+5. PREVENT               → Detection, alerting, circuit breakers, tests
+```
+
+Always start with customer impact because it sets urgency and guides where you look. A hallucination affecting 2% of queries is different from a pipeline outage affecting 100%.
+
+::: {.callout-tip}
+**Production Mindset**
+
+When debugging live systems, you have two jobs: restore service fast (even with a rollback or feature flag) and understand the root cause (for the post-mortem). Never sacrifice the first to finish the second.
+:::
+
+---
+
+## Incident 1: Pipeline Outage — Third-Party API Timeout with No Fallback
+
+### Symptoms
+
+Users report that document processing has stopped. No documents have been processed for 47 minutes. The queue depth is growing.
+
+### Logs
+
+```
+2024-03-15 14:23:01 INFO  Starting document batch processor
+2024-03-15 14:23:04 ERROR requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='api.ocr-vendor.com', port=443): Read timed out. (read timeout=30)
+2024-03-15 14:23:04 ERROR Unhandled exception in process_document(doc_id=8821)
+Traceback (most recent call last):
+  File "pipeline/processor.py", line 142, in process_document
+    extracted_text = ocr_client.extract(document.raw_bytes, timeout=30)
+  File "pipeline/processor.py", line 87, in extract
+    response = requests.post(self.endpoint, data=payload, timeout=30)
+requests.exceptions.ReadTimeout
+2024-03-15 14:23:04 CRITICAL Worker exited with code 1
+2024-03-15 14:23:04 INFO  Supervisor restarting worker (attempt 1/3)
+2024-03-15 14:23:38 ERROR requests.exceptions.ReadTimeout ...
+2024-03-15 14:23:38 CRITICAL Worker exited with code 1
+2024-03-15 14:23:38 INFO  Supervisor restarting worker (attempt 2/3)
+... (48 minutes of identical entries)
+```
+
+### Root Cause
+
+The external OCR vendor experienced a service degradation. The pipeline had no circuit breaker, no fallback path, and no dead-letter queue. The supervisor kept restarting failed workers in a tight loop rather than pausing and alerting.
+
+### Diagnosis Steps
+
+1. Check vendor status page (external factor confirmed)
+2. Note that exception is unhandled — it propagates to the worker crash
+3. Note supervisor restart loop: wastes compute, masks the real issue in logs
+4. Check queue depth: 2,847 documents backed up
+5. Check if any documents were partially processed (corruption risk)
+
+### Fix
+
+**Immediate:** Pause the worker fleet, switch to a secondary OCR vendor via a feature flag.
+
+**Root Fix:**
+
+```python
+import time
+from enum import Enum
+
+class CircuitState(Enum):
+    CLOSED = "closed"       # normal operation
+    OPEN = "open"           # failing, reject fast
+    HALF_OPEN = "half_open" # testing recovery
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold=5, recovery_timeout=60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failures = 0
+        self.state = CircuitState.CLOSED
+        self.opened_at = None
+
+    def call(self, fn, *args, fallback=None, **kwargs):
+        if self.state == CircuitState.OPEN:
+            if time.time() - self.opened_at > self.recovery_timeout:
+                self.state = CircuitState.HALF_OPEN
+            else:
+                if fallback:
+                    return fallback(*args, **kwargs)
+                raise RuntimeError("Circuit open — service unavailable")
+
+        try:
+            result = fn(*args, **kwargs)
+            if self.state == CircuitState.HALF_OPEN:
+                self._reset()
+            return result
+        except Exception as e:
+            self._record_failure()
+            if fallback:
+                return fallback(*args, **kwargs)
+            raise
+
+    def _record_failure(self):
+        self.failures += 1
+        if self.failures >= self.failure_threshold:
+            self.state = CircuitState.OPEN
+            self.opened_at = time.time()
+
+    def _reset(self):
+        self.failures = 0
+        self.state = CircuitState.CLOSED
+
+# Usage: wrap external calls
+ocr_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
+
+def process_document(doc):
+    return ocr_breaker.call(
+        primary_ocr_client.extract,
+        doc.raw_bytes,
+        fallback=secondary_ocr_client.extract
+    )
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| Circuit breaker | Open after 5 failures in 60s, close after 60s recovery |
+| Dead-letter queue | Failed docs go to DLQ with retry metadata, not lost |
+| Health check alert | Alert if vendor API p99 latency exceeds 10s |
+| Secondary vendor | Pre-integrated, toggled by feature flag |
+
+---
+
+## Incident 2: Wrong Outputs After Deployment — Feature Schema Mismatch
+
+### Symptoms
+
+After deploying a new model version, classification accuracy dropped from 94% to 31%. The model was performing above 94% in offline evaluation.
+
+### Logs
+
+```
+2024-04-02 09:15:33 INFO  Model v2.3.1 loaded successfully
+2024-04-02 09:15:34 INFO  Processing request batch (size=32)
+2024-04-02 09:15:34 DEBUG features extracted: {'text_length': 1247, 'num_entities': 3, 'language': 'en', 'sentiment_score': 0.82, 'doc_type_encoded': 4}
+2024-04-02 09:15:34 DEBUG prediction: class=2 (confidence=0.91)
+...
+2024-04-02 09:17:01 WARN  Feedback received: prediction disagreement (user_id=4421)
+2024-04-02 09:17:04 WARN  Feedback received: prediction disagreement (user_id=4422)
+2024-04-02 09:17:31 WARN  Feedback received: prediction disagreement (user_id=4429)
+2024-04-02 09:31:47 ERROR Accuracy monitor: 15-minute accuracy = 31.2% (threshold: 85%)
+```
+
+### Root Cause
+
+The old model (v2.2.x) was trained with `doc_type_encoded` using label encoding where `"invoice"` → 2. The new model (v2.3.1) was trained with a different label encoding where `"invoice"` → 4. The feature pipeline was not updated — it still used the old encoder. The model received encoded values from the wrong mapping and produced systematically wrong predictions.
+
+### Diagnosis Steps
+
+1. Accuracy plummeted immediately at deploy time, not gradually — rules out data drift
+2. Both old model in shadow and new model in production were running — compare their raw feature vectors
+3. Features look plausible but differ in `doc_type_encoded` values between shadow and live
+4. Check model training artifact: confirm encoder mapping changed between v2.2 and v2.3
+5. Check feature pipeline version: still using old encoder
+
+### Fix
+
+**Immediate:** Roll back to model v2.2.x.
+
+**Root Fix:** Package the feature encoder with the model artifact. Never let them drift independently.
+
+```python
+import joblib
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class ModelBundle:
+    """Package model and all preprocessing together as a single artifact."""
+    model: Any
+    feature_encoder: Any
+    schema_version: str
+    feature_names: list[str]
+
+    def predict(self, raw_features: dict) -> dict:
+        # encoder and model always use the same schema
+        encoded = self.feature_encoder.transform(raw_features)
+        assert list(encoded.keys()) == self.feature_names, (
+            f"Feature mismatch: expected {self.feature_names}, "
+            f"got {list(encoded.keys())}"
+        )
+        return self.model.predict(encoded)
+
+    def save(self, path: str):
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path: str) -> "ModelBundle":
+        return joblib.load(path)
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| Bundle artifacts | Model + encoders + feature names versioned together |
+| Schema validation at load | Assert feature names and dtypes match bundle manifest |
+| Canary deploy | Run shadow comparison for 15 min before traffic shift |
+| Accuracy alert | Alert within 15 minutes if accuracy drops > 10pp |
+
+---
+
+## Incident 3: LLM Hallucination Served to User — Faithfulness Gate Not Enforced
+
+### Symptoms
+
+A user received a factually incorrect answer that directly contradicted the source document. The answer included a dollar amount that did not appear anywhere in the retrieved context.
+
+### Logs
+
+```
+2024-04-10 11:44:22 INFO  Query received: "What is the cancellation fee?"
+2024-04-10 11:44:22 INFO  Retrieved 3 chunks (scores: 0.89, 0.76, 0.71)
+2024-04-10 11:44:22 DEBUG Chunk 1: "...service may be cancelled with 30 days written notice..."
+2024-04-10 11:44:22 DEBUG Chunk 2: "...standard service agreement terms apply..."
+2024-04-10 11:44:22 DEBUG Chunk 3: "...see Section 14 for termination provisions..."
+2024-04-10 11:44:24 INFO  LLM response generated (tokens=127)
+2024-04-10 11:44:24 INFO  Response: "The cancellation fee is $250 as stated in Section 14."
+2024-04-10 11:44:24 DEBUG faithfulness_check: SKIPPED (flag: skip_faithfulness=True)
+2024-04-10 11:44:24 INFO  Response served to user
+```
+
+### Root Cause
+
+A `skip_faithfulness=True` flag was set in a configuration file during load testing to reduce latency. It was never reverted before production deployment. The faithfulness gate was effectively disabled for all production traffic.
+
+### Diagnosis Steps
+
+1. Log shows `faithfulness_check: SKIPPED` — gate is not running
+2. Check config at time of incident: `skip_faithfulness=True`
+3. Check git history on config file: flag added 3 weeks ago for load test
+4. Check deployment checklist: no step to verify faithfulness flag before deploy
+5. Verify retrieved chunks: none contain "$250" — hallucination confirmed
+
+### Fix
+
+**Immediate:** Set `skip_faithfulness=False`, deploy config.
+
+**Root Fix:** Never allow safety gates to be disabled via mutable runtime config. Use feature flags with explicit expiry and mandatory review.
+
+```python
+from datetime import datetime, timezone
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class FeatureFlag:
+    name: str
+    enabled: bool
+    expires_at: Optional[datetime] = None
+    reason: str = ""
+
+    def is_active(self) -> bool:
+        if not self.enabled:
+            return False
+        if self.expires_at and datetime.now(timezone.utc) > self.expires_at:
+            # auto-revert after expiry
+            return False
+        return True
+
+class SafetyGateConfig:
+    """Safety gates cannot be permanently disabled via config."""
+
+    SAFETY_GATES = {
+        "faithfulness_check",
+        "pii_redaction",
+        "content_moderation",
+    }
+
+    def __init__(self, flags: dict[str, FeatureFlag]):
+        self.flags = flags
+
+    def gate_enabled(self, gate_name: str) -> bool:
+        if gate_name in self.SAFETY_GATES:
+            flag = self.flags.get(gate_name)
+            if flag is None:
+                return True  # default: gates are ON
+            if not flag.expires_at:
+                raise ValueError(
+                    f"Safety gate '{gate_name}' disable flag must have an expiry"
+                )
+            return flag.is_active()
+        return self.flags.get(gate_name, FeatureFlag(gate_name, True)).is_active()
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| Safety gate flags require expiry | Enforce at config load time |
+| Pre-deploy checklist | Automated check: no safety gate disabled |
+| Faithfulness logging | Log score + pass/fail for every response |
+| Alert on skip rate | Alert if > 0% of requests skip faithfulness check |
+
+---
+
+## Incident 4: Silent Monitor Failure — Stale Config Cache
+
+### Symptoms
+
+A data quality monitor failed to fire alerts for 6 days. During that window, a schema change in upstream data caused the monitor's threshold values to become meaningless. When the issue was discovered manually, significant model degradation had accumulated.
+
+### Logs
+
+```
+2024-05-01 00:00:01 INFO  DataQualityMonitor starting daily run
+2024-05-01 00:00:01 INFO  Loading config from cache (age=144h)
+2024-05-01 00:00:01 WARN  Cache age exceeds recommended 24h, using anyway
+2024-05-01 00:00:02 INFO  Schema loaded: {'fields': ['user_id', 'action', 'value']}
+2024-05-01 00:00:02 INFO  Checking null rate for field 'value': 0.02% (threshold: 5%) ✓
+2024-05-01 00:00:02 INFO  Monitor run complete — no alerts
+...
+(identical for 6 days)
+...
+2024-05-07 09:31:15 INFO  Manual inspection triggered
+2024-05-07 09:31:16 WARN  Upstream schema changed: 'value' field renamed to 'amount'
+2024-05-07 09:31:16 ERROR 'value' field not found in current data — monitor was checking null column
+2024-05-07 09:31:16 CRITICAL 6 days of monitor runs silently passed on nonexistent field
+```
+
+### Root Cause
+
+The config cache was never invalidated when the upstream schema changed. The monitor was checking null rates for a field that no longer existed in the data — which naturally returned 0% nulls (empty series), well under the 5% threshold. The monitor appeared healthy while monitoring nothing.
+
+### Diagnosis Steps
+
+1. Cache age log line: `age=144h` — cache is 6 days old
+2. Upstream schema change occurred on day 1 of the silence window
+3. Monitor was checking field `value`, which no longer existed
+4. Null rate on nonexistent field returned 0 (pandas default for missing column) — always passed
+5. No `field not found` error was raised — silent success for missing column
+
+### Fix
+
+**Immediate:** Invalidate cache, reload config, recheck data with current schema.
+
+**Root Fix:**
+
+```python
+import hashlib
+import json
+from typing import Optional
+
+class SchemaAwareConfigCache:
+    """Cache invalidates when upstream schema fingerprint changes."""
+
+    def __init__(self, redis_client, ttl_seconds: int = 3600):
+        self.redis = redis_client
+        self.ttl = ttl_seconds
+
+    def _schema_fingerprint(self, schema: dict) -> str:
+        canonical = json.dumps(schema, sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+    def get(self, key: str, current_schema: dict) -> Optional[dict]:
+        cached = self.redis.hgetall(key)
+        if not cached:
+            return None
+
+        stored_fingerprint = cached.get("schema_fp")
+        current_fingerprint = self._schema_fingerprint(current_schema)
+
+        if stored_fingerprint != current_fingerprint:
+            self.redis.delete(key)
+            return None  # schema changed — cache miss
+
+        return json.loads(cached["config"])
+
+    def set(self, key: str, config: dict, current_schema: dict):
+        fp = self._schema_fingerprint(current_schema)
+        self.redis.hset(key, mapping={
+            "config": json.dumps(config),
+            "schema_fp": fp
+        })
+        self.redis.expire(key, self.ttl)
+
+def validate_monitor_fields(config: dict, actual_schema: dict) -> list[str]:
+    """Return list of configured fields that don't exist in actual schema."""
+    actual_fields = set(actual_schema.get("fields", []))
+    missing = []
+    for field in config.get("monitored_fields", []):
+        if field not in actual_fields:
+            missing.append(field)
+    return missing
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| Schema fingerprint in cache | Cache invalidates on schema change |
+| Field existence validation | Error (not pass) if monitored field is missing |
+| Monitor self-test | Each run: verify at least 1 data point was actually checked |
+| Alert on cache age | Alert if config cache age > 24h without refresh |
+
+---
+
+## Incident 5: Agent Always Routing to Default — LangGraph State Not Propagating
+
+### Symptoms
+
+A multi-agent system was deployed where a router agent should direct queries to specialized sub-agents (billing, technical, general). All queries were being routed to the "general" fallback agent, even obvious billing queries.
+
+### Logs
+
+```
+2024-05-15 14:02:11 INFO  Router agent invoked: query="How do I update my payment method?"
+2024-05-15 14:02:13 DEBUG Router LLM output: {"route": "billing", "confidence": 0.97}
+2024-05-15 14:02:13 DEBUG State after router: {'messages': [...], 'next': 'general'}
+2024-05-15 14:02:13 INFO  Routing to: general
+...
+2024-05-15 14:03:44 INFO  Router agent invoked: query="Why is my invoice wrong?"
+2024-05-15 14:03:46 DEBUG Router LLM output: {"route": "billing", "confidence": 0.99}
+2024-05-15 14:03:46 DEBUG State after router: {'messages': [...], 'next': 'general'}
+2024-05-15 14:03:46 INFO  Routing to: general
+```
+
+### Root Cause
+
+The LangGraph conditional edge function was reading the wrong state key. The router node wrote to `state["route"]`, but the edge function read `state["next"]`. Since `state["next"]` was never set by the router, it always returned `None`, which mapped to the default `"general"` route.
+
+### Diagnosis Steps
+
+1. LLM output shows correct routing decision: `"route": "billing"`
+2. State shows `'next': 'general'` — wrong key being read
+3. Check router node code: writes to `state["route"]`
+4. Check conditional edge function: reads `state["next"]`
+5. Key mismatch confirmed — edge function never sees the router's output
+
+### Fix
+
+```python
+from typing import TypedDict, Literal
+from langgraph.graph import StateGraph, END
+
+class RouterState(TypedDict):
+    messages: list
+    route: str      # SINGLE canonical key — router writes here
+
+def router_node(state: RouterState) -> RouterState:
+    query = state["messages"][-1]["content"]
+    # LLM routing decision
+    result = routing_llm.invoke({"query": query})
+    route = result.get("route", "general")
+    return {**state, "route": route}
+
+def route_decision(state: RouterState) -> Literal["billing", "technical", "general"]:
+    # Read the SAME key the router node writes to
+    route = state.get("route", "general")
+    if route not in ("billing", "technical", "general"):
+        return "general"
+    return route
+
+# Build graph
+graph = StateGraph(RouterState)
+graph.add_node("router", router_node)
+graph.add_node("billing", billing_agent)
+graph.add_node("technical", technical_agent)
+graph.add_node("general", general_agent)
+
+graph.set_entry_point("router")
+graph.add_conditional_edges("router", route_decision, {
+    "billing": "billing",
+    "technical": "technical",
+    "general": "general",
+})
+for node in ("billing", "technical", "general"):
+    graph.add_edge(node, END)
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| TypedDict for state | Catches key typos at type-check time |
+| Unit test routing | Assert each route key produces correct branch |
+| Route distribution metric | Alert if > 80% of queries hit the default route |
+| Log LLM decision vs. actual route | Compare in monitoring to catch future mismatches |
+
+::: {.callout-warning}
+**LangGraph State Key Discipline**
+
+Always define state as a `TypedDict` and use the same constant (not a string literal) in both the node that writes and the edge function that reads. A single typo silently routes everything to the default.
+:::
+
+---
+
+## Incident 6: Duplicate Records — Idempotency Check Bypassed When Redis Down
+
+### Symptoms
+
+A webhook processing pipeline created 3,400 duplicate order records over a 12-minute window. All duplicates shared the same `event_id`.
+
+### Logs
+
+```
+2024-06-03 16:41:02 INFO  Redis health check: FAILED (connection refused)
+2024-06-03 16:41:02 WARN  Idempotency store unavailable — processing anyway
+2024-06-03 16:41:02 INFO  Processing event event_id=order_9921 (attempt 1)
+2024-06-03 16:41:02 INFO  Order created: order_id=ORD-88123
+2024-06-03 16:41:03 INFO  Processing event event_id=order_9921 (attempt 2)  ← retry
+2024-06-03 16:41:03 INFO  Order created: order_id=ORD-88124  ← DUPLICATE
+2024-06-03 16:41:03 INFO  Processing event event_id=order_9921 (attempt 3)  ← retry
+2024-06-03 16:41:03 INFO  Order created: order_id=ORD-88125  ← DUPLICATE
+...
+```
+
+### Root Cause
+
+When Redis was unavailable, the idempotency store raised a connection error. The error was caught with a broad `except Exception`, logged as a warning, and processing continued as if the idempotency check had passed. During a message broker retry storm (the broker resent unacknowledged messages), each event was processed multiple times with no deduplication.
+
+### Diagnosis Steps
+
+1. Redis connection refused at 16:41:02 — Redis restart or network partition
+2. `processing anyway` log — idempotency check skipped on Redis failure
+3. Retry storm: message broker retried unacknowledged messages
+4. Each retry created a new record (no deduplication in DB layer either)
+5. 3,400 duplicates = ~283 events × avg 12 retries during the 12-minute window
+
+### Fix
+
+**Immediate:** Run deduplication query on `event_id`, delete duplicate orders, reconcile downstream state.
+
+**Root Fix:**
+
+```python
+import redis
+import hashlib
+from enum import Enum
+
+class IdempotencyResult(Enum):
+    PROCEED = "proceed"       # not seen before
+    DUPLICATE = "duplicate"   # already processed
+    STORE_DOWN = "store_down" # cannot determine — reject for safety
+
+class IdempotencyStore:
+    def __init__(self, redis_client, ttl: int = 86400):
+        self.redis = redis_client
+        self.ttl = ttl
+
+    def check_and_set(self, event_id: str) -> IdempotencyResult:
+        key = f"idem:{hashlib.sha256(event_id.encode()).hexdigest()}"
+        try:
+            # SET NX: atomic — only succeeds if key doesn't exist
+            was_new = self.redis.set(key, "1", nx=True, ex=self.ttl)
+            return IdempotencyResult.PROCEED if was_new else IdempotencyResult.DUPLICATE
+        except redis.RedisError:
+            # Redis down: REJECT processing to prevent duplicates
+            # Caller should NACK the message and let it retry later
+            return IdempotencyResult.STORE_DOWN
+
+def process_event(event: dict, store: IdempotencyStore):
+    result = store.check_and_set(event["event_id"])
+
+    if result == IdempotencyResult.DUPLICATE:
+        return {"status": "skipped", "reason": "already_processed"}
+
+    if result == IdempotencyResult.STORE_DOWN:
+        # Do NOT process — NACK so broker retries when Redis recovers
+        raise RuntimeError("Idempotency store unavailable — cannot process safely")
+
+    # Safe to process
+    return create_order(event)
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| STORE_DOWN → NACK | Never process when idempotency cannot be verified |
+| DB-level unique constraint | `UNIQUE(event_id)` as second layer of protection |
+| Redis HA | Redis Sentinel or Cluster — avoid single-point failure |
+| Alert on Redis failures | Page immediately if idempotency store goes down |
+
+---
+
+## Incident 7: Gradual Model Quality Drift Over 5 Days
+
+### Symptoms
+
+Customer support team noticed increasing complaint rates over 5 days. No single alert fired. A weekly review discovered that model accuracy had dropped from 91% to 74% — a 17-point decline.
+
+### Logs (daily accuracy metrics)
+
+```
+Day 1  2024-06-10: accuracy=0.912, psi=0.018
+Day 2  2024-06-11: accuracy=0.901, psi=0.024
+Day 3  2024-06-12: accuracy=0.887, psi=0.041
+Day 4  2024-06-13: accuracy=0.873, psi=0.063
+Day 5  2024-06-14: accuracy=0.858, psi=0.089
+Day 6  2024-06-15: accuracy=0.844, psi=0.112
+Day 7  2024-06-16: accuracy=0.741, psi=0.198
+```
+
+```
+2024-06-16 00:00:01 INFO  Daily alert check: accuracy=0.741 — BELOW THRESHOLD (0.85) ← alert fires on day 7
+```
+
+### Root Cause
+
+The alert threshold was a point-in-time check (`accuracy < 0.85`). The model degraded gradually — each day's value was above the threshold until day 7. A trend alert watching the slope of the metric series would have fired on day 3-4, when the trajectory was clear but the absolute value had not yet crossed the threshold.
+
+Population Stability Index (PSI) was being logged but not alerted on, even though PSI > 0.1 on day 5-6 indicated significant distribution shift.
+
+### Fix
+
+```python
+import numpy as np
+from scipy import stats
+from dataclasses import dataclass
+
+@dataclass
+class TrendAlert:
+    metric_name: str
+    fired: bool
+    reason: str
+    slope: float
+    p_value: float
+
+def check_trend_alert(
+    values: list[float],
+    min_slope: float = -0.005,    # alert if degrading by > 0.5pp/day
+    significance: float = 0.05,
+    min_points: int = 5
+) -> TrendAlert:
+    """Fires when the trend is significantly negative, before threshold breach."""
+    if len(values) < min_points:
+        return TrendAlert("accuracy", False, "insufficient data", 0.0, 1.0)
+
+    x = np.arange(len(values))
+    slope, intercept, r_value, p_value, std_err = stats.linregress(x, values)
+
+    fired = slope < min_slope and p_value < significance
+    reason = (
+        f"Slope {slope:.4f}/day, p={p_value:.3f} — trend alert"
+        if fired else "Within normal range"
+    )
+    return TrendAlert("accuracy", fired, reason, slope, p_value)
+
+def check_psi_alert(psi: float) -> bool:
+    """PSI > 0.1 = moderate shift, > 0.2 = significant shift."""
+    return psi > 0.1
+
+# Retrospective application to incident:
+daily_accuracy = [0.912, 0.901, 0.887, 0.873, 0.858]
+alert = check_trend_alert(daily_accuracy)
+# slope = -0.0135/day, p = 0.003 → fires on day 5 (4 days earlier than threshold alert)
+```
+
+### Prevention
+
+| Alert Type | Metric | Trigger | Day Fires |
+|------------|--------|---------|-----------|
+| Threshold | accuracy < 0.85 | Point-in-time | Day 7 |
+| Trend | slope < -0.005/day (p < 0.05) | Linear regression on 5-day window | Day 5 |
+| PSI | PSI > 0.1 | Distribution shift | Day 5 |
+| Combined | Any of the above | Earliest signal wins | Day 5 |
+
+::: {.callout-tip}
+**Trend vs. Threshold Alerting**
+
+For gradual drift, slope-based alerts (linear regression on a rolling window) detect problems 2-4 days earlier than threshold alerts. Use both: threshold for hard stops, trend for early warning.
+:::
+
+---
+
+## Incident 8: Memory Leak in Batch Inference — Tensors in List, No `torch.no_grad()`
+
+### Symptoms
+
+Batch inference job OOM-killed by the OS after 4 hours of processing. Memory grew linearly. The job processed 500K documents and was estimated to need ~6GB; actual usage reached 47GB at failure.
+
+### Logs
+
+```
+2024-07-01 02:00:01 INFO  Starting batch inference: 500,000 documents
+2024-07-01 02:00:05 INFO  Processed 1,000 docs — RSS: 2.1 GB
+2024-07-01 02:15:22 INFO  Processed 50,000 docs — RSS: 8.4 GB
+2024-07-01 02:31:44 INFO  Processed 100,000 docs — RSS: 14.9 GB
+2024-07-01 02:48:01 INFO  Processed 150,000 docs — RSS: 21.3 GB
+...
+2024-07-01 06:02:17 INFO  Processed 350,000 docs — RSS: 47.1 GB
+2024-07-01 06:02:18 CRITICAL Killed (OOM)
+```
+
+### Root Cause
+
+Two compounding issues:
+
+1. `model(inputs)` called inside a loop **without** `torch.no_grad()` — PyTorch builds a computation graph for every forward pass, accumulating gradient tensors in memory.
+2. Output tensors (embeddings) appended to a Python list **without** `.detach().cpu().numpy()` — tensors held references to the computation graph, preventing garbage collection.
+
+### Broken Code
+
+```python
+# BROKEN — leaks memory
+def run_batch_inference(model, dataset):
+    all_embeddings = []
+    for batch in dataloader(dataset, batch_size=32):
+        outputs = model(batch["input_ids"])       # builds computation graph
+        all_embeddings.append(outputs.last_hidden_state[:, 0, :])  # holds graph ref
+    return all_embeddings
+```
+
+### Fixed Code
+
+```python
+import torch
+import numpy as np
+
+def run_batch_inference(model, dataset, batch_size=32):
+    all_embeddings = []
+    model.eval()   # sets BatchNorm/Dropout to eval mode
+
+    with torch.no_grad():   # disables gradient tracking
+        for batch in dataloader(dataset, batch_size=batch_size):
+            outputs = model(batch["input_ids"].to(model.device))
+            embeddings = (
+                outputs.last_hidden_state[:, 0, :]
+                .detach()   # detach from computation graph
+                .cpu()      # move off GPU before numpy conversion
+                .numpy()    # convert to numpy — no more torch references
+            )
+            all_embeddings.append(embeddings)
+
+            # Explicit GPU memory cleanup for large batches
+            del outputs
+            torch.cuda.empty_cache()
+
+    return np.vstack(all_embeddings)
+```
+
+### Prevention
+
+| Control | Implementation |
+|---------|----------------|
+| Always use `torch.no_grad()` for inference | Lint rule or CI check |
+| Always `.detach().cpu().numpy()` before appending | Code review checklist |
+| Memory profiling in staging | Run `torch.cuda.memory_summary()` after 1K samples |
+| RSS monitoring with alert | Alert if RSS growth rate > 50MB/1K docs |
+| Streaming output | Write embeddings to disk in chunks, not one giant list |
+
+---
+
+## Incident Summary Table
+
+| # | Incident | Layer | Root Cause | Prevention Pattern |
+|---|----------|-------|------------|-------------------|
+| 1 | Pipeline outage | Infrastructure | No circuit breaker on external API | Circuit breaker + DLQ |
+| 2 | Wrong predictions | Feature pipeline | Encoder version mismatch | Bundle model + encoders |
+| 3 | LLM hallucination | Safety gate | Skip flag never reverted | Gates require expiry |
+| 4 | Silent monitor | Config/cache | Stale cache after schema change | Schema fingerprint in cache |
+| 5 | Agent bad routing | Orchestration | State key typo | TypedDict + unit tests |
+| 6 | Duplicate records | Idempotency | Redis-down bypass | STORE_DOWN → NACK |
+| 7 | Gradual drift | Monitoring | Threshold-only alerting | Trend + PSI alerts |
+| 8 | Memory leak | Inference | No `no_grad()`, no `detach()` | Memory profiling in staging |
+
+---
+
+## Interview Questions
+
+**Q1 (Entry).** A batch job runs fine for 10,000 records but OOM-kills at 100,000. What are the three most likely causes in an ML inference job?
+
+> Tensors kept in memory (no `detach().numpy()`), no `torch.no_grad()` accumulating computation graphs, and unbounded list growth instead of streaming writes. Check RSS growth rate per 1K records to quantify which is dominant.
+
+**Q2 (Mid).** Your accuracy monitor showed 91% for 6 days, then suddenly reported 74%. How do you determine whether this is a sudden event or gradual drift?
+
+> Pull the raw daily metric series and fit a linear regression. If the slope is significantly negative before the threshold breach (p < 0.05, slope < -0.5pp/day), it is gradual drift. Also check PSI on the same window — if PSI was rising while accuracy appeared stable, the monitor threshold was masking the trend. Sudden events typically show a step function in the series, not a slope.
+
+**Q3 (Mid).** An agent system routes 95% of queries to the fallback handler. The LLM output logs show correct routing decisions. What is the bug?
+
+> Mismatched state keys between the node that writes the routing decision and the conditional edge function that reads it. The LLM is deciding correctly, but the edge function is reading a different key — typically `None` — which maps to the default route. Fix: define state as a TypedDict with a single canonical key, used consistently in both places.
+
+**Q4 (Senior/FDE).** Your idempotency store (Redis) goes down during a retry storm. You have two options: (a) reject all events until Redis recovers, or (b) process events anyway and deduplicate later. Walk through the tradeoffs.
+
+> Option (a) — reject and NACK: safe for financial/order data, creates backpressure and queue buildup, requires broker to retry. Service is degraded but consistent.
+> Option (b) — process and deduplicate: appropriate for idempotent operations (analytics counts, cache warm), requires a reliable deduplication query and reconciliation process. Not safe for operations with downstream side effects.
+> In practice: (a) for writes with side effects, (b) only for reads or analytics. The DB-level `UNIQUE(event_id)` constraint should be a second layer regardless of which path you choose.
+
+**Q5 (FDE/System Design).** A customer says their model "just stopped working" after a deployment. Walk through your first 5 minutes of diagnosis.
+
+> 1. Check deployment timestamp vs. first customer complaint — did failure start exactly at deploy?
+> 2. Check accuracy/error-rate monitor for step change vs. gradual trend.
+> 3. Compare feature vectors from shadow (old model) vs. live (new model) — look for schema mismatches.
+> 4. Check for any config flags changed alongside the model (skip_faithfulness, feature_version, encoder_version).
+> 5. If all else fails: roll back the model version and confirm whether the problem resolves — that confirms the deploy was causal even if root cause is unknown.
+
+| Question | Level | Tests |
+|----------|-------|-------|
+| OOM causes in batch inference | Entry | PyTorch memory fundamentals |
+| Gradual vs sudden drift diagnosis | Mid | Monitoring design |
+| Agent routing state key bug | Mid | LangGraph/orchestration debugging |
+| Idempotency store tradeoffs | Senior | Distributed systems consistency |
+| First 5 minutes post-deploy failure | FDE | Structured debugging under pressure |

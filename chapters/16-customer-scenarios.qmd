@@ -793,6 +793,322 @@ On liability: "Who is legally responsible for a denied prior auth decision — t
 If the customer is not willing to commit to a human-in-the-loop model, this project should not proceed. The liability exposure of a fully automated prior auth denial system that makes clinical errors is too high for any vendor or customer to accept.
 :::
 
+---
+
+## Diagnosing "The Model Feels Wrong" With No Error Logs
+
+Among the most frustrating customer complaints is "the AI doesn't feel right." No exception in Sentry, no failed API call, no measurable metric — just a stakeholder who has used the system for two weeks and has lost confidence in it. This is real and requires a structured diagnostic approach.
+
+### The Diagnostic Framework
+
+**Step 1: Collect specific examples.** "Can you show me three or four outputs that felt wrong, and explain why each one didn't meet your expectation?" Vague frustration ("it feels off") cannot be diagnosed. Specific cases can. Push past general sentiment to concrete instances.
+
+**Step 2: Categorize the failure type.** Most "feels wrong" complaints fall into one of four categories:
+- **Factual error:** The system stated something false
+- **Incomplete answer:** The system answered a narrower version of the question than the user intended
+- **Tone/format mismatch:** The answer was correct but not in the style the user expected
+- **Confidence calibration:** The system sounded uncertain on things the user knew to be clear, or certain on things the user knew to be ambiguous
+
+Each category has a different root cause and a different fix.
+
+**Step 3: Check the data layer first.** Pull the retrieval results for the failing queries. What documents were retrieved? Were they relevant? Did the relevant document exist in the corpus? A surprising fraction of "model feels wrong" complaints trace to retrieval failures, not generation failures. The model answered correctly given what it was shown — it just wasn't shown the right documents.
+
+```python
+# Diagnostic: surface retrieval quality for failing queries
+from your_rag_system import retriever, query_logs
+
+# Pull the last 100 queries that received low satisfaction ratings
+failing_queries = query_logs.fetch(
+    filters={"satisfaction": "low"},
+    limit=100
+)
+
+for query in failing_queries:
+    results = retriever.retrieve(query.text, top_k=5)
+    print(f"\nQuery: {query.text}")
+    print(f"Retrieved docs: {[r.doc_id for r in results]}")
+    print(f"Relevance scores: {[round(r.score, 3) for r in results]}")
+    # Check: did the right document actually exist in the corpus?
+    # Check: was it retrieved in top-5?
+    # Check: if not, why? (low embedding similarity, wrong chunk boundary, etc.)
+```
+
+**Step 4: Inspect the prompt and context window.** Print the exact prompt that was sent to the LLM for the failing cases. Is the retrieved context relevant? Is the system prompt creating constraints that cause the model to avoid the right answer? Is context window size causing relevant content to be cut?
+
+**Step 5: Measure, don't guess.** Once you have specific failing examples, create a small eval set (20–30 cases) and score systematically. Eyeballing 100 outputs in a spreadsheet with a customer is not measurement — it is a trust-eroding exercise. Measurement is: define the scoring rubric, score each case against it, produce a number. That number becomes the baseline for demonstrating improvement.
+
+::: {.callout-tip title="The Three-Question Diagnostic"}
+Ask these three questions for any failing output: (1) Was the relevant information in the corpus? (2) Was it retrieved? (3) Was it used correctly in generation? Each "no" answer points to a different fix: data ingestion, retrieval configuration, or prompt engineering.
+:::
+
+---
+
+## Handling Unmet Accuracy Expectations Post-Deployment
+
+One of the most difficult conversations in an FDE engagement: you shipped, the customer went live, and the accuracy metrics post-deployment are meaningfully below what you demonstrated in the POC.
+
+### Why This Happens
+
+The gap between POC accuracy and production accuracy is almost always explained by one of three things:
+
+1. **Distribution shift:** The POC used a curated, representative sample. Production users submit queries you never anticipated and documents in formats you didn't test against.
+2. **Data quality drift:** The corpus in production is messier than the sample — more OCR errors, inconsistent formatting, stale documents.
+3. **Success criteria drift:** The customer redefined "accuracy" between POC and production. What counted as correct in the POC evaluation is scored differently when end users are doing the scoring.
+
+Understanding which of these is true is the first step before proposing any fix.
+
+### The Recovery Conversation
+
+**Lead with empathy, not defense.** "I understand this is frustrating — you made a decision to deploy based on the POC results, and what you're seeing in production doesn't match those results. Let me understand exactly what you're seeing and why it's different."
+
+**Diagnose transparently.** Run the three-question diagnostic above against the failing production cases. Present findings factually: "In the POC, 95% of our test queries matched documents in the corpus. In production, 22% of user queries are asking about topics not covered in the current corpus. That's the root cause of the accuracy drop — not the model or the retrieval system."
+
+**Propose a concrete remediation with a timeline.** Options typically are:
+- Expand the corpus to cover the gap
+- Improve retrieval for the existing corpus
+- Add a graceful "I don't have that information" fallback rather than a low-confidence answer
+- Narrow the system's advertised scope to the domain it covers well and route out-of-scope queries elsewhere
+
+**Reset the accuracy expectation in writing.** Once you've implemented the fix, measure again and document the new baseline. This creates a shared record that you responded to the problem and what the corrected performance looks like.
+
+---
+
+## Defining Success Metrics Before Building Anything
+
+A project without a pre-agreed success metric cannot be declared a success. It also cannot be declared a failure. It drifts.
+
+The discipline of defining success metrics before building is the FDE's version of writing tests before writing code. It forces clarity on what "done" means and prevents the most common engagement failure mode: a technically working system that the customer doesn't consider a success.
+
+### The Success Metric Framework
+
+Every AI engagement should have three levels of metric defined before the build starts:
+
+**Level 1 — Technical quality metric (owned by FDE)**
+What does the system need to do technically to be considered working? Examples:
+- Retrieval recall ≥ 85% on the evaluation set
+- Extraction field accuracy ≥ 90% on the test document set
+- Response latency P95 ≤ 3 seconds under expected load
+- Hallucination rate ≤ 5% as measured by the faithfulness scorer
+
+**Level 2 — User quality metric (owned by customer + FDE jointly)**
+Is the system useful to actual users? Examples:
+- User satisfaction rating ≥ 4.0/5.0 in pilot survey
+- Query success rate ≥ 80% (user marks query as answered)
+- Escalation-to-human rate ≤ 25% of queries (for chatbot use cases)
+
+**Level 3 — Business outcome metric (owned by customer)**
+Did the system move the business metric that justified the investment? Examples:
+- Support ticket deflection rate ≥ 30%
+- Average analyst handle time reduced by ≥ 35%
+- Document review cycle time reduced from 4 hours to 45 minutes
+
+A common mistake: only defining Level 1 metrics. A technically excellent system that users don't like and that doesn't move the business metric is still a failed engagement.
+
+```python
+# Success metrics documentation template
+SUCCESS_METRICS = {
+    "project": "Contract Clause Extraction System",
+    "measurement_date": "2025-03-01",  # Review date agreed with customer
+
+    "technical_quality": {
+        "extraction_accuracy": {
+            "metric": "Field-level extraction accuracy on 200-doc holdout set",
+            "target": 0.90,
+            "measurement_method": "Manual review by legal ops team lead",
+            "fields_in_scope": ["party_names", "effective_date", "payment_terms",
+                                "termination_clause", "liability_cap"]
+        },
+        "latency": {
+            "metric": "P95 processing time per document",
+            "target_seconds": 8.0,
+            "measurement_method": "Automated timing in production logs"
+        }
+    },
+
+    "user_quality": {
+        "review_time_reduction": {
+            "metric": "Average time for legal ops to review one contract",
+            "baseline_minutes": 45,
+            "target_minutes": 12,
+            "measurement_method": "Time tracking in contract management system"
+        }
+    },
+
+    "business_outcome": {
+        "throughput": {
+            "metric": "Contracts reviewed per analyst per day",
+            "baseline": 8,
+            "target": 22,
+            "measurement_method": "Contract management system weekly report"
+        }
+    }
+}
+```
+
+---
+
+## Managing a Customer Who Wants a Feature You Think Is a Bad Idea
+
+The scenario: the customer's VP has decided they want the system to do X. You know from experience that X will produce worse outcomes, create technical debt, or actively harm the system's reliability. How do you handle it?
+
+### The Framework: Evidence, Empathy, Alternatives
+
+**Don't say no without evidence.** "I don't think that's a good idea" is an opinion. "Here's the data on why similar implementations produced this outcome" is a position. Before pushing back, build the evidence: comparable cases, technical analysis, specific failure modes. You need to be able to explain *why*, not just assert *no*.
+
+**Acknowledge the legitimate goal behind the request.** Customers rarely ask for features that are bad ideas in isolation — there's usually a legitimate business goal behind the request. "I understand you want faster responses — that goal makes complete sense given your use case." Acknowledge the goal before challenging the approach.
+
+**Propose an alternative that achieves the goal better.** This is the key move. If your only message is "that won't work," the customer feels blocked. If your message is "the reason that approach produces problems is X, and the way to get to your goal without X is Y," you are a partner, not an obstacle.
+
+**Make the risk explicit and let them decide.** If the customer hears your evidence and still wants to proceed with their approach, make the risk explicit in writing and let them decide: "I want to flag this as a risk in the scope document — implementing X in this way has a high probability of causing Y outcome. I recommend against it for this reason. If you decide to proceed, I will build it, but I want this decision documented so we both know what to expect." Then build what they asked for.
+
+The FDE does not have veto power over customer decisions. The FDE's job is to give the customer the best possible information for making that decision. If they decide differently than you'd recommend, document it and execute.
+
+---
+
+## The 30-60-90 Day Enterprise Onboarding Plan
+
+For complex enterprise AI deployments, structured onboarding dramatically increases adoption and reduces churn. This is the framework used for a new enterprise customer deploying an AI system for the first time.
+
+### Days 1–30: Foundation and First Value
+
+**Week 1 — Deployment and access:**
+- Deploy the system in the customer's environment (or configure cloud access)
+- Provision the first cohort of users (5–10 power users, not the full team)
+- Set up data pipeline from source systems to AI system
+- Establish logging and monitoring baseline
+
+**Week 2–3 — Pilot with power users:**
+- Daily check-in with power users: what works, what doesn't, what's confusing
+- Collect real queries; identify failures; adjust retrieval and prompts
+- Do not optimize for user satisfaction scores yet — optimize for understanding failure modes
+
+**Week 4 — Initial accuracy report:**
+- Score the system against the defined success metrics using real production data
+- Present findings to customer stakeholders: what is working, what is not, why, and what is planned
+- Define the target state for day 60
+
+**Day 30 deliverable:** An accuracy report, a failure analysis, a tuning roadmap for the next 30 days.
+
+### Days 31–60: Expansion and Quality Tuning
+
+**Week 5–6 — Expand user group:**
+- Roll out to a broader cohort (25–50 users)
+- Implement the highest-priority fixes from the day 30 failure analysis
+- Run prompt optimization cycle: collect failure cases, iterate on prompts, measure delta
+
+**Week 7–8 — Integration and workflow embedding:**
+- Integrate AI system into the primary workflow tools (not standalone)
+- Identify and resolve integration edge cases
+- Train team leads on system capabilities and limitations
+
+**Day 60 deliverable:** Expanded user satisfaction data, updated accuracy metrics, tuning changelog.
+
+### Days 61–90: Hardening and Handoff
+
+**Week 9–10 — Production hardening:**
+- Load testing if not done; validate performance under full team load
+- Audit logging and access control review
+- Runbook documentation for common failure modes
+
+**Week 11–12 — Handoff preparation:**
+- Training session for the customer's internal team that will maintain the system
+- Document escalation path for issues beyond the customer team's ability to resolve
+- Define the ongoing monitoring and review cadence
+
+**Day 90 deliverable:** Production readiness assessment, handoff documentation, 90-day retrospective against the original success metrics.
+
+---
+
+## Safe Model Update Rollout Across Enterprise Customers
+
+Updating an AI model in production without breaking customer workflows is one of the highest-stakes operational challenges in an enterprise AI deployment. The failure mode — a model update that changes output behavior in ways the customer's downstream processes don't expect — is silent and often only discovered days after deployment.
+
+### The Rollout Pattern: Shadow → Canary → Gradual → Full
+
+**Phase 1: Shadow mode (1–2 weeks)**
+
+The new model runs in parallel with the production model. Both process every request, but only the production model's outputs are used. Log both outputs. Compare them systematically.
+
+```python
+# Shadow mode routing
+async def process_with_shadow(request: Request, models: ModelRegistry) -> Response:
+    prod_model = models.get("production")
+    shadow_model = models.get("shadow-v2")
+
+    # Run both in parallel
+    prod_response, shadow_response = await asyncio.gather(
+        prod_model.generate(request),
+        shadow_model.generate(request)
+    )
+
+    # Log divergence for analysis
+    divergence = measure_divergence(prod_response, shadow_response)
+    await metrics.log({
+        "request_id": request.id,
+        "prod_output": prod_response.text,
+        "shadow_output": shadow_response.text,
+        "semantic_similarity": divergence.semantic_sim,
+        "structural_diff": divergence.structural_diff,
+        "field_level_diff": divergence.field_diffs  # for structured extraction
+    })
+
+    # Always serve prod during shadow phase
+    return prod_response
+```
+
+**Phase 2: Canary deployment (3–5 days)**
+
+Route 5% of production traffic to the new model. Monitor:
+- Accuracy metrics (if ground truth is available)
+- User satisfaction signals (explicit feedback, escalation rate)
+- Downstream system errors (does the new model's output format break any consumer?)
+- Performance metrics (latency, cost)
+
+Gate criteria for proceeding: canary metrics ≥ production metrics on all tracked dimensions.
+
+**Phase 3: Gradual rollout (1–2 weeks)**
+
+Increase new model traffic: 5% → 20% → 50% → 100%. At each step, compare metrics. Monitor for subtle degradation — a change that looks fine at 5% sometimes reveals edge cases at 20%. Keep rollback capability at every step.
+
+**Phase 4: Cutover and cleanup**
+
+Once at 100%, maintain the previous model as a hot standby for 48 hours. After confirmation that no rollback is needed, decommission the old model.
+
+**Customer communication:**
+- Notify customers before any shadow deployment begins: "We're testing a new model version starting [date]. No change to your experience — we're measuring it in the background."
+- Send a pre-release accuracy comparison report during the shadow phase.
+- Give customers the option to delay rollout if they have a critical period (end of quarter, upcoming audit, etc.).
+
+---
+
+## The "We Tried AI Before and It Failed" Objection
+
+This objection appears frequently in enterprise sales and discovery conversations. It is not a technical objection — it is a trust objection. The customer is not saying "AI doesn't work." They are saying "we got burned before and we need to know why this will be different."
+
+### The Three Failure Modes Behind This Objection
+
+**Failure mode 1: Wrong problem selection.** The previous project chose a problem that was AI-amenable in theory but not in practice given the customer's actual data quality, integration complexity, or accuracy requirement. The AI worked; the problem was wrong.
+
+**Failure mode 2: Insufficient accuracy threshold.** The system was deployed with accuracy that was acceptable in demos but not acceptable to actual users. 80% accuracy sounds impressive; if users make decisions on the output 100 times a day, 20 wrong answers per day is unacceptable in most production contexts.
+
+**Failure mode 3: No adoption.** The system was technically excellent but deployed without involving the users who were supposed to use it. End users found workarounds, stopped using it, and went back to the old process.
+
+### The Response Pattern
+
+"I hear that — tell me more about what happened." Get the specifics. Understand which failure mode it was. This shows you take the history seriously and aren't just steamrolling past it.
+
+"Based on what you're describing, it sounds like the core issue was [failure mode]. The reason that happens is [root cause]. Here's specifically what we do differently: [concrete difference]."
+
+For failure mode 1: "We spend the first week on structured discovery to make sure the problem we're solving has accessible data, a measurable success criterion, and the right accuracy threshold. We would have caught that blocker before committing to a build."
+
+For failure mode 2: "We define accuracy requirements in the scope document before building and measure against them continuously. If accuracy doesn't meet the threshold in the POC, we don't move to production."
+
+For failure mode 3: "We involve end users in the design process from week one, run the pilot with real users before any wide deployment, and measure adoption — not just technical metrics. A technically working system that no one uses is a failed project."
+
+The key: be specific about what's different and why. Generic reassurance ("this time will be different!") makes the skepticism worse. Concrete description of process differences that address the specific failure mode is what actually rebuilds trust.
+
+---
+
 **Q4. A customer signed a contract for a 12-week AI project. You're in week 6 and realize the core technical approach doesn't work for their data — retrieval quality is consistently below 50% accuracy. What do you do?**
 
 ::: {.callout-note collapse="true" title="Model Answer"}
@@ -806,3 +1122,44 @@ If it's not fixable in the remaining time — the data quality is the problem an
 
 The thing I won't do is burn the remaining 6 weeks polishing a system that doesn't work and hope the customer doesn't notice at demo day. They always notice, and the relationship damage from a weak delivery is worse than the damage from an early transparent conversation.
 :::
+
+**Q5. The customer says "the model feels wrong" with no error logs. How do you diagnose it?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+Start by getting specific. "Can you show me three or four outputs that felt wrong and explain why each one didn't meet your expectation?" Vague frustration cannot be diagnosed — specific cases can. Push past the general sentiment.
+
+Then categorize: was the answer factually wrong? Incomplete (answered a narrower version of the question)? Correct but in the wrong tone or format? Or was the confidence calibration off — the model sounded uncertain on things the user knew to be clear?
+
+Before touching the model, check the retrieval layer. Pull the retrieved documents for the failing queries. A large fraction of "model feels wrong" complaints trace to retrieval failures — the model answered correctly given what it was shown, it just wasn't shown the right documents. Questions to answer: did the relevant document exist in the corpus? Was it retrieved in the top-5? If not, why — wrong embedding model for this domain, poor chunk boundaries, metadata filtering error?
+
+If retrieval is fine, look at the prompt and context window. Print the exact prompt for failing cases. Is the system prompt creating constraints that cause the model to avoid the right answer? Is context window truncation cutting off the relevant portion of the document?
+
+Once I have 20–30 specific failing cases, I build a small eval set and score systematically. I present findings to the customer as: here are the 4 root causes I found, here is the prevalence of each, here is my proposed fix for each, and here is how I'll measure whether the fix worked.
+
+The three-question diagnostic: (1) Was the relevant information in the corpus? (2) Was it retrieved? (3) Was it used correctly in generation? Each "no" points to a different fix.
+:::
+
+**Q6. A customer says "we tried AI before and it failed." How do you respond?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+I treat it as a trust objection, not a technical one. "Tell me what happened" — and I genuinely want to know, because understanding the specific failure mode tells me what I need to address.
+
+The three failure modes I look for: wrong problem selection (the problem had a hidden data quality issue or accuracy threshold that wasn't viable), insufficient accuracy threshold (90% accuracy sounds good; 20 wrong answers per day destroys adoption in practice), or no adoption (technically excellent but deployed without end user involvement).
+
+Once I understand which failure mode it was, I address that specific failure directly: "What you're describing sounds like the system worked technically but adoption failed because users weren't involved in the design. Here's specifically what we do differently: we involve end users in week 1 design sessions, run the pilot with real users before any wide deployment, and measure adoption as a first-class metric alongside accuracy."
+
+The key is being specific about what is different and why, not offering generic reassurance. Generic "this time will be different" language makes the skepticism worse. Specific, credible process differences that address the particular failure mode rebuild trust.
+:::
+
+| Question | Level | What it tests |
+|---|---|---|
+| What is discovery and why does it come before architecture? | Entry | Discipline of listening before solving |
+| What are the 5 discovery questions you always ask? | Entry | Structured discovery framework |
+| A customer says "we want AI." Translate into a technical requirement. | Entry | Business-to-technical translation |
+| The model feels wrong with no error logs. How do you diagnose? | Mid | Systematic debugging without obvious signals |
+| Accuracy expectations weren't met post-deployment. What do you do? | Mid | Recovery conversation, root cause discipline |
+| How do you define success metrics before building anything? | Mid | Metric discipline, preventing scope drift |
+| We tried AI before and it failed. How do you respond? | Mid | Trust recovery, failure mode analysis |
+| You're in week 6 and the technical approach doesn't work. What do you do? | Senior | Project recovery, transparent communication |
+| Design a safe model update rollout for enterprise customers. | Senior | Operational engineering, risk management |
+| A customer wants a feature you think is a bad idea. How do you handle it? | Senior | Influence without authority, evidence-based pushback |

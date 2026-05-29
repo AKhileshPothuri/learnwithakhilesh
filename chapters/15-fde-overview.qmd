@@ -261,6 +261,248 @@ The most common tension: the technical champion wants the "right" solution (late
 
 ---
 
+## Pre-Sales vs. Post-Sales FDE Work
+
+FDE work splits into two fundamentally different modes: **pre-sales** (proving value before a contract is signed) and **post-sales** (delivering value after the contract is signed). Many companies use FDEs in both modes, and the skills transfer — but the stakes, incentives, and failure modes differ significantly.
+
+### Pre-Sales FDE Work
+
+In pre-sales, you are demonstrating that a solution is technically feasible and valuable *specifically for this customer*. You are not a sales engineer running a canned demo — you are building a working prototype against the customer's actual data to demonstrate product-market fit at the account level.
+
+**Typical deliverables:** A working POC using the customer's own data, an accuracy report against their specific content domain, an architecture proposal tailored to their infrastructure and compliance requirements.
+
+**The incentive structure:** Deals are competitive. Another vendor is probably running the same POC exercise in parallel. Speed matters — a working demo in week one is worth more than a perfect demo in week three. But overselling in pre-sales creates post-sales problems that are devastating to renewals.
+
+**The critical rule:** Never build a pre-sales demo that you cannot honestly scale into a production system. A POC that only works with hand-selected data, cleaned offline, on a sunny-day scenario destroys the relationship when post-sales implementation reveals the gap.
+
+### Post-Sales FDE Work
+
+Post-sales FDE work is delivery. The customer has committed. Now you must build something that works in their production environment, integrates with their existing systems, survives real user behavior, and can be maintained by their team after you leave.
+
+**Typical deliverables:** A working production system, documentation, runbooks, training sessions for the customer's team, an evaluation report comparing before/after metrics.
+
+**The pressure:** Unlike pre-sales where the relationship is still being formed, post-sales failure happens in front of a paying customer with contractual expectations. Timeline overruns and unmet accuracy targets have direct business consequences: delayed renewals, contract penalties, churn.
+
+**Where post-sales FDEs struggle:** The assumption that what worked in pre-sales will work in production. Data volume is 100× larger. Users submit queries you never anticipated. Integration partners have APIs that behave differently than documented. Build defensively.
+
+| Dimension | Pre-Sales | Post-Sales |
+|---|---|---|
+| Primary goal | Win the deal | Deliver the outcome |
+| Timeline | Days to weeks | Weeks to months |
+| Data | Samples, cleaned | Full production data, raw |
+| Success metric | Customer says "yes" | Customer reports measured improvement |
+| Risk | Overpromising | Under-delivering |
+| Failure mode | Won a deal you can't deliver | Delivered a system that doesn't scale |
+
+---
+
+## How FDEs Collaborate with AEs, Product, and Engineering
+
+FDEs sit at the intersection of go-to-market and product. Understanding the collaboration model prevents the most common relationship failures.
+
+### With Account Executives (AEs)
+
+AEs own the commercial relationship and deal strategy. FDEs own technical credibility and delivery. The collaboration breaks down when:
+
+- **AE over-promises technically:** "We can do anything with AI!" The FDE then has to either build the impossible or reset expectations — both damage the relationship. Solve this by briefing the AE before customer calls on what is technically realistic.
+- **FDE under-communicates commercial context:** An FDE who doesn't know the deal size, competitive dynamics, or what the customer has been promised is building blind. Invest in understanding the AE's deal context.
+- **Misaligned timelines:** The AE commits to a delivery timeline without consulting the FDE. Establish a norm: scope and timeline are FDE-determined with AE input, not AE-decided with FDE compliance.
+
+**The good collaboration:** AE handles pricing, contract mechanics, executive relationship, and competitive positioning. FDE handles technical scoping, delivery, accuracy measurement, and customer engineer relationship. Brief each other before customer calls. Debrief together after.
+
+### With Product
+
+FDEs are often the richest source of customer feedback in the company — they see what customers actually do with the product, not what they say they want. The collaboration model that works:
+
+- **FDE → Product:** Structured feedback on feature gaps, common pain points, integration blockers. Not "the customer wants X" but "in five engagements this quarter, the blocker was Y, because of Z." Patterns matter; individual requests are noise.
+- **Product → FDE:** Early access to unreleased features so FDEs can plan upcoming POCs. Clear guidance on roadmap so FDEs don't accidentally build things the product will handle natively.
+- **Where it breaks:** FDEs who go rogue, building deep custom integrations that assume product will never solve the problem, create legacy systems that become liabilities when the product catches up.
+
+### With Engineering
+
+FDEs often identify bugs, edge cases, and integration failures that internal testing misses. The collaboration model:
+
+- **Bug reports with context:** Not "this is broken" but "in production at a healthcare customer with 10M document corpus, the vector search returns empty results for queries over 500 tokens — reproducible, here's the curl." Reproducible, contextualized bug reports get fixed faster.
+- **Architecture reviews:** For any FDE build that will be handed off to the customer's engineering team or maintained by the core product team, a brief architecture review with an internal engineer prevents "clever FDE solutions" that are impossible to maintain.
+- **Handoff protocols:** When an FDE engagement produces something worth productizing, the FDE is often the best person to brief the engineering team — they have the domain context and the customer relationship context.
+
+---
+
+## Communicating Uncertainty Without Losing Credibility
+
+The most important non-technical skill for an FDE is this: being honest about what you don't know, while not causing the customer to lose confidence in you.
+
+This is harder than it sounds. Every FDE encounters questions they cannot answer with certainty. "Will this work on our documents?" "How accurate will it be?" "Can it handle 500 concurrent users?" The tempting response is false precision ("absolutely, 95% accuracy guaranteed") because uncertainty feels like incompetence. The honest response requires a different kind of confidence.
+
+### The Uncertainty Communication Framework
+
+**Step 1: Acknowledge what you know and what you don't.** "Based on what I've seen in similar document sets, I expect accuracy in the 80–90% range. I can't give you a precise number without running it against your actual data — the right thing to do is measure."
+
+**Step 2: Explain what would resolve the uncertainty.** "The fastest way to get a real number is to run your 200-document sample through the pipeline and score the results manually. I'd suggest we do that in the first week rather than estimating further."
+
+**Step 3: Set a clear next step with a timeline.** "If we can get a representative sample of 200 documents to me by Friday, I can have a preliminary accuracy report by end of next week."
+
+This pattern does three things: it demonstrates that you understand the domain well enough to frame uncertainty honestly, it shows a clear path to resolving it, and it gives the customer something concrete to act on.
+
+### What Destroys Credibility
+
+- **False precision:** "It'll be 94% accurate." When it's 78%, you've lost all trust, and it's very hard to recover.
+- **Refusing to commit:** "I can't say anything until I've analyzed all the data." Customers need directional signals to make decisions.
+- **Changing your answer based on the audience:** Saying something is harder in front of the technical champion and easier in front of the executive. Customers compare notes. Consistency is credibility.
+- **Confusing "I don't know" with "it can't be done."** "I'm not sure about the exact number yet" is fine. "I don't know" as a terminal answer is not — it needs to be followed by "and here's how we find out."
+
+::: {.callout-tip title="The Confidence Positioning Trick"}
+When you don't know an answer, lead with what you *do* know: "What I can tell you is that in similar deployments with documents of this type, retrieval accuracy has ranged from 75% to 92% depending on data quality. What I don't yet know is where your specific documents will land. The fastest way to answer that is a quick pilot run." This shows expertise, honesty, and a clear path forward — all in three sentences.
+:::
+
+---
+
+## How to Handle Being Wrong Gracefully
+
+Every FDE will be wrong in front of a customer. You will estimate accuracy and miss. You will predict a timeline and slip. You will commit to a feature and discover it is harder than expected. How you handle these moments determines whether the customer relationship strengthens or breaks.
+
+### The Wrong-Gracefully Framework
+
+**Own it immediately, without hedging.** "I told you we'd hit 90% accuracy on the extraction task. We're at 76%. That's on me — I underestimated the noise in the OCR layer. Let me explain what I've learned and what I'm doing about it."
+
+The instinct to hedge ("the data was more complex than described," "the OCR vendor's quality was lower than expected") might be technically accurate, but it lands as blame-shifting. Even when external factors contributed, your estimate should have accounted for risk. Own the miss.
+
+**Explain the diagnosis, not the excuse.** After acknowledging the miss, customers want to understand what happened. "The OCR pipeline struggles with tables and mixed-language documents, which make up about 30% of your corpus. My initial estimate assumed clean text input, which was wrong." This shows that you understand the root cause and are not guessing at a fix.
+
+**Propose the correction with a new commitment.** "Here's my revised approach: I'm adding a pre-processing step that detects and handles table-heavy documents separately. My revised estimate for accuracy is 85–88% for text-heavy documents. For the table-heavy subset, I need another two days to evaluate options." Give them a number, a path, and a timeline.
+
+**Track recovery explicitly.** Send a written update — email, Slack, shared doc — summarizing the miss, the root cause, the fix, and the revised timeline. This creates a record that you are managing the problem proactively, rather than hoping it will be forgotten.
+
+::: {.callout-warning title="The Downward Spiral: When Handling Wrongs Creates More Wrongs"}
+FDEs who respond to a miss by over-committing on the next estimate compound the damage. If you were 15% off on accuracy and respond by promising a new accuracy target with no safety margin, you're likely to miss again. Build explicit uncertainty into revised estimates: "I expect 85-90%, with 88% as the midpoint — I'm giving you a range because I know I underestimated variance last time."
+:::
+
+---
+
+## POC vs. Pilot — Definitions and When to Push for Each
+
+These terms are often used interchangeably in customer conversations and should not be. Confusing them creates misaligned expectations that cause real problems.
+
+### Definitions
+
+**Proof of Concept (POC)**
+- **Goal:** Prove that the technical approach is feasible for this customer's problem and data.
+- **Timeline:** Days to two weeks.
+- **Scale:** Small, controlled, hand-picked sample data. Not production systems or volumes.
+- **Success criterion:** The approach demonstrates capability above a threshold. Not "it works reliably for all inputs" — "it works well enough on this sample to justify further investment."
+- **Audience:** Technical stakeholders, product owner. Not end users.
+- **Output:** An accuracy report, a working demo, a scope recommendation.
+
+**Pilot**
+- **Goal:** Validate that the system works in production with real users, real data volumes, and real integration complexity.
+- **Timeline:** Weeks to months.
+- **Scale:** A meaningful subset of production. One team, one office, one workflow. Real data, real users.
+- **Success criterion:** Measurable business outcome against the defined metric. Not "it works" — "it reduced handle time by 35% for the pilot group over 30 days."
+- **Audience:** Business stakeholders, potential users, economic buyer. The pilot generates the evidence for the full rollout decision.
+- **Output:** A measured result, a recommendation to proceed or not, a production readiness assessment.
+
+### When to Push for a POC vs. a Pilot
+
+**Push for POC when:**
+- The customer isn't sure the technical approach will work on their data
+- There is a fundamental feasibility question (accuracy on specialized domain, latency on their infrastructure)
+- The customer wants to compare two different technical approaches
+- You're unsure of the data quality and need to assess before committing to a larger build
+
+**Push for a Pilot when:**
+- Technical feasibility is already established (you've done POCs in this domain before)
+- The customer wants evidence of business impact, not just technical feasibility
+- You're ready to integrate with their production systems and measure against real metrics
+- Stakeholders need a live system to get meaningful user feedback
+
+**The most common mistake:** Jumping from POC directly to full production rollout, skipping the pilot. Customers and FDEs both want to skip the pilot because it feels like a delay. It is not — it is the phase where you catch all the integration edge cases, user behavior surprises, and performance bottlenecks that a POC cannot expose.
+
+---
+
+## Technical Discovery Checklist Before Committing to a POC
+
+Before committing to a POC scope and timeline, answer every item on this checklist. Skipping items produces risk that surfaces at the worst possible moment — mid-build, with a customer watching.
+
+```
+TECHNICAL DISCOVERY CHECKLIST
+
+DATA
+□ Document type(s): What formats? PDF, DOCX, HTML, emails, scanned images?
+□ Volume: How many documents in the corpus? How many pages per document?
+□ Quality: Digitally native or scanned? Are scanned documents OCR-able?
+□ Language: Single language or multilingual? What languages?
+□ Freshness: How often does the corpus change? Daily, monthly, static?
+□ Access: Can we get a representative sample (100–500 docs) before committing to scope?
+□ PII/sensitivity: Does the data contain regulated information (HIPAA, GDPR, trade secrets)?
+
+INFRASTRUCTURE
+□ Where does the data live? (SharePoint, S3, local file system, database)
+□ API access available? Or file export only?
+□ Network restrictions: Can our pipeline reach external APIs (OpenAI, Anthropic)?
+□ Auth requirements: SSO integration needed from day 1?
+□ Compute: Do we deploy to their cloud, our cloud, or on-premise?
+
+SUCCESS CRITERIA
+□ Primary metric defined? (accuracy %, latency ms, hours saved/week)
+□ Baseline established? (current performance of manual or existing automated process)
+□ Evaluation set: Who creates the ground truth? How many examples?
+□ Who approves the metric? Technical champion only, or business stakeholder?
+
+STAKEHOLDERS
+□ Technical champion identified? Will they be available for daily standups?
+□ Data owner confirmed? Who can grant data access without a two-week procurement cycle?
+□ Decision maker confirmed? Who has authority to proceed from POC to pilot?
+□ Other vendors: Are we in competition with another POC running in parallel?
+
+TIMELINE
+□ Customer timeline and deadline identified?
+□ FDE availability for the POC period confirmed?
+□ Does the timeline allow for at least one full iteration cycle (build → show → adjust)?
+```
+
+::: {.callout-warning title="The Two Blockers That Kill POCs Mid-Flight"}
+**Data access delays:** The customer says data is "available" but actually requires IT approval that takes three weeks. Always ask "who do I contact on Monday to get access to the sample data — and is that a decision they can make, or does it require IT approval?" Add data access timeline as an explicit dependency in your scope doc.
+
+**Moving success criteria:** The customer redefines "success" after seeing the first demo. "90% was the goal, but we really need 95% if it's going to replace the manual process." Prevent this with a written success criteria document, confirmed by the decision-maker, before you start building.
+:::
+
+---
+
+## The Broken Demo Scenario
+
+At some point in your FDE career, something will go wrong during a live demo. The API will be rate-limited. The vector DB will return empty results. The LLM will produce a spectacularly wrong answer on the very document the customer's CFO is watching. How you handle it determines whether the relationship survives.
+
+### The Framework: Calm, Own, Redirect
+
+**Calm:** Panic is contagious. If you visibly panic, the customer panics. Breathe. Pause. Say "let me just check that quickly" in a steady voice. You have a few seconds before the silence becomes alarming.
+
+**Own:** Don't blame the infrastructure, the API provider, or the data. "It looks like we've hit a rate limit on the API — that happens in demo environments where we're sharing capacity with other teams. Let me switch to the backup environment." This acknowledges the problem without making it feel like a fundamental system failure.
+
+**Redirect:** Have a fallback. Before any important demo, prepare:
+- **Screenshots of happy-path outputs** — if live breaks, you can show what it looks like working
+- **A local or offline backup** — a pre-run result stored in a file you can display if the live API fails
+- **A "let me show you the underlying logic" pivot** — if the demo fails entirely, switch to a whiteboard/architecture walkthrough that keeps the conversation moving
+
+### The Playbook for Common Demo Failures
+
+**API timeout / rate limit:**
+"We're hitting a rate limit in the shared demo environment — let me quickly switch to the dedicated environment. While that loads, let me show you what the output looks like for this document type." [Show pre-run screenshot.] "Back up — let me run this live."
+
+**Model produces a wrong/hallucinated answer:**
+"Interesting — let me dig into why the model answered that way." [Treat it as a teaching moment, not a crisis.] "This is actually a useful example of the kind of case where we'd want human review. In production, queries like this one would be flagged with a low confidence score and routed to the review queue." This pivots the failure into a demonstration of your system's quality controls.
+
+**Vector search returns empty results:**
+"The index looks like it didn't pick up that document — this is likely a configuration issue on my end from setting up the demo environment. Let me run a simpler query that I know works, and I'll dig into the document-specific issue after the call." Move on quickly.
+
+**Complete failure / can't recover:**
+"The demo environment is behaving unexpectedly — I'm not going to waste your time debugging it live. What I'd like to do is walk through the architecture and show you the results I prepared from an earlier run, then I'll set up a clean demo environment and record a walkthrough for you to review before our next call." This is better than 20 minutes of live debugging.
+
+::: {.callout-tip title="The Pre-Demo Ritual"}
+Before any customer demo: test the exact demo flow on the exact environment you'll use, two hours before the call. Not the day before — two hours before. APIs change. Rate limits reset differently. Indexes can go stale. The two-hour gap is short enough to catch problems and long enough to fix them. Keep a copy of 5–10 pre-run outputs saved locally that you can display if live fails.
+:::
+
+---
+
 ## The FDE Interview Format and What Interviewers Test
 
 FDE interviews are distinctive from standard engineering interviews in their emphasis on applied judgment, communication, and customer scenario reasoning. Technical questions exist, but they are almost always embedded in a customer context.
@@ -470,6 +712,68 @@ I frame all of this not as "the POC is not good enough" but as "the POC validate
 
 > **Common Mistake:** Underestimating the production gap to avoid an awkward conversation. Customers who hear "we're close to production" and then discover a three-month production engineering effort lose trust in ways that are very hard to recover from.
 :::
+
+:::
+
+---
+
+### Additional Senior-Level Questions
+
+**Q10. What's the difference between a POC and a pilot, and when would you push a customer toward each?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+A POC proves technical feasibility on controlled, representative data — small scale, short timeline, question is "can this work." A pilot proves business impact in production conditions — real users, real data volumes, real integration complexity, question is "does this deliver the outcome we expected."
+
+I push for a POC when the customer has a genuine feasibility question: they don't know if AI can work on their specific data type or domain, or they want to compare two technical approaches before committing. The output of a POC is a go/no-go decision on the approach.
+
+I push for a pilot when technical feasibility is established — either from prior work in the same domain or from a completed POC — and the remaining question is business impact. The pilot needs to measure against a real baseline metric with real users for 30–90 days.
+
+The most dangerous thing is skipping the pilot. Customers and FDEs both want to go from POC to full production rollout because the pilot feels like unnecessary delay. What the pilot actually does: catch all the integration surprises, user behavior edge cases, and scale bottlenecks that a POC cannot expose. I've seen systems that performed at 91% accuracy in a POC drop to 74% in production because the production data was messier than the POC sample. The pilot is where you catch that before you've committed to a company-wide rollout.
+:::
+
+**Q11. A live demo goes wrong in front of the customer's VP. Walk me through what you do.**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The first thing I do is stay visibly calm. Panic is contagious. If I visibly panic, the customer does too. I take a breath, acknowledge the issue briefly ("it looks like we've hit a rate limit in the demo environment"), and immediately move to a prepared fallback.
+
+Before any important demo, I prepare: pre-run screenshots of the happy-path outputs, a local backup of results I can display offline, and a whiteboard architecture walkthrough I can pivot to if the demo fails entirely. So when something breaks, I'm not improvising — I'm executing a pre-planned fallback.
+
+In the moment: "Let me show you the output from our test run earlier this week while I get the live environment back up." I show the pre-run result, explain what it demonstrates, and use the time productively rather than doing live debugging with an audience watching.
+
+If the model produces a wrong answer rather than a technical failure: "Interesting — this is actually a useful example of a case where we'd want the human review queue." I turn the failure into a demonstration of quality controls. The model was wrong; the system caught it. That's a feature, not a bug.
+
+The complete failure case: "The demo environment is behaving unexpectedly. I'm not going to waste your time debugging it live — let me walk you through the architecture and the results from our test run, and I'll send you a recorded walkthrough before our next call." That's better than 20 minutes of visible debugging in front of a VP.
+
+The worst response: apologizing repeatedly, spending 10 minutes trying to fix it live, or blaming the infrastructure. What the VP is actually evaluating in this moment is: does this engineer handle adversity gracefully? The answer should be yes.
+:::
+
+**Q12. How do you communicate a technical risk to a customer without causing them to cancel the engagement?**
+
+::: {.callout-note collapse="true" title="Model Answer"}
+The structure I use: acknowledge the risk → explain the root cause → frame the impact → propose mitigation → give them a decision.
+
+Not: "The OCR quality is bad. This is going to be a problem."
+Instead: "I've identified something important in the data assessment. About 30% of your document corpus uses a non-standard table format that our OCR pipeline doesn't handle reliably. That subset will have significantly lower extraction accuracy — around 60% versus 90% for standard documents. The mitigation options are: we scope the POC to the 70% that is clean, which we can deliver on the original timeline; or we invest an extra two weeks on a specialized table extraction path that handles the problem subset. My recommendation is option one — deliver high accuracy on the majority, then address the specialist case in phase two. But you should decide."
+
+This approach does several things: it demonstrates that I found the problem before it found us (early warning = competence), it frames the decision clearly instead of creating uncertainty, and it gives the customer agency. Customers who feel like they're making informed decisions stay engaged. Customers who feel like they're being managed get defensive.
+
+The common mistake: hiding or minimizing risks to avoid a difficult conversation. When those risks surface mid-build, the customer feels deceived — not about the risk, but about the fact that you knew and didn't tell them. That's harder to recover from than "we identified a problem and have a plan."
+:::
+
+| Question | Level | What it tests |
+|---|---|---|
+| What's the difference between an FDE and a Sales Engineer? | Entry | Role clarity, self-awareness |
+| How do you prepare for your first discovery call with a new customer? | Entry | Discovery discipline, listening vs. selling |
+| What makes a GenAI solution production-ready vs. a POC? | Entry | Technical maturity, scope management |
+| How do you balance building the ideal solution vs. what can ship in 4 weeks? | Mid | Pragmatic judgment, customer focus |
+| Walk me through your first 5 discovery questions. | Mid | Structured discovery, problem diagnosis |
+| You discover the customer's data quality is far worse than described. What do you do? | Mid | Communication under pressure, recovery |
+| A customer wants to "add AI to everything." How do you guide this productively? | Senior | Scoping judgment, expectation management |
+| The technical champion loves your solution but the exec sponsor is skeptical about ROI. | Senior | Stakeholder management, business framing |
+| You've shipped a POC. The customer says "scale it to production." What do you tell them? | Senior | Gap analysis, honest scope setting |
+| What's the difference between a POC and a pilot? When do you push for each? | Senior | Engagement arc mastery |
+| A live demo goes wrong in front of a VP. What do you do? | Senior | Composure, incident recovery |
+| How do you communicate a technical risk without causing the customer to cancel? | Senior | Uncertainty communication |
 
 :::
 
