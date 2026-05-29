@@ -1,0 +1,2008 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.6.43">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="A depth-first interview preparation guide covering Generative AI foundations, large language models, fine-tuning, GenAI systems architecture, and a dedicated track for Forward Deployed Engineers.">
+
+<title>46&nbsp; Behavioral Interviews for FDE and Customer-Facing ML Roles – GenAI Interview Prep</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../chapters/appendix-ml-fundamentals.html" rel="next">
+<link href="../chapters/40-code-debugging.html" rel="prev">
+<script src="../site_libs/quarto-html/quarto.js"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-7fd0fe4245b865325b8ce8dccb604d59.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-dc95f10abd972b9c41a78ec8992004fc.css" rel="prefetch" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-04bc575f89faf340fc94b0c88c7e85b4.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-91082a74a24b3055b43235ad390c692f.min.css" rel="prefetch" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+</head>
+
+<body class="nav-sidebar docked nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">GenAI Interview Prep</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/AKhileshPothuri/learnwithakhilesh"> <i class="bi bi-github" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+    <a href="https://github.com/AKhileshPothuri/learnwithakhilesh" title="Source Code" class="quarto-navigation-tool px-1" aria-label="Source Code"><i class="bi bi-github"></i></a>
+  <a href="" class="quarto-color-scheme-toggle quarto-navigation-tool  px-1" onclick="window.quartoToggleColorScheme(); return false;" title="Toggle dark mode"><i class="bi"></i></a>
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/39-incident-debugging.html">Part XI — Debugging &amp; Behavioral</a></li><li class="breadcrumb-item"><a href="../chapters/41-fde-behavioral.html"><span class="chapter-number">46</span>&nbsp; <span class="chapter-title">Behavioral Interviews for FDE and Customer-Facing ML Roles</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation docked overflow-auto">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Preface</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part 0 — Classical ML Foundations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-01-bias-variance.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">Bias-Variance Tradeoff &amp; Regularization</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-02-model-selection.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">Model Selection: Which Model to Use When</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-03-supervised-learning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">Classical Supervised Learning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-04-unsupervised-features-eval.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Unsupervised Learning, Evaluation Metrics &amp; Feature Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/ml-05-optimization-stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Optimization, Training Dynamics &amp; Probability for ML</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part I — Foundations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/01-intro.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Introduction to Generative AI</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/02-neural-networks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Neural Networks — From Perceptrons to Transformers</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/03-transformers.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">The Transformer Architecture</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part II — Large Language Models</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/04-llm-pretraining.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">LLM Pre-Training — Data, Scale, and Paradigms</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/05-embeddings.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Embeddings — Dense Representations of Meaning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/06-inference.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">LLM Inference &amp; Decoding Strategies</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part III — Adapting &amp; Aligning LLMs</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/07-prompting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">Prompt Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/08-finetuning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Fine-Tuning LLMs</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/09-peft-lora.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">PEFT, LoRA &amp; QLoRA</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/10-rlhf-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">RLHF &amp; Alignment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IV — GenAI Systems &amp; Architecture</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/11-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Retrieval-Augmented Generation (RAG)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/12-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">LLM Agents &amp; Tool Use</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/13-evaluation.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">LLM Evaluation — Measuring What Matters</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/14-deployment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">LLM Deployment &amp; Optimization</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part V — Forward Deployed Engineer Track</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/15-fde-overview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">The Forward Deployed Engineer Role</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/16-customer-scenarios.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Customer Discovery &amp; Scenarios</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/17-integration.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Enterprise AI Integration</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/18-safety-production.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">LLM Safety in Production</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VI — Modern Architectures &amp; Efficiency</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/19-moe.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Mixture of Experts (MoE)</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/20-ssm-mamba.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">State Space Models: Mamba &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/21-long-context.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">Long Context &amp; Efficient Attention</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/22-speculative-decoding.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Speculative Decoding</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/33-distributed-training.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Distributed Training: Parallelism &amp; Scale</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/34-vector-databases.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Vector Databases Deep Dive</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VII — Reasoning &amp; Multimodal</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/23-reasoning-models.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Reasoning Models &amp; Test-Time Compute</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/24-multimodal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">Multimodal AI: Vision, Audio &amp; Video</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/25-diffusion.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Diffusion Models &amp; Generative Vision</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VIII — Advanced Training &amp; Alignment</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/26-modern-alignment.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">Modern Alignment: DPO Variants, GRPO &amp; Beyond</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/27-synthetic-data.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">34</span>&nbsp; <span class="chapter-title">Synthetic Data for LLM Training</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IX — Advanced Production Systems</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/28-advanced-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">35</span>&nbsp; <span class="chapter-title">Advanced RAG Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/29-advanced-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">36</span>&nbsp; <span class="chapter-title">Advanced Agents: MCP, Computer Use &amp; GUI Agents</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/30-prompt-optimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">37</span>&nbsp; <span class="chapter-title">Automated Prompt Optimization</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/31-interpretability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">38</span>&nbsp; <span class="chapter-title">LLM Interpretability</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/32-observability.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">39</span>&nbsp; <span class="chapter-title">LLM Observability &amp; Production Monitoring</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part X — Interview Practicum</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-11" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-11" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/35-system-design.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">40</span>&nbsp; <span class="chapter-title">LLM System Design for Interviews</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/36-tokenization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">41</span>&nbsp; <span class="chapter-title">Tokenization Deep Dive</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/37-model-merging.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">42</span>&nbsp; <span class="chapter-title">Model Merging: Task Arithmetic, SLERP, TIES, DARE &amp; WARP</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/38-coding-interview.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">43</span>&nbsp; <span class="chapter-title">LLM Coding Interview: Implementing Core Concepts</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part XI — Debugging &amp; Behavioral</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-12" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-12" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/39-incident-debugging.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">44</span>&nbsp; <span class="chapter-title">Debugging Production AI Systems — Incident Logs &amp; Root Cause Analysis</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/40-code-debugging.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">45</span>&nbsp; <span class="chapter-title">Live Code Debugging — ML Pipeline Bugs</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/41-fde-behavioral.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">46</span>&nbsp; <span class="chapter-title">Behavioral Interviews for FDE and Customer-Facing ML Roles</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-13" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-13" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-13" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/appendix-ml-fundamentals.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">ML Fundamentals Refresher</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#behavioral-interviews-for-fde-and-customer-facing-ml-roles" id="toc-behavioral-interviews-for-fde-and-customer-facing-ml-roles" class="nav-link active" data-scroll-target="#behavioral-interviews-for-fde-and-customer-facing-ml-roles"><span class="header-section-number">47</span> Behavioral Interviews for FDE and Customer-Facing ML Roles</a>
+  <ul class="collapse">
+  <li><a href="#why-fde-behavioral-interviews-are-different" id="toc-why-fde-behavioral-interviews-are-different" class="nav-link" data-scroll-target="#why-fde-behavioral-interviews-are-different"><span class="header-section-number">47.1</span> Why FDE Behavioral Interviews Are Different</a></li>
+  <li><a href="#the-five-story-framework" id="toc-the-five-story-framework" class="nav-link" data-scroll-target="#the-five-story-framework"><span class="header-section-number">47.2</span> The Five-Story Framework</a></li>
+  <li><a href="#star-third-act" id="toc-star-third-act" class="nav-link" data-scroll-target="#star-third-act"><span class="header-section-number">47.3</span> STAR + Third Act</a></li>
+  <li><a href="#the-15-high-frequency-questions" id="toc-the-15-high-frequency-questions" class="nav-link" data-scroll-target="#the-15-high-frequency-questions"><span class="header-section-number">47.4</span> The 15 High-Frequency Questions</a>
+  <ul class="collapse">
+  <li><a href="#q1.-tell-me-about-a-time-a-customer-was-unhappy-with-your-teams-output." id="toc-q1.-tell-me-about-a-time-a-customer-was-unhappy-with-your-teams-output." class="nav-link" data-scroll-target="#q1.-tell-me-about-a-time-a-customer-was-unhappy-with-your-teams-output."><span class="header-section-number">47.4.1</span> Q1. Tell me about a time a customer was unhappy with your team’s output.</a></li>
+  <li><a href="#q2.-describe-a-time-you-had-to-explain-a-technical-limitation-to-a-non-technical-stakeholder." id="toc-q2.-describe-a-time-you-had-to-explain-a-technical-limitation-to-a-non-technical-stakeholder." class="nav-link" data-scroll-target="#q2.-describe-a-time-you-had-to-explain-a-technical-limitation-to-a-non-technical-stakeholder."><span class="header-section-number">47.4.2</span> Q2. Describe a time you had to explain a technical limitation to a non-technical stakeholder.</a></li>
+  <li><a href="#q3.-tell-me-about-a-time-you-pushed-back-on-a-customer-request." id="toc-q3.-tell-me-about-a-time-you-pushed-back-on-a-customer-request." class="nav-link" data-scroll-target="#q3.-tell-me-about-a-time-you-pushed-back-on-a-customer-request."><span class="header-section-number">47.4.3</span> Q3. Tell me about a time you pushed back on a customer request.</a></li>
+  <li><a href="#q4.-tell-me-about-a-time-you-had-to-learn-something-quickly-under-pressure." id="toc-q4.-tell-me-about-a-time-you-had-to-learn-something-quickly-under-pressure." class="nav-link" data-scroll-target="#q4.-tell-me-about-a-time-you-had-to-learn-something-quickly-under-pressure."><span class="header-section-number">47.4.4</span> Q4. Tell me about a time you had to learn something quickly under pressure.</a></li>
+  <li><a href="#q5.-describe-a-situation-where-you-disagreed-with-a-teammates-technical-approach." id="toc-q5.-describe-a-situation-where-you-disagreed-with-a-teammates-technical-approach." class="nav-link" data-scroll-target="#q5.-describe-a-situation-where-you-disagreed-with-a-teammates-technical-approach."><span class="header-section-number">47.4.5</span> Q5. Describe a situation where you disagreed with a teammate’s technical approach.</a></li>
+  <li><a href="#q6.-tell-me-about-a-time-you-made-a-mistake-that-affected-a-customer." id="toc-q6.-tell-me-about-a-time-you-made-a-mistake-that-affected-a-customer." class="nav-link" data-scroll-target="#q6.-tell-me-about-a-time-you-made-a-mistake-that-affected-a-customer."><span class="header-section-number">47.4.6</span> Q6. Tell me about a time you made a mistake that affected a customer.</a></li>
+  <li><a href="#q7.-tell-me-about-a-time-you-had-to-manage-competing-priorities." id="toc-q7.-tell-me-about-a-time-you-had-to-manage-competing-priorities." class="nav-link" data-scroll-target="#q7.-tell-me-about-a-time-you-had-to-manage-competing-priorities."><span class="header-section-number">47.4.7</span> Q7. Tell me about a time you had to manage competing priorities.</a></li>
+  <li><a href="#q8.-tell-me-about-a-time-you-influenced-a-decision-without-having-formal-authority." id="toc-q8.-tell-me-about-a-time-you-influenced-a-decision-without-having-formal-authority." class="nav-link" data-scroll-target="#q8.-tell-me-about-a-time-you-influenced-a-decision-without-having-formal-authority."><span class="header-section-number">47.4.8</span> Q8. Tell me about a time you influenced a decision without having formal authority.</a></li>
+  <li><a href="#q9.-describe-a-time-you-dealt-with-an-ambiguous-problem-where-the-requirements-were-unclear." id="toc-q9.-describe-a-time-you-dealt-with-an-ambiguous-problem-where-the-requirements-were-unclear." class="nav-link" data-scroll-target="#q9.-describe-a-time-you-dealt-with-an-ambiguous-problem-where-the-requirements-were-unclear."><span class="header-section-number">47.4.9</span> Q9. Describe a time you dealt with an ambiguous problem where the requirements were unclear.</a></li>
+  <li><a href="#q10.-tell-me-about-a-time-you-had-to-deliver-bad-news-to-a-customer." id="toc-q10.-tell-me-about-a-time-you-had-to-deliver-bad-news-to-a-customer." class="nav-link" data-scroll-target="#q10.-tell-me-about-a-time-you-had-to-deliver-bad-news-to-a-customer."><span class="header-section-number">47.4.10</span> Q10. Tell me about a time you had to deliver bad news to a customer.</a></li>
+  <li><a href="#q11.-tell-me-about-a-time-you-went-above-and-beyond-for-a-customer." id="toc-q11.-tell-me-about-a-time-you-went-above-and-beyond-for-a-customer." class="nav-link" data-scroll-target="#q11.-tell-me-about-a-time-you-went-above-and-beyond-for-a-customer."><span class="header-section-number">47.4.11</span> Q11. Tell me about a time you went above and beyond for a customer.</a></li>
+  <li><a href="#q12.-tell-me-about-a-time-you-had-to-set-boundaries-on-scope." id="toc-q12.-tell-me-about-a-time-you-had-to-set-boundaries-on-scope." class="nav-link" data-scroll-target="#q12.-tell-me-about-a-time-you-had-to-set-boundaries-on-scope."><span class="header-section-number">47.4.12</span> Q12. Tell me about a time you had to set boundaries on scope.</a></li>
+  <li><a href="#q13.-describe-a-time-when-two-stakeholders-had-conflicting-requirements." id="toc-q13.-describe-a-time-when-two-stakeholders-had-conflicting-requirements." class="nav-link" data-scroll-target="#q13.-describe-a-time-when-two-stakeholders-had-conflicting-requirements."><span class="header-section-number">47.4.13</span> Q13. Describe a time when two stakeholders had conflicting requirements.</a></li>
+  <li><a href="#q14.-tell-me-about-a-time-you-had-to-quickly-build-trust-with-a-new-customer." id="toc-q14.-tell-me-about-a-time-you-had-to-quickly-build-trust-with-a-new-customer." class="nav-link" data-scroll-target="#q14.-tell-me-about-a-time-you-had-to-quickly-build-trust-with-a-new-customer."><span class="header-section-number">47.4.14</span> Q14. Tell me about a time you had to quickly build trust with a new customer.</a></li>
+  <li><a href="#q15.-tell-me-about-your-most-technically-complex-customer-engagement." id="toc-q15.-tell-me-about-your-most-technically-complex-customer-engagement." class="nav-link" data-scroll-target="#q15.-tell-me-about-your-most-technically-complex-customer-engagement."><span class="header-section-number">47.4.15</span> Q15. Tell me about your most technically complex customer engagement.</a></li>
+  </ul></li>
+  <li><a href="#question-reference-table" id="toc-question-reference-table" class="nav-link" data-scroll-target="#question-reference-table"><span class="header-section-number">47.5</span> Question Reference Table</a></li>
+  <li><a href="#preparation-checklist" id="toc-preparation-checklist" class="nav-link" data-scroll-target="#preparation-checklist"><span class="header-section-number">47.6</span> Preparation Checklist</a></li>
+  </ul></li>
+  </ul>
+<div class="toc-actions"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/41-fde-behavioral.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/39-incident-debugging.html">Part XI — Debugging &amp; Behavioral</a></li><li class="breadcrumb-item"><a href="../chapters/41-fde-behavioral.html"><span class="chapter-number">46</span>&nbsp; <span class="chapter-title">Behavioral Interviews for FDE and Customer-Facing ML Roles</span></a></li></ol></nav>
+<div class="quarto-title">
+<div class="quarto-title-block"><div><h1 class="title"><span class="chapter-number">46</span>&nbsp; <span class="chapter-title">Behavioral Interviews for FDE and Customer-Facing ML Roles</span></h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="behavioral-interviews-for-fde-and-customer-facing-ml-roles" class="level1" data-number="47">
+<h1 data-number="47"><span class="header-section-number">47</span> Behavioral Interviews for FDE and Customer-Facing ML Roles</h1>
+<p>Behavioral interviews for Forward Deployed Engineer roles are not the same as behavioral interviews for pure engineering roles. The questions look similar on the surface — “tell me about a time you handled a conflict” — but interviewers are probing for a different combination of skills: <strong>technical depth under pressure, customer empathy, commercial awareness, and the ability to influence without authority</strong>.</p>
+<p>This chapter provides the framework, 15 high-frequency questions, and complete STAR answers — all generic and applicable to any ML deployment context.</p>
+<section id="why-fde-behavioral-interviews-are-different" class="level2" data-number="47.1">
+<h2 data-number="47.1" class="anchored" data-anchor-id="why-fde-behavioral-interviews-are-different"><span class="header-section-number">47.1</span> Why FDE Behavioral Interviews Are Different</h2>
+<p>A backend engineer’s behavioral interview tests whether they can collaborate and communicate. An FDE’s behavioral interview tests whether they can do that <strong>in front of a customer, under deadline, with incomplete information, when the stakes include a contract renewal</strong>.</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 19%">
+<col style="width: 37%">
+<col style="width: 42%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dimension</th>
+<th>Standard Engineering</th>
+<th>FDE/Customer-Facing ML</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Communication audience</td>
+<td>Internal team</td>
+<td>External customers, executives</td>
+</tr>
+<tr class="even">
+<td>Conflict context</td>
+<td>Sprint planning, code review</td>
+<td>Customer expectations, contract scope</td>
+</tr>
+<tr class="odd">
+<td>Failure stakes</td>
+<td>Technical debt</td>
+<td>Customer churn, reputational damage</td>
+</tr>
+<tr class="even">
+<td>Ambiguity type</td>
+<td>Requirements</td>
+<td>Business goals, success metrics</td>
+</tr>
+<tr class="odd">
+<td>Influence without authority</td>
+<td>Across teams</td>
+<td>Across companies</td>
+</tr>
+</tbody>
+</table>
+<p>Interviewers are looking for: - <strong>Composure:</strong> Did you stay calm and professional when the customer was wrong or upset? - <strong>Root cause thinking:</strong> Did you find the actual problem or just fix the symptom? - <strong>Commercial awareness:</strong> Did you protect the business relationship while solving the technical problem? - <strong>Learning:</strong> What changed in how you work as a result of this experience?</p>
+</section>
+<section id="the-five-story-framework" class="level2" data-number="47.2">
+<h2 data-number="47.2" class="anchored" data-anchor-id="the-five-story-framework"><span class="header-section-number">47.2</span> The Five-Story Framework</h2>
+<p>Prepare five core stories that can flex across multiple question types. Each story should contain:</p>
+<ol type="1">
+<li><strong>A technical problem</strong> you owned end-to-end</li>
+<li><strong>A people challenge</strong> (disagreement, miscommunication, escalation)</li>
+<li><strong>A commercial or business dimension</strong> (timeline, scope, cost, churn risk)</li>
+<li><strong>A moment of ambiguity</strong> where you had to act without complete information</li>
+<li><strong>A concrete outcome</strong> with a number or before/after comparison</li>
+</ol>
+<p>Five stories × five dimensions gives you 25 angles. Most behavioral questions ask you to emphasize one dimension — you pick which story fits best.</p>
+</section>
+<section id="star-third-act" class="level2" data-number="47.3">
+<h2 data-number="47.3" class="anchored" data-anchor-id="star-third-act"><span class="header-section-number">47.3</span> STAR + Third Act</h2>
+<p>Standard STAR (Situation, Task, Action, Result) is necessary but not sufficient for FDE roles. Add a <strong>Third Act</strong>:</p>
+<pre><code>SITUATION  — What was happening? Who were the stakeholders?
+TASK       — What were you specifically responsible for?
+ACTION     — What did you do? (Make this 60% of the answer. Be specific.)
+RESULT     — What was the outcome? (Quantify if possible.)
+THIRD ACT  — What did you learn? How did it change how you work?</code></pre>
+<p>The Third Act is where senior candidates separate themselves. It signals intellectual honesty (you can admit what you got wrong) and growth (the lesson is already applied to future work).</p>
+<div class="callout callout-style-default callout-tip callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Tip
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>The Third Act Rule</strong></p>
+<p>If your STAR answer has no third act, it sounds like a closed case. With a third act, it sounds like you are the kind of person who improves systems — not just fixes incidents.</p>
+</div>
+</div>
+<hr>
+</section>
+<section id="the-15-high-frequency-questions" class="level2" data-number="47.4">
+<h2 data-number="47.4" class="anchored" data-anchor-id="the-15-high-frequency-questions"><span class="header-section-number">47.4</span> The 15 High-Frequency Questions</h2>
+<section id="q1.-tell-me-about-a-time-a-customer-was-unhappy-with-your-teams-output." class="level3" data-number="47.4.1">
+<h3 data-number="47.4.1" class="anchored" data-anchor-id="q1.-tell-me-about-a-time-a-customer-was-unhappy-with-your-teams-output."><span class="header-section-number">47.4.1</span> Q1. Tell me about a time a customer was unhappy with your team’s output.</h3>
+<p><strong>Situation:</strong> We had delivered the first iteration of an automated document classification system to an enterprise customer. Their operations lead reviewed the results and said the system “felt unreliable” — they couldn’t use it in their workflow.</p>
+<p><strong>Task:</strong> I was the primary technical contact. I needed to understand whether this was a perception problem (customer didn’t trust what they couldn’t see) or a real quality problem (the model was actually wrong).</p>
+<p><strong>Action:</strong> I scheduled a working session with their operations lead and two reviewers. Before the meeting, I pulled a random sample of 50 predictions and labeled them myself — this gave me ground truth without bias. In the meeting, I walked through each prediction: the input, what the model decided, and why (feature weights and confidence score). The reviewers disagreed with 8 of 50. I categorized the 8 disagreements: 5 were borderline cases where a human would also be uncertain, 2 were genuine model errors on a specific document subtype, and 1 was actually correct but the reviewer had applied the wrong policy.</p>
+<p>I acknowledged the 2 genuine errors immediately, explained the subtype gap, and proposed adding 200 labeled examples of that subtype in the next two-week iteration. For the borderline cases, I showed the confidence score distribution — anything below 0.75 could be routed to human review.</p>
+<p><strong>Result:</strong> The customer agreed to continue. After the two-week iteration with the additional examples, accuracy on that subtype improved from 71% to 89%. The confidence-based routing reduced human review volume by 63% from the baseline. They expanded the deployment three months later.</p>
+<p><strong>Third Act:</strong> I stopped waiting for customers to surface dissatisfaction. Now I run proactive sample reviews at week 2 and week 6 of every deployment. By the time a customer says something “feels wrong,” the data has usually been telling you for two weeks.</p>
+<hr>
+</section>
+<section id="q2.-describe-a-time-you-had-to-explain-a-technical-limitation-to-a-non-technical-stakeholder." class="level3" data-number="47.4.2">
+<h3 data-number="47.4.2" class="anchored" data-anchor-id="q2.-describe-a-time-you-had-to-explain-a-technical-limitation-to-a-non-technical-stakeholder."><span class="header-section-number">47.4.2</span> Q2. Describe a time you had to explain a technical limitation to a non-technical stakeholder.</h3>
+<p><strong>Situation:</strong> During a pilot, an executive asked why the AI system couldn’t “just read the whole document and understand what it means” — they wanted free-form summarization, but the system was built for extraction of specific structured fields.</p>
+<p><strong>Task:</strong> I needed to explain the boundary without making the system sound limited — and without making the executive feel dismissed.</p>
+<p><strong>Action:</strong> I used an analogy: “Our system is like a highly trained specialist — it reads thousands of these documents per day and extracts exactly the fields your downstream process needs, with very high precision. A generalist summarizer is like a smart intern who can describe what they read — but the description varies, and your ERP system can’t consume free-text.” I then asked what they actually needed the summary for. It turned out they wanted a one-sentence routing label for a separate workflow — which was actually an extraction task, not summarization. I pulled up the field schema and showed them we could add a “routing_category” field in the next iteration with about two days of labeling effort.</p>
+<p><strong>Result:</strong> The executive left the conversation asking for a scoped addition, not a platform rethink. The routing category field was added in the next sprint. It also surfaced that two other downstream teams needed the same field — expanding the business case.</p>
+<p><strong>Third Act:</strong> Executives often describe a solution when they mean a need. Now I always ask “what decision does this enable?” before scoping a technical request. This has surfaced misaligned requirements in three out of four cases since then.</p>
+<hr>
+</section>
+<section id="q3.-tell-me-about-a-time-you-pushed-back-on-a-customer-request." class="level3" data-number="47.4.3">
+<h3 data-number="47.4.3" class="anchored" data-anchor-id="q3.-tell-me-about-a-time-you-pushed-back-on-a-customer-request."><span class="header-section-number">47.4.3</span> Q3. Tell me about a time you pushed back on a customer request.</h3>
+<p><strong>Situation:</strong> A customer requested that we remove all confidence thresholds from the system and serve every prediction, regardless of score, to reduce the human review queue. They said the queue was blocking their team.</p>
+<p><strong>Task:</strong> I was responsible for both the technical implementation and the customer relationship. I needed to decide whether to comply, push back, or find a third option.</p>
+<p><strong>Action:</strong> I acknowledged their problem first — a backed-up review queue is a real operational pain. Then I pulled the data: predictions below our 0.65 confidence threshold had a 31% error rate, versus 4% above the threshold. Removing the threshold would triple their error rate in production. I showed them this breakdown in a three-minute screen share.</p>
+<p>Then I reframed the problem: the issue wasn’t the threshold, it was queue throughput. I proposed two alternatives — a tiered routing model where low-confidence predictions went to a lighter review form, and a batch processing mode for lower-stakes document types that could bypass review entirely. I also offered to audit the review queue backlog to identify whether it was driven by overall volume or concentrated in one document type.</p>
+<p><strong>Result:</strong> The customer chose the tiered routing option. The audit revealed 40% of the backlog was one document type with consistently high model confidence — we removed it from the review queue entirely. Overall queue depth dropped 58% within two weeks without changing the threshold.</p>
+<p><strong>Third Act:</strong> I almost complied the first time because I wanted to be responsive. Now I have a rule: when a customer asks me to change a quality gate, I first show them the impact on error rates before discussing options. Data makes the conversation easier.</p>
+<hr>
+</section>
+<section id="q4.-tell-me-about-a-time-you-had-to-learn-something-quickly-under-pressure." class="level3" data-number="47.4.4">
+<h3 data-number="47.4.4" class="anchored" data-anchor-id="q4.-tell-me-about-a-time-you-had-to-learn-something-quickly-under-pressure."><span class="header-section-number">47.4.4</span> Q4. Tell me about a time you had to learn something quickly under pressure.</h3>
+<p><strong>Situation:</strong> A customer escalated an issue during a go-live week — their legal team had flagged that all predictions needed a full audit trail: what data was used, what model version, and what the confidence score was at decision time. This was not in the original requirements and the existing system did not capture model versioning.</p>
+<p><strong>Task:</strong> I had 48 hours before go-live to implement a logging solution. I had not worked with the specific audit database schema they required (a regulatory format I hadn’t used before).</p>
+<p><strong>Action:</strong> I spent the first two hours reading the schema specification and identifying the 4 fields I actually needed. Then I scoped the smallest possible change: add a structured log entry at prediction time that captured model version, feature hash, confidence score, and timestamp. I used the existing logging infrastructure rather than building a new pipeline — this kept the blast radius small.</p>
+<p>I wrote the implementation in four hours, including tests. I asked a colleague to review it while I briefed the customer on the approach, setting the expectation that this was an MVP audit log, not a full audit dashboard — the full UI would come in a follow-up sprint.</p>
+<p><strong>Result:</strong> The implementation was deployed in 29 hours. Legal reviewed the log format and accepted it. Go-live happened on schedule.</p>
+<p><strong>Third Act:</strong> I now include an “audit and compliance requirements” question in every discovery call. Requirements like these almost always exist but rarely surface until someone panics. Asking early converts a crisis into a sprint.</p>
+<hr>
+</section>
+<section id="q5.-describe-a-situation-where-you-disagreed-with-a-teammates-technical-approach." class="level3" data-number="47.4.5">
+<h3 data-number="47.4.5" class="anchored" data-anchor-id="q5.-describe-a-situation-where-you-disagreed-with-a-teammates-technical-approach."><span class="header-section-number">47.4.5</span> Q5. Describe a situation where you disagreed with a teammate’s technical approach.</h3>
+<p><strong>Situation:</strong> During a system design review, a teammate proposed fine-tuning the base model on the customer’s domain data before deployment. I thought the data volume (800 labeled examples) was too low and that fine-tuning would overfit and hurt generalization.</p>
+<p><strong>Task:</strong> I needed to either get alignment or escalate — we had a one-week deadline to agree on the architecture.</p>
+<p><strong>Action:</strong> I proposed a structured experiment instead of a debate. We would run three approaches on a held-out test set: zero-shot (baseline), few-shot prompting with the 800 examples, and fine-tuned. I estimated 2 days of work. My teammate agreed. After running the experiment, fine-tuning on 800 examples achieved 79% accuracy, few-shot prompting achieved 83%, and the baseline was 74%. The data confirmed my concern while also showing that my teammate’s instinct to use domain data was right — just via prompting, not fine-tuning.</p>
+<p><strong>Result:</strong> We shipped with few-shot prompting. We also documented the 800 examples in a format that would support fine-tuning later if the dataset grew to 5K+ examples. No escalation required.</p>
+<p><strong>Third Act:</strong> I default to experiments over arguments now. Most technical disagreements are empirically resolvable, especially in ML where the performance difference is measurable. “Let’s test both” has ended more debates for me than any amount of theoretical reasoning.</p>
+<hr>
+</section>
+<section id="q6.-tell-me-about-a-time-you-made-a-mistake-that-affected-a-customer." class="level3" data-number="47.4.6">
+<h3 data-number="47.4.6" class="anchored" data-anchor-id="q6.-tell-me-about-a-time-you-made-a-mistake-that-affected-a-customer."><span class="header-section-number">47.4.6</span> Q6. Tell me about a time you made a mistake that affected a customer.</h3>
+<p><strong>Situation:</strong> I deployed a configuration change to a production pipeline to fix a performance issue. The change inadvertently modified the document chunking overlap parameter, which reduced retrieval recall on long documents. I didn’t notice for three days.</p>
+<p><strong>Task:</strong> The customer had been silently getting degraded results. I needed to fix the issue, communicate honestly, and rebuild confidence.</p>
+<p><strong>Action:</strong> As soon as I identified the cause, I reverted the parameter and deployed within 30 minutes. Then I called the customer — I didn’t email, because this needed a conversation. I explained exactly what changed, when it changed, how long it had been degraded, and which document types were most affected. I had already queried their feedback logs and found 12 cases during those three days where users had flagged incomplete answers — I showed them this evidence alongside my diagnosis. I offered to re-run any queries from that window through the restored system.</p>
+<p><strong>Result:</strong> The customer appreciated the transparency. They re-ran six queries, all returned to expected quality. We updated the deployment checklist to include a post-deploy recall spot check on long documents.</p>
+<p><strong>Third Act:</strong> I added automated regression tests for recall@10 on a fixed golden query set — run automatically after every config change. This catches the class of regression I missed. Being proactively transparent when you’ve made a mistake is almost always better than waiting for the customer to surface it.</p>
+<hr>
+</section>
+<section id="q7.-tell-me-about-a-time-you-had-to-manage-competing-priorities." class="level3" data-number="47.4.7">
+<h3 data-number="47.4.7" class="anchored" data-anchor-id="q7.-tell-me-about-a-time-you-had-to-manage-competing-priorities."><span class="header-section-number">47.4.7</span> Q7. Tell me about a time you had to manage competing priorities.</h3>
+<p><strong>Situation:</strong> I was simultaneously managing the final week of a go-live for one customer and the discovery phase for a new customer whose technical evaluation needed to be completed within the same two-week window.</p>
+<p><strong>Task:</strong> Both were high visibility. I had to deliver both without dropping quality.</p>
+<p><strong>Action:</strong> I created explicit time-boxing: mornings (9am-1pm) were blocked for the go-live customer — this was the highest-stakes work. Afternoons were the new customer discovery. I communicated this structure to both customers upfront, giving each a specific point-of-contact window, so they knew when to expect responses.</p>
+<p>For the go-live, I identified the three critical-path items and delegated the remaining five items to teammates with clear specs. For discovery, I front-loaded the data and infrastructure questions in the first week so the second week could focus on modeling and integration design.</p>
+<p><strong>Result:</strong> The go-live shipped on schedule with no severity-1 issues. The technical evaluation was completed on day 12 of the 14-day window, giving the new customer two days to review before a decision meeting.</p>
+<p><strong>Third Act:</strong> I learned that context-switching is the enemy, not workload. Explicit time-boxing and transparent communication of availability windows reduced the cognitive load and kept both customers confident. I now default to this structure when managing multiple concurrent engagements.</p>
+<hr>
+</section>
+<section id="q8.-tell-me-about-a-time-you-influenced-a-decision-without-having-formal-authority." class="level3" data-number="47.4.8">
+<h3 data-number="47.4.8" class="anchored" data-anchor-id="q8.-tell-me-about-a-time-you-influenced-a-decision-without-having-formal-authority."><span class="header-section-number">47.4.8</span> Q8. Tell me about a time you influenced a decision without having formal authority.</h3>
+<p><strong>Situation:</strong> The product roadmap included a feature a key customer had requested: bulk re-labeling of past predictions when a model is updated. I believed the implementation approach being planned (re-running the model on all historical records synchronously) would cause a 4-hour service outage for other customers.</p>
+<p><strong>Task:</strong> I was not the decision-maker. I needed to change the implementation plan without being the person who owned the roadmap.</p>
+<p><strong>Action:</strong> I wrote a one-page technical brief: the proposed approach, the projected impact (4-hour outage affecting 6 customers), and two alternative implementations — an async background job with progress tracking, and a lazy-recompute approach triggered by the next access. I included rough engineering estimates for all three options.</p>
+<p>I shared this with the product manager and the engineering lead as “thoughts before we finalize the design.” I framed it as “I want to make sure we’ve considered the customer impact before committing” — not “this plan is wrong.” The PM hadn’t thought through the downtime impact because it wasn’t obvious from the feature spec.</p>
+<p><strong>Result:</strong> The async background job approach was adopted. Implementation took one extra day of engineering. The feature shipped with no service impact.</p>
+<p><strong>Third Act:</strong> Framing matters as much as the technical content. “Here’s a risk I want to make sure we’ve considered” lands very differently than “this plan is wrong.” I lead with the concern, not the conclusion, and let the data make the argument.</p>
+<hr>
+</section>
+<section id="q9.-describe-a-time-you-dealt-with-an-ambiguous-problem-where-the-requirements-were-unclear." class="level3" data-number="47.4.9">
+<h3 data-number="47.4.9" class="anchored" data-anchor-id="q9.-describe-a-time-you-dealt-with-an-ambiguous-problem-where-the-requirements-were-unclear."><span class="header-section-number">47.4.9</span> Q9. Describe a time you dealt with an ambiguous problem where the requirements were unclear.</h3>
+<p><strong>Situation:</strong> A customer asked us to build a system that would “flag unusual activity” in their document streams. No further definition was provided. The business owner who made the request was not available for follow-up for two weeks.</p>
+<p><strong>Task:</strong> I needed to make progress without waiting two weeks, while not building the wrong thing.</p>
+<p><strong>Action:</strong> I broke “unusual” into three hypotheses: (1) statistical outliers in document structure (unusual length, field count, format), (2) content anomalies (topics the model had not seen before), (3) process anomalies (documents from unusual sources, times, or senders). I built a lightweight version of each — one day of work each — and scheduled a demo for when the business owner returned.</p>
+<p>I also interviewed the operations team in the interim. They had a concrete example of the “unusual” they cared about — documents that bypassed the standard intake queue. This was hypothesis 3. The first two hypotheses were technically more interesting but not what they needed.</p>
+<p><strong>Result:</strong> The demo confirmed the operations team’s interpretation. We shipped a narrow process anomaly detector in two weeks. The other two hypotheses were documented as future features, which the customer eventually prioritized six months later.</p>
+<p><strong>Third Act:</strong> When requirements are ambiguous, parallel prototyping is more useful than waiting for clarity. Three small experiments give you a conversation tool — the customer can react to something concrete rather than trying to articulate a requirement in the abstract.</p>
+<hr>
+</section>
+<section id="q10.-tell-me-about-a-time-you-had-to-deliver-bad-news-to-a-customer." class="level3" data-number="47.4.10">
+<h3 data-number="47.4.10" class="anchored" data-anchor-id="q10.-tell-me-about-a-time-you-had-to-deliver-bad-news-to-a-customer."><span class="header-section-number">47.4.10</span> Q10. Tell me about a time you had to deliver bad news to a customer.</h3>
+<p><strong>Situation:</strong> Three weeks before a committed go-live date, we identified that one of the core use cases — real-time classification of incoming documents within 200ms — was not achievable with the current architecture. The model inference time alone was 180-220ms on the customer’s document sizes, leaving no headroom for any pipeline overhead.</p>
+<p><strong>Task:</strong> I had to tell the customer that either the deadline or the latency requirement had to change — and I had to do it before they had already built downstream integrations that assumed 200ms.</p>
+<p><strong>Action:</strong> I called the customer’s technical lead the day we confirmed the issue — I did not wait for a scheduled sync. I walked through the diagnosis: model size, inference time measurements, network overhead budget. I presented three concrete paths: (1) accept 350ms latency with current architecture, (2) hit 200ms by switching to a smaller model with slightly lower accuracy (I had the accuracy numbers), (3) use async processing with a webhook callback, which had no latency constraint but required downstream integration changes.</p>
+<p>I was explicit that option 1 was the no-change path and would miss the SLA, but I presented all three as genuine options — not a recommendation to abandon the requirement.</p>
+<p><strong>Result:</strong> The customer chose option 3. Their downstream system was not actually latency-sensitive — the 200ms requirement had been inherited from an older spec that predated the current workflow. The async path was actually better for their architecture. Go-live happened on the original date.</p>
+<p><strong>Third Act:</strong> Latency requirements often come from documents that were written before the actual workflow existed. Now I validate every SLA by asking “what breaks if you’re 50% slower?” Often the answer is “nothing” — the requirement is inherited, not real. This has prevented two similar near-misses since.</p>
+<hr>
+</section>
+<section id="q11.-tell-me-about-a-time-you-went-above-and-beyond-for-a-customer." class="level3" data-number="47.4.11">
+<h3 data-number="47.4.11" class="anchored" data-anchor-id="q11.-tell-me-about-a-time-you-went-above-and-beyond-for-a-customer."><span class="header-section-number">47.4.11</span> Q11. Tell me about a time you went above and beyond for a customer.</h3>
+<p><strong>Situation:</strong> A customer was preparing for a board review of the AI deployment and asked for a summary of results. Their success metrics had been informally tracked — no formal reporting infrastructure existed.</p>
+<p><strong>Task:</strong> This was not in scope. But a good result at the board review would directly influence continued investment in the platform.</p>
+<p><strong>Action:</strong> I spent a weekend building a one-page executive summary: before/after processing time, error rate reduction, cost per document comparison, and projected annual savings based on their volume. I sourced the numbers from their system logs (with their permission) and cross-checked against their original success criteria from the kickoff. I also included two quotes from their operations staff who had been early adopters — I’d collected these informally during weekly syncs.</p>
+<p>I sent the draft to their project lead on Sunday night so they had Monday to review and adjust.</p>
+<p><strong>Result:</strong> The board approved a follow-on phase with expanded scope. The project lead specifically mentioned the executive summary as a factor in the presentation’s success.</p>
+<p><strong>Third Act:</strong> The relationship between technical delivery and commercial success is not automatic — someone has to translate the technical results into business language. I now treat the customer’s internal advocacy as part of my job, not an extra. The best technical outcome is worthless if the sponsor can’t communicate it up the chain.</p>
+<hr>
+</section>
+<section id="q12.-tell-me-about-a-time-you-had-to-set-boundaries-on-scope." class="level3" data-number="47.4.12">
+<h3 data-number="47.4.12" class="anchored" data-anchor-id="q12.-tell-me-about-a-time-you-had-to-set-boundaries-on-scope."><span class="header-section-number">47.4.12</span> Q12. Tell me about a time you had to set boundaries on scope.</h3>
+<p><strong>Situation:</strong> Mid-pilot, a customer began sending requests for features outside the agreed scope: custom reporting, a mobile interface, integration with a third system that wasn’t in the original design. Each request was reasonable individually, but collectively they represented 6 additional weeks of work.</p>
+<p><strong>Task:</strong> I needed to protect the original delivery commitment without damaging the relationship.</p>
+<p><strong>Action:</strong> I acknowledged each request in writing, captured them all in a shared backlog document, and scheduled a scope review. In the review, I explained the trade-off explicitly: adding these features before go-live would push the date by 6 weeks. Alternatively, we could go live with the original scope on schedule and work through the backlog in a post-launch phase.</p>
+<p>I also showed the customer what they would lose by delaying: 6 weeks of production data, which would actually make the backlog features better (the reporting would be richer, the integration more informed).</p>
+<p><strong>Result:</strong> The customer chose on-schedule go-live. The backlog became the roadmap for the next three-month engagement, which they extended the contract for. Ironically, two of the originally requested features turned out to be unnecessary once they were in production.</p>
+<p><strong>Third Act:</strong> Scope creep is usually not bad faith — it is enthusiasm. The customer is excited about the system and is imagining all the things it could do. Channeling that enthusiasm into a structured backlog turns scope risk into a sales pipeline.</p>
+<hr>
+</section>
+<section id="q13.-describe-a-time-when-two-stakeholders-had-conflicting-requirements." class="level3" data-number="47.4.13">
+<h3 data-number="47.4.13" class="anchored" data-anchor-id="q13.-describe-a-time-when-two-stakeholders-had-conflicting-requirements."><span class="header-section-number">47.4.13</span> Q13. Describe a time when two stakeholders had conflicting requirements.</h3>
+<p><strong>Situation:</strong> The operations lead at a customer wanted the AI system to flag any prediction below 90% confidence for human review. The IT lead wanted to minimize review queue volume to reduce headcount cost. A 90% confidence threshold would send 34% of predictions to review; IT was targeting under 10%.</p>
+<p><strong>Task:</strong> I was stuck in the middle. Both stakeholders had legitimate positions, and I was their shared technical resource.</p>
+<p><strong>Action:</strong> I first verified the numbers: I pulled the prediction confidence distribution and the error rate by confidence band. At 90% threshold, 34% would be reviewed, and the error rate in the below-threshold bucket was 18%. At a threshold that yielded 10% review volume, the error rate was 8% — still higher than operations was comfortable with, but the actual error count was lower due to lower volume.</p>
+<p>I then facilitated a meeting with both stakeholders. I presented the data as a shared fact base, not my recommendation. The key insight: the disagreement was about absolute error rate (operations) versus error count (IT). Once they saw both framings, they could have a productive conversation. They agreed on a tiered approach: high-stakes document types at 85% threshold (operations’ priority), standard types at 70% (IT’s priority).</p>
+<p><strong>Result:</strong> The tiered threshold reduced overall review volume by 41% while keeping error rates on high-stakes documents at 4%. Both stakeholders signed off.</p>
+<p><strong>Third Act:</strong> Stakeholder conflicts are often framing conflicts. Making the trade-off visible in a shared data view — instead of arguing positions — almost always moves the conversation forward. I now build a “decision matrix” view whenever I know stakeholders have different success criteria.</p>
+<hr>
+</section>
+<section id="q14.-tell-me-about-a-time-you-had-to-quickly-build-trust-with-a-new-customer." class="level3" data-number="47.4.14">
+<h3 data-number="47.4.14" class="anchored" data-anchor-id="q14.-tell-me-about-a-time-you-had-to-quickly-build-trust-with-a-new-customer."><span class="header-section-number">47.4.14</span> Q14. Tell me about a time you had to quickly build trust with a new customer.</h3>
+<p><strong>Situation:</strong> I inherited a customer relationship mid-pilot after the previous engineer left the company. The customer had already experienced one deadline slip and had concerns about continuity.</p>
+<p><strong>Task:</strong> I had two weeks to establish credibility before a milestone review.</p>
+<p><strong>Action:</strong> In the first 48 hours, I did three things: read every email, doc, and Slack thread from the previous three months; scheduled a 30-minute call with the customer’s technical lead to listen (not present); and sent a written summary of my understanding of the current state and open items within 24 hours of that call.</p>
+<p>On the call, I asked: “What has frustrated you most about this engagement so far?” and “What would make this milestone review a success for you?” Both questions required genuine listening — I didn’t prepare answers, I took notes.</p>
+<p>The technical lead said two things: they felt updates were reactive (they had to ask for status), and they weren’t sure the original scope was still the right scope after what they’d learned in the pilot. I addressed both: I set up a weekly written update (sent Monday morning, no meeting required) and I proposed a half-day scope review session before the milestone.</p>
+<p><strong>Result:</strong> The milestone review was the best one in the engagement. The scope review surfaced three changes that made the final product significantly more useful. The customer renewed for a follow-on phase.</p>
+<p><strong>Third Act:</strong> Trust is rebuilt through follow-through on small things before you get the chance to deliver on big things. A weekly written status update that arrives when you said it would arrive is worth more than a brilliant technical solution delivered late and without communication.</p>
+<hr>
+</section>
+<section id="q15.-tell-me-about-your-most-technically-complex-customer-engagement." class="level3" data-number="47.4.15">
+<h3 data-number="47.4.15" class="anchored" data-anchor-id="q15.-tell-me-about-your-most-technically-complex-customer-engagement."><span class="header-section-number">47.4.15</span> Q15. Tell me about your most technically complex customer engagement.</h3>
+<p><strong>Situation:</strong> A customer needed to unify document classification across three legacy systems, each with different schemas, different label taxonomies, and 7 years of historical data with no consistency in labeling conventions. They had attempted this internally twice before and abandoned it.</p>
+<p><strong>Task:</strong> I was responsible for both the technical design and the customer relationship. There was no prior template for this problem.</p>
+<p><strong>Action:</strong> I broke the problem into three phases. Phase 0 (two weeks): audit the three schemas, sample 500 documents from each system, manually label a subset to understand actual distribution. This revealed that 60% of documents across all three systems fell into 8 common categories — the divergence was in the long tail and in naming conventions, not in actual content types.</p>
+<p>Phase 1 (four weeks): build a unified taxonomy mapping with config-driven aliases (so “Invoice”, “INV”, “invoice_document” all mapped to the same canonical class). Train a single classifier on the merged training set, stratified by source system. Test accuracy by source system separately — not just overall.</p>
+<p>Phase 2 (two weeks): shadow deployment against all three systems simultaneously, comparing model output to historical human decisions. Present disagreement cases to the customer for adjudication — this both validated the model and updated the unified taxonomy.</p>
+<p><strong>Result:</strong> The classifier achieved 88% accuracy across all three systems — better than any single-system model the customer had run before. The config-driven taxonomy mapping became reusable infrastructure for three subsequent customer engagements.</p>
+<p><strong>Third Act:</strong> The biggest risk in legacy system integrations is starting to build before you understand what the data actually looks like — not what it’s supposed to look like. The two-week audit phase saved six weeks of rework. I now require a data audit before any legacy integration project.</p>
+<hr>
+</section>
+</section>
+<section id="question-reference-table" class="level2" data-number="47.5">
+<h2 data-number="47.5" class="anchored" data-anchor-id="question-reference-table"><span class="header-section-number">47.5</span> Question Reference Table</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 20%">
+<col style="width: 34%">
+<col style="width: 44%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Question</th>
+<th>Dimension Tested</th>
+<th>Primary Story Element</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Q1: Customer unhappy with output</td>
+<td>Customer relationship + technical diagnosis</td>
+<td>Proactive quality review</td>
+</tr>
+<tr class="even">
+<td>Q2: Explaining technical limitations</td>
+<td>Communication + customer empathy</td>
+<td>Analogy + needs reframing</td>
+</tr>
+<tr class="odd">
+<td>Q3: Pushing back on a request</td>
+<td>Commercial awareness + data-driven</td>
+<td>Data before alternatives</td>
+</tr>
+<tr class="even">
+<td>Q4: Learning quickly under pressure</td>
+<td>Adaptability + delivery</td>
+<td>Scope down, ship fast</td>
+</tr>
+<tr class="odd">
+<td>Q5: Disagreeing with a teammate</td>
+<td>Collaboration + intellectual honesty</td>
+<td>Structured experiment</td>
+</tr>
+<tr class="even">
+<td>Q6: Mistake affecting a customer</td>
+<td>Accountability + trust</td>
+<td>Proactive transparency</td>
+</tr>
+<tr class="odd">
+<td>Q7: Competing priorities</td>
+<td>Execution + time management</td>
+<td>Time-boxing + delegation</td>
+</tr>
+<tr class="even">
+<td>Q8: Influencing without authority</td>
+<td>Leadership + communication</td>
+<td>Risk framing, not blame</td>
+</tr>
+<tr class="odd">
+<td>Q9: Ambiguous requirements</td>
+<td>Ambiguity + proactivity</td>
+<td>Parallel prototyping</td>
+</tr>
+<tr class="even">
+<td>Q10: Delivering bad news</td>
+<td>Honesty + problem-solving</td>
+<td>Options, not bad news alone</td>
+</tr>
+<tr class="odd">
+<td>Q11: Going above and beyond</td>
+<td>Customer advocacy</td>
+<td>Technical-to-business translation</td>
+</tr>
+<tr class="even">
+<td>Q12: Setting scope boundaries</td>
+<td>Commercial awareness + relationship</td>
+<td>Backlog as sales pipeline</td>
+</tr>
+<tr class="odd">
+<td>Q13: Conflicting stakeholders</td>
+<td>Facilitation + data framing</td>
+<td>Shared decision matrix</td>
+</tr>
+<tr class="even">
+<td>Q14: Building trust quickly</td>
+<td>Relationship + follow-through</td>
+<td>Small commitments, kept fast</td>
+</tr>
+<tr class="odd">
+<td>Q15: Most complex engagement</td>
+<td>Technical depth + structure</td>
+<td>Phase 0 audit discipline</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+<section id="preparation-checklist" class="level2" data-number="47.6">
+<h2 data-number="47.6" class="anchored" data-anchor-id="preparation-checklist"><span class="header-section-number">47.6</span> Preparation Checklist</h2>
+<p>Before your interview, have written answers for:</p>
+<ul class="task-list">
+<li><label><input type="checkbox">Your five core stories (one per dimension in the five-story framework)</label></li>
+<li><label><input type="checkbox">At least two stories where you made a mistake or failed</label></li>
+<li><label><input type="checkbox">At least one story where you influenced a decision without authority</label></li>
+<li><label><input type="checkbox">At least one story about a difficult customer interaction</label></li>
+<li><label><input type="checkbox">Quantified results for every story (%, time saved, revenue impact, churn prevented)</label></li>
+</ul>
+<p>During the interview:</p>
+<ul class="task-list">
+<li><label><input type="checkbox">Lead with context (30 seconds) before diving into action</label></li>
+<li><label><input type="checkbox">Use “I” not “we” — interviewers want to know what you specifically did</label></li>
+<li><label><input type="checkbox">Include the third act — what changed in how you work as a result?</label></li>
+<li><label><input type="checkbox">If the story is longer than 3 minutes, pause and ask if they want more detail</label></li>
+</ul>
+<div class="callout callout-style-default callout-warning callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Warning
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Common Behavioral Interview Mistakes for FDE Roles</strong></p>
+<ul>
+<li>Describing what the team did without specifying your individual contribution</li>
+<li>Presenting only successes — interviewers expect and value failures with learning</li>
+<li>Omitting the customer’s perspective — FDE stories without customer context sound like standard engineering stories</li>
+<li>Forgetting the business outcome — “accuracy improved” is incomplete; “accuracy improvement reduced customer churn by X%” is an FDE answer</li>
+</ul>
+</div>
+</div>
+
+
+<!-- -->
+
+</section>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const disableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'prefetch';
+    }
+  }
+  const enableStylesheet = (stylesheets) => {
+    for (let i=0; i < stylesheets.length; i++) {
+      const stylesheet = stylesheets[i];
+      stylesheet.rel = 'stylesheet';
+    }
+  }
+  const manageTransitions = (selector, allowTransitions) => {
+    const els = window.document.querySelectorAll(selector);
+    for (let i=0; i < els.length; i++) {
+      const el = els[i];
+      if (allowTransitions) {
+        el.classList.remove('notransition');
+      } else {
+        el.classList.add('notransition');
+      }
+    }
+  }
+  const toggleGiscusIfUsed = (isAlternate, darkModeDefault) => {
+    const baseTheme = document.querySelector('#giscus-base-theme')?.value ?? 'light';
+    const alternateTheme = document.querySelector('#giscus-alt-theme')?.value ?? 'dark';
+    let newTheme = '';
+    if(darkModeDefault) {
+      newTheme = isAlternate ? baseTheme : alternateTheme;
+    } else {
+      newTheme = isAlternate ? alternateTheme : baseTheme;
+    }
+    const changeGiscusTheme = () => {
+      // From: https://github.com/giscus/giscus/issues/336
+      const sendMessage = (message) => {
+        const iframe = document.querySelector('iframe.giscus-frame');
+        if (!iframe) return;
+        iframe.contentWindow.postMessage({ giscus: message }, 'https://giscus.app');
+      }
+      sendMessage({
+        setConfig: {
+          theme: newTheme
+        }
+      });
+    }
+    const isGiscussLoaded = window.document.querySelector('iframe.giscus-frame') !== null;
+    if (isGiscussLoaded) {
+      changeGiscusTheme();
+    }
+  }
+  const toggleColorMode = (alternate) => {
+    // Switch the stylesheets
+    const alternateStylesheets = window.document.querySelectorAll('link.quarto-color-scheme.quarto-color-alternate');
+    manageTransitions('#quarto-margin-sidebar .nav-link', false);
+    if (alternate) {
+      enableStylesheet(alternateStylesheets);
+      for (const sheetNode of alternateStylesheets) {
+        if (sheetNode.id === "quarto-bootstrap") {
+          toggleBodyColorMode(sheetNode);
+        }
+      }
+    } else {
+      disableStylesheet(alternateStylesheets);
+      toggleBodyColorPrimary();
+    }
+    manageTransitions('#quarto-margin-sidebar .nav-link', true);
+    // Switch the toggles
+    const toggles = window.document.querySelectorAll('.quarto-color-scheme-toggle');
+    for (let i=0; i < toggles.length; i++) {
+      const toggle = toggles[i];
+      if (toggle) {
+        if (alternate) {
+          toggle.classList.add("alternate");     
+        } else {
+          toggle.classList.remove("alternate");
+        }
+      }
+    }
+    // Hack to workaround the fact that safari doesn't
+    // properly recolor the scrollbar when toggling (#1455)
+    if (navigator.userAgent.indexOf('Safari') > 0 && navigator.userAgent.indexOf('Chrome') == -1) {
+      manageTransitions("body", false);
+      window.scrollTo(0, 1);
+      setTimeout(() => {
+        window.scrollTo(0, 0);
+        manageTransitions("body", true);
+      }, 40);  
+    }
+  }
+  const isFileUrl = () => { 
+    return window.location.protocol === 'file:';
+  }
+  const hasAlternateSentinel = () => {  
+    let styleSentinel = getColorSchemeSentinel();
+    if (styleSentinel !== null) {
+      return styleSentinel === "alternate";
+    } else {
+      return false;
+    }
+  }
+  const setStyleSentinel = (alternate) => {
+    const value = alternate ? "alternate" : "default";
+    if (!isFileUrl()) {
+      window.localStorage.setItem("quarto-color-scheme", value);
+    } else {
+      localAlternateSentinel = value;
+    }
+  }
+  const getColorSchemeSentinel = () => {
+    if (!isFileUrl()) {
+      const storageValue = window.localStorage.getItem("quarto-color-scheme");
+      return storageValue != null ? storageValue : localAlternateSentinel;
+    } else {
+      return localAlternateSentinel;
+    }
+  }
+  const darkModeDefault = false;
+  let localAlternateSentinel = darkModeDefault ? 'alternate' : 'default';
+  // Dark / light mode switch
+  window.quartoToggleColorScheme = () => {
+    // Read the current dark / light value 
+    let toAlternate = !hasAlternateSentinel();
+    toggleColorMode(toAlternate);
+    setStyleSentinel(toAlternate);
+    toggleGiscusIfUsed(toAlternate, darkModeDefault);
+  };
+  // Ensure there is a toggle, if there isn't float one in the top right
+  if (window.document.querySelector('.quarto-color-scheme-toggle') === null) {
+    const a = window.document.createElement('a');
+    a.classList.add('top-right');
+    a.classList.add('quarto-color-scheme-toggle');
+    a.href = "";
+    a.onclick = function() { try { window.quartoToggleColorScheme(); } catch {} return false; };
+    const i = window.document.createElement("i");
+    i.classList.add('bi');
+    a.appendChild(i);
+    window.document.body.appendChild(a);
+  }
+  // Switch to dark mode if need be
+  if (hasAlternateSentinel()) {
+    toggleColorMode(true);
+  } else {
+    toggleColorMode(false);
+  }
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const onCopySuccess = function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  }
+  const getTextToCopy = function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+    text: getTextToCopy
+  });
+  clipboard.on('success', onCopySuccess);
+  if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+    const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+      text: getTextToCopy,
+      container: window.document.getElementById('quarto-embedded-source-code-modal')
+    });
+    clipboardModal.on('success', onCopySuccess);
+  }
+  const viewSource = window.document.getElementById('quarto-view-source') ||
+                     window.document.getElementById('quarto-code-tools-source');
+  if (viewSource) {
+    const sourceUrl = viewSource.getAttribute("data-quarto-source-url");
+    viewSource.addEventListener("click", function(e) {
+      if (sourceUrl) {
+        // rstudio viewer pane
+        if (/\bcapabilities=\b/.test(window.location)) {
+          window.open(sourceUrl);
+        } else {
+          window.location.href = sourceUrl;
+        }
+      } else {
+        const modal = new bootstrap.Modal(document.getElementById('quarto-embedded-source-code-modal'));
+        modal.show();
+      }
+      return false;
+    });
+  }
+  function toggleCodeHandler(show) {
+    return function(e) {
+      const detailsSrc = window.document.querySelectorAll(".cell > details > .sourceCode");
+      for (let i=0; i<detailsSrc.length; i++) {
+        const details = detailsSrc[i].parentElement;
+        if (show) {
+          details.open = true;
+        } else {
+          details.removeAttribute("open");
+        }
+      }
+      const cellCodeDivs = window.document.querySelectorAll(".cell > .sourceCode");
+      const fromCls = show ? "hidden" : "unhidden";
+      const toCls = show ? "unhidden" : "hidden";
+      for (let i=0; i<cellCodeDivs.length; i++) {
+        const codeDiv = cellCodeDivs[i];
+        if (codeDiv.classList.contains(fromCls)) {
+          codeDiv.classList.remove(fromCls);
+          codeDiv.classList.add(toCls);
+        } 
+      }
+      return false;
+    }
+  }
+  const hideAllCode = window.document.getElementById("quarto-hide-all-code");
+  if (hideAllCode) {
+    hideAllCode.addEventListener("click", toggleCodeHandler(false));
+  }
+  const showAllCode = window.document.getElementById("quarto-show-all-code");
+  if (showAllCode) {
+    showAllCode.addEventListener("click", toggleCodeHandler(true));
+  }
+    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+    var mailtoRegex = new RegExp(/^mailto:/);
+      var filterRegex = new RegExp("https:\/\/akhileshpothuri\.github\.io\/learnwithakhilesh");
+    var isInternal = (href) => {
+        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+    }
+    // Inspect non-navigation links and adorn them if external
+ 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+    for (var i=0; i<links.length; i++) {
+      const link = links[i];
+      if (!isInternal(link.href)) {
+        // undo the damage that might have been done by quarto-nav.js in the case of
+        // links that we want to consider external
+        if (link.dataset.originalHref !== undefined) {
+          link.href = link.dataset.originalHref;
+        }
+      }
+    }
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      if (note) {
+        return note.innerHTML;
+      } else {
+        return "";
+      }
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../chapters/40-code-debugging.html" class="pagination-link" aria-label="Live Code Debugging — ML Pipeline Bugs">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">45</span>&nbsp; <span class="chapter-title">Live Code Debugging — ML Pipeline Bugs</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../chapters/appendix-ml-fundamentals.html" class="pagination-link" aria-label="ML Fundamentals Refresher">
+        <span class="nav-page-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">ML Fundamentals Refresher</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
+<div class="sourceCode" id="cb2" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="an">title:</span><span class="co"> "Behavioral Interviews for FDE and Customer-Facing ML Roles"</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="fu"># Behavioral Interviews for FDE and Customer-Facing ML Roles</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>Behavioral interviews for Forward Deployed Engineer roles are not the same as behavioral interviews for pure engineering roles. The questions look similar on the surface — "tell me about a time you handled a conflict" — but interviewers are probing for a different combination of skills: **technical depth under pressure, customer empathy, commercial awareness, and the ability to influence without authority**.</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>This chapter provides the framework, 15 high-frequency questions, and complete STAR answers — all generic and applicable to any ML deployment context.</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="fu">## Why FDE Behavioral Interviews Are Different</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>A backend engineer's behavioral interview tests whether they can collaborate and communicate. An FDE's behavioral interview tests whether they can do that **in front of a customer, under deadline, with incomplete information, when the stakes include a contract renewal**.</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>| Dimension | Standard Engineering | FDE/Customer-Facing ML |</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>|-----------|---------------------|------------------------|</span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>| Communication audience | Internal team | External customers, executives |</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a>| Conflict context | Sprint planning, code review | Customer expectations, contract scope |</span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>| Failure stakes | Technical debt | Customer churn, reputational damage |</span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>| Ambiguity type | Requirements | Business goals, success metrics |</span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>| Influence without authority | Across teams | Across companies |</span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>Interviewers are looking for:</span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Composure:** Did you stay calm and professional when the customer was wrong or upset?</span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Root cause thinking:** Did you find the actual problem or just fix the symptom?</span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Commercial awareness:** Did you protect the business relationship while solving the technical problem?</span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Learning:** What changed in how you work as a result of this experience?</span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a><span class="fu">## The Five-Story Framework</span></span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>Prepare five core stories that can flex across multiple question types. Each story should contain:</span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>**A technical problem** you owned end-to-end</span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>**A people challenge** (disagreement, miscommunication, escalation)</span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>**A commercial or business dimension** (timeline, scope, cost, churn risk)</span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>**A moment of ambiguity** where you had to act without complete information</span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a><span class="ss">5. </span>**A concrete outcome** with a number or before/after comparison</span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>Five stories × five dimensions gives you 25 angles. Most behavioral questions ask you to emphasize one dimension — you pick which story fits best.</span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a><span class="fu">## STAR + Third Act</span></span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>Standard STAR (Situation, Task, Action, Result) is necessary but not sufficient for FDE roles. Add a **Third Act**:</span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a><span class="in">SITUATION  — What was happening? Who were the stakeholders?</span></span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a><span class="in">TASK       — What were you specifically responsible for?</span></span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a><span class="in">ACTION     — What did you do? (Make this 60% of the answer. Be specific.)</span></span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a><span class="in">RESULT     — What was the outcome? (Quantify if possible.)</span></span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a><span class="in">THIRD ACT  — What did you learn? How did it change how you work?</span></span>
+<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a><span class="in">```</span></span>
+<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a>The Third Act is where senior candidates separate themselves. It signals intellectual honesty (you can admit what you got wrong) and growth (the lesson is already applied to future work).</span>
+<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a>::: {.callout-tip}</span>
+<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a>**The Third Act Rule**</span>
+<span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a>If your STAR answer has no third act, it sounds like a closed case. With a third act, it sounds like you are the kind of person who improves systems — not just fixes incidents.</span>
+<span id="cb2-59"><a href="#cb2-59" aria-hidden="true" tabindex="-1"></a>:::</span>
+<span id="cb2-60"><a href="#cb2-60" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-61"><a href="#cb2-61" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-62"><a href="#cb2-62" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-63"><a href="#cb2-63" aria-hidden="true" tabindex="-1"></a><span class="fu">## The 15 High-Frequency Questions</span></span>
+<span id="cb2-64"><a href="#cb2-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-65"><a href="#cb2-65" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q1. Tell me about a time a customer was unhappy with your team's output.</span></span>
+<span id="cb2-66"><a href="#cb2-66" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-67"><a href="#cb2-67" aria-hidden="true" tabindex="-1"></a>**Situation:** We had delivered the first iteration of an automated document classification system to an enterprise customer. Their operations lead reviewed the results and said the system "felt unreliable" — they couldn't use it in their workflow.</span>
+<span id="cb2-68"><a href="#cb2-68" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-69"><a href="#cb2-69" aria-hidden="true" tabindex="-1"></a>**Task:** I was the primary technical contact. I needed to understand whether this was a perception problem (customer didn't trust what they couldn't see) or a real quality problem (the model was actually wrong).</span>
+<span id="cb2-70"><a href="#cb2-70" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-71"><a href="#cb2-71" aria-hidden="true" tabindex="-1"></a>**Action:** I scheduled a working session with their operations lead and two reviewers. Before the meeting, I pulled a random sample of 50 predictions and labeled them myself — this gave me ground truth without bias. In the meeting, I walked through each prediction: the input, what the model decided, and why (feature weights and confidence score). The reviewers disagreed with 8 of 50. I categorized the 8 disagreements: 5 were borderline cases where a human would also be uncertain, 2 were genuine model errors on a specific document subtype, and 1 was actually correct but the reviewer had applied the wrong policy.</span>
+<span id="cb2-72"><a href="#cb2-72" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-73"><a href="#cb2-73" aria-hidden="true" tabindex="-1"></a>I acknowledged the 2 genuine errors immediately, explained the subtype gap, and proposed adding 200 labeled examples of that subtype in the next two-week iteration. For the borderline cases, I showed the confidence score distribution — anything below 0.75 could be routed to human review.</span>
+<span id="cb2-74"><a href="#cb2-74" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-75"><a href="#cb2-75" aria-hidden="true" tabindex="-1"></a>**Result:** The customer agreed to continue. After the two-week iteration with the additional examples, accuracy on that subtype improved from 71% to 89%. The confidence-based routing reduced human review volume by 63% from the baseline. They expanded the deployment three months later.</span>
+<span id="cb2-76"><a href="#cb2-76" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-77"><a href="#cb2-77" aria-hidden="true" tabindex="-1"></a>**Third Act:** I stopped waiting for customers to surface dissatisfaction. Now I run proactive sample reviews at week 2 and week 6 of every deployment. By the time a customer says something "feels wrong," the data has usually been telling you for two weeks.</span>
+<span id="cb2-78"><a href="#cb2-78" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-79"><a href="#cb2-79" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-80"><a href="#cb2-80" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-81"><a href="#cb2-81" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q2. Describe a time you had to explain a technical limitation to a non-technical stakeholder.</span></span>
+<span id="cb2-82"><a href="#cb2-82" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-83"><a href="#cb2-83" aria-hidden="true" tabindex="-1"></a>**Situation:** During a pilot, an executive asked why the AI system couldn't "just read the whole document and understand what it means" — they wanted free-form summarization, but the system was built for extraction of specific structured fields.</span>
+<span id="cb2-84"><a href="#cb2-84" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-85"><a href="#cb2-85" aria-hidden="true" tabindex="-1"></a>**Task:** I needed to explain the boundary without making the system sound limited — and without making the executive feel dismissed.</span>
+<span id="cb2-86"><a href="#cb2-86" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-87"><a href="#cb2-87" aria-hidden="true" tabindex="-1"></a>**Action:** I used an analogy: "Our system is like a highly trained specialist — it reads thousands of these documents per day and extracts exactly the fields your downstream process needs, with very high precision. A generalist summarizer is like a smart intern who can describe what they read — but the description varies, and your ERP system can't consume free-text." I then asked what they actually needed the summary for. It turned out they wanted a one-sentence routing label for a separate workflow — which was actually an extraction task, not summarization. I pulled up the field schema and showed them we could add a "routing_category" field in the next iteration with about two days of labeling effort.</span>
+<span id="cb2-88"><a href="#cb2-88" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-89"><a href="#cb2-89" aria-hidden="true" tabindex="-1"></a>**Result:** The executive left the conversation asking for a scoped addition, not a platform rethink. The routing category field was added in the next sprint. It also surfaced that two other downstream teams needed the same field — expanding the business case.</span>
+<span id="cb2-90"><a href="#cb2-90" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-91"><a href="#cb2-91" aria-hidden="true" tabindex="-1"></a>**Third Act:** Executives often describe a solution when they mean a need. Now I always ask "what decision does this enable?" before scoping a technical request. This has surfaced misaligned requirements in three out of four cases since then.</span>
+<span id="cb2-92"><a href="#cb2-92" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-93"><a href="#cb2-93" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-94"><a href="#cb2-94" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-95"><a href="#cb2-95" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q3. Tell me about a time you pushed back on a customer request.</span></span>
+<span id="cb2-96"><a href="#cb2-96" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-97"><a href="#cb2-97" aria-hidden="true" tabindex="-1"></a>**Situation:** A customer requested that we remove all confidence thresholds from the system and serve every prediction, regardless of score, to reduce the human review queue. They said the queue was blocking their team.</span>
+<span id="cb2-98"><a href="#cb2-98" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-99"><a href="#cb2-99" aria-hidden="true" tabindex="-1"></a>**Task:** I was responsible for both the technical implementation and the customer relationship. I needed to decide whether to comply, push back, or find a third option.</span>
+<span id="cb2-100"><a href="#cb2-100" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-101"><a href="#cb2-101" aria-hidden="true" tabindex="-1"></a>**Action:** I acknowledged their problem first — a backed-up review queue is a real operational pain. Then I pulled the data: predictions below our 0.65 confidence threshold had a 31% error rate, versus 4% above the threshold. Removing the threshold would triple their error rate in production. I showed them this breakdown in a three-minute screen share.</span>
+<span id="cb2-102"><a href="#cb2-102" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-103"><a href="#cb2-103" aria-hidden="true" tabindex="-1"></a>Then I reframed the problem: the issue wasn't the threshold, it was queue throughput. I proposed two alternatives — a tiered routing model where low-confidence predictions went to a lighter review form, and a batch processing mode for lower-stakes document types that could bypass review entirely. I also offered to audit the review queue backlog to identify whether it was driven by overall volume or concentrated in one document type.</span>
+<span id="cb2-104"><a href="#cb2-104" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-105"><a href="#cb2-105" aria-hidden="true" tabindex="-1"></a>**Result:** The customer chose the tiered routing option. The audit revealed 40% of the backlog was one document type with consistently high model confidence — we removed it from the review queue entirely. Overall queue depth dropped 58% within two weeks without changing the threshold.</span>
+<span id="cb2-106"><a href="#cb2-106" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-107"><a href="#cb2-107" aria-hidden="true" tabindex="-1"></a>**Third Act:** I almost complied the first time because I wanted to be responsive. Now I have a rule: when a customer asks me to change a quality gate, I first show them the impact on error rates before discussing options. Data makes the conversation easier.</span>
+<span id="cb2-108"><a href="#cb2-108" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-109"><a href="#cb2-109" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-110"><a href="#cb2-110" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-111"><a href="#cb2-111" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q4. Tell me about a time you had to learn something quickly under pressure.</span></span>
+<span id="cb2-112"><a href="#cb2-112" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-113"><a href="#cb2-113" aria-hidden="true" tabindex="-1"></a>**Situation:** A customer escalated an issue during a go-live week — their legal team had flagged that all predictions needed a full audit trail: what data was used, what model version, and what the confidence score was at decision time. This was not in the original requirements and the existing system did not capture model versioning.</span>
+<span id="cb2-114"><a href="#cb2-114" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-115"><a href="#cb2-115" aria-hidden="true" tabindex="-1"></a>**Task:** I had 48 hours before go-live to implement a logging solution. I had not worked with the specific audit database schema they required (a regulatory format I hadn't used before).</span>
+<span id="cb2-116"><a href="#cb2-116" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-117"><a href="#cb2-117" aria-hidden="true" tabindex="-1"></a>**Action:** I spent the first two hours reading the schema specification and identifying the 4 fields I actually needed. Then I scoped the smallest possible change: add a structured log entry at prediction time that captured model version, feature hash, confidence score, and timestamp. I used the existing logging infrastructure rather than building a new pipeline — this kept the blast radius small.</span>
+<span id="cb2-118"><a href="#cb2-118" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-119"><a href="#cb2-119" aria-hidden="true" tabindex="-1"></a>I wrote the implementation in four hours, including tests. I asked a colleague to review it while I briefed the customer on the approach, setting the expectation that this was an MVP audit log, not a full audit dashboard — the full UI would come in a follow-up sprint.</span>
+<span id="cb2-120"><a href="#cb2-120" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-121"><a href="#cb2-121" aria-hidden="true" tabindex="-1"></a>**Result:** The implementation was deployed in 29 hours. Legal reviewed the log format and accepted it. Go-live happened on schedule.</span>
+<span id="cb2-122"><a href="#cb2-122" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-123"><a href="#cb2-123" aria-hidden="true" tabindex="-1"></a>**Third Act:** I now include an "audit and compliance requirements" question in every discovery call. Requirements like these almost always exist but rarely surface until someone panics. Asking early converts a crisis into a sprint.</span>
+<span id="cb2-124"><a href="#cb2-124" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-125"><a href="#cb2-125" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-126"><a href="#cb2-126" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-127"><a href="#cb2-127" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q5. Describe a situation where you disagreed with a teammate's technical approach.</span></span>
+<span id="cb2-128"><a href="#cb2-128" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-129"><a href="#cb2-129" aria-hidden="true" tabindex="-1"></a>**Situation:** During a system design review, a teammate proposed fine-tuning the base model on the customer's domain data before deployment. I thought the data volume (800 labeled examples) was too low and that fine-tuning would overfit and hurt generalization.</span>
+<span id="cb2-130"><a href="#cb2-130" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-131"><a href="#cb2-131" aria-hidden="true" tabindex="-1"></a>**Task:** I needed to either get alignment or escalate — we had a one-week deadline to agree on the architecture.</span>
+<span id="cb2-132"><a href="#cb2-132" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-133"><a href="#cb2-133" aria-hidden="true" tabindex="-1"></a>**Action:** I proposed a structured experiment instead of a debate. We would run three approaches on a held-out test set: zero-shot (baseline), few-shot prompting with the 800 examples, and fine-tuned. I estimated 2 days of work. My teammate agreed. After running the experiment, fine-tuning on 800 examples achieved 79% accuracy, few-shot prompting achieved 83%, and the baseline was 74%. The data confirmed my concern while also showing that my teammate's instinct to use domain data was right — just via prompting, not fine-tuning.</span>
+<span id="cb2-134"><a href="#cb2-134" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-135"><a href="#cb2-135" aria-hidden="true" tabindex="-1"></a>**Result:** We shipped with few-shot prompting. We also documented the 800 examples in a format that would support fine-tuning later if the dataset grew to 5K+ examples. No escalation required.</span>
+<span id="cb2-136"><a href="#cb2-136" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-137"><a href="#cb2-137" aria-hidden="true" tabindex="-1"></a>**Third Act:** I default to experiments over arguments now. Most technical disagreements are empirically resolvable, especially in ML where the performance difference is measurable. "Let's test both" has ended more debates for me than any amount of theoretical reasoning.</span>
+<span id="cb2-138"><a href="#cb2-138" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-139"><a href="#cb2-139" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-140"><a href="#cb2-140" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-141"><a href="#cb2-141" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q6. Tell me about a time you made a mistake that affected a customer.</span></span>
+<span id="cb2-142"><a href="#cb2-142" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-143"><a href="#cb2-143" aria-hidden="true" tabindex="-1"></a>**Situation:** I deployed a configuration change to a production pipeline to fix a performance issue. The change inadvertently modified the document chunking overlap parameter, which reduced retrieval recall on long documents. I didn't notice for three days.</span>
+<span id="cb2-144"><a href="#cb2-144" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-145"><a href="#cb2-145" aria-hidden="true" tabindex="-1"></a>**Task:** The customer had been silently getting degraded results. I needed to fix the issue, communicate honestly, and rebuild confidence.</span>
+<span id="cb2-146"><a href="#cb2-146" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-147"><a href="#cb2-147" aria-hidden="true" tabindex="-1"></a>**Action:** As soon as I identified the cause, I reverted the parameter and deployed within 30 minutes. Then I called the customer — I didn't email, because this needed a conversation. I explained exactly what changed, when it changed, how long it had been degraded, and which document types were most affected. I had already queried their feedback logs and found 12 cases during those three days where users had flagged incomplete answers — I showed them this evidence alongside my diagnosis. I offered to re-run any queries from that window through the restored system.</span>
+<span id="cb2-148"><a href="#cb2-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-149"><a href="#cb2-149" aria-hidden="true" tabindex="-1"></a>**Result:** The customer appreciated the transparency. They re-ran six queries, all returned to expected quality. We updated the deployment checklist to include a post-deploy recall spot check on long documents.</span>
+<span id="cb2-150"><a href="#cb2-150" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-151"><a href="#cb2-151" aria-hidden="true" tabindex="-1"></a>**Third Act:** I added automated regression tests for recall@10 on a fixed golden query set — run automatically after every config change. This catches the class of regression I missed. Being proactively transparent when you've made a mistake is almost always better than waiting for the customer to surface it.</span>
+<span id="cb2-152"><a href="#cb2-152" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-153"><a href="#cb2-153" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-154"><a href="#cb2-154" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-155"><a href="#cb2-155" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q7. Tell me about a time you had to manage competing priorities.</span></span>
+<span id="cb2-156"><a href="#cb2-156" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-157"><a href="#cb2-157" aria-hidden="true" tabindex="-1"></a>**Situation:** I was simultaneously managing the final week of a go-live for one customer and the discovery phase for a new customer whose technical evaluation needed to be completed within the same two-week window.</span>
+<span id="cb2-158"><a href="#cb2-158" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-159"><a href="#cb2-159" aria-hidden="true" tabindex="-1"></a>**Task:** Both were high visibility. I had to deliver both without dropping quality.</span>
+<span id="cb2-160"><a href="#cb2-160" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-161"><a href="#cb2-161" aria-hidden="true" tabindex="-1"></a>**Action:** I created explicit time-boxing: mornings (9am-1pm) were blocked for the go-live customer — this was the highest-stakes work. Afternoons were the new customer discovery. I communicated this structure to both customers upfront, giving each a specific point-of-contact window, so they knew when to expect responses.</span>
+<span id="cb2-162"><a href="#cb2-162" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-163"><a href="#cb2-163" aria-hidden="true" tabindex="-1"></a>For the go-live, I identified the three critical-path items and delegated the remaining five items to teammates with clear specs. For discovery, I front-loaded the data and infrastructure questions in the first week so the second week could focus on modeling and integration design.</span>
+<span id="cb2-164"><a href="#cb2-164" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-165"><a href="#cb2-165" aria-hidden="true" tabindex="-1"></a>**Result:** The go-live shipped on schedule with no severity-1 issues. The technical evaluation was completed on day 12 of the 14-day window, giving the new customer two days to review before a decision meeting.</span>
+<span id="cb2-166"><a href="#cb2-166" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-167"><a href="#cb2-167" aria-hidden="true" tabindex="-1"></a>**Third Act:** I learned that context-switching is the enemy, not workload. Explicit time-boxing and transparent communication of availability windows reduced the cognitive load and kept both customers confident. I now default to this structure when managing multiple concurrent engagements.</span>
+<span id="cb2-168"><a href="#cb2-168" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-169"><a href="#cb2-169" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-170"><a href="#cb2-170" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-171"><a href="#cb2-171" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q8. Tell me about a time you influenced a decision without having formal authority.</span></span>
+<span id="cb2-172"><a href="#cb2-172" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-173"><a href="#cb2-173" aria-hidden="true" tabindex="-1"></a>**Situation:** The product roadmap included a feature a key customer had requested: bulk re-labeling of past predictions when a model is updated. I believed the implementation approach being planned (re-running the model on all historical records synchronously) would cause a 4-hour service outage for other customers.</span>
+<span id="cb2-174"><a href="#cb2-174" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-175"><a href="#cb2-175" aria-hidden="true" tabindex="-1"></a>**Task:** I was not the decision-maker. I needed to change the implementation plan without being the person who owned the roadmap.</span>
+<span id="cb2-176"><a href="#cb2-176" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-177"><a href="#cb2-177" aria-hidden="true" tabindex="-1"></a>**Action:** I wrote a one-page technical brief: the proposed approach, the projected impact (4-hour outage affecting 6 customers), and two alternative implementations — an async background job with progress tracking, and a lazy-recompute approach triggered by the next access. I included rough engineering estimates for all three options.</span>
+<span id="cb2-178"><a href="#cb2-178" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-179"><a href="#cb2-179" aria-hidden="true" tabindex="-1"></a>I shared this with the product manager and the engineering lead as "thoughts before we finalize the design." I framed it as "I want to make sure we've considered the customer impact before committing" — not "this plan is wrong." The PM hadn't thought through the downtime impact because it wasn't obvious from the feature spec.</span>
+<span id="cb2-180"><a href="#cb2-180" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-181"><a href="#cb2-181" aria-hidden="true" tabindex="-1"></a>**Result:** The async background job approach was adopted. Implementation took one extra day of engineering. The feature shipped with no service impact.</span>
+<span id="cb2-182"><a href="#cb2-182" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-183"><a href="#cb2-183" aria-hidden="true" tabindex="-1"></a>**Third Act:** Framing matters as much as the technical content. "Here's a risk I want to make sure we've considered" lands very differently than "this plan is wrong." I lead with the concern, not the conclusion, and let the data make the argument.</span>
+<span id="cb2-184"><a href="#cb2-184" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-185"><a href="#cb2-185" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-186"><a href="#cb2-186" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-187"><a href="#cb2-187" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q9. Describe a time you dealt with an ambiguous problem where the requirements were unclear.</span></span>
+<span id="cb2-188"><a href="#cb2-188" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-189"><a href="#cb2-189" aria-hidden="true" tabindex="-1"></a>**Situation:** A customer asked us to build a system that would "flag unusual activity" in their document streams. No further definition was provided. The business owner who made the request was not available for follow-up for two weeks.</span>
+<span id="cb2-190"><a href="#cb2-190" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-191"><a href="#cb2-191" aria-hidden="true" tabindex="-1"></a>**Task:** I needed to make progress without waiting two weeks, while not building the wrong thing.</span>
+<span id="cb2-192"><a href="#cb2-192" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-193"><a href="#cb2-193" aria-hidden="true" tabindex="-1"></a>**Action:** I broke "unusual" into three hypotheses: (1) statistical outliers in document structure (unusual length, field count, format), (2) content anomalies (topics the model had not seen before), (3) process anomalies (documents from unusual sources, times, or senders). I built a lightweight version of each — one day of work each — and scheduled a demo for when the business owner returned.</span>
+<span id="cb2-194"><a href="#cb2-194" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-195"><a href="#cb2-195" aria-hidden="true" tabindex="-1"></a>I also interviewed the operations team in the interim. They had a concrete example of the "unusual" they cared about — documents that bypassed the standard intake queue. This was hypothesis 3. The first two hypotheses were technically more interesting but not what they needed.</span>
+<span id="cb2-196"><a href="#cb2-196" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-197"><a href="#cb2-197" aria-hidden="true" tabindex="-1"></a>**Result:** The demo confirmed the operations team's interpretation. We shipped a narrow process anomaly detector in two weeks. The other two hypotheses were documented as future features, which the customer eventually prioritized six months later.</span>
+<span id="cb2-198"><a href="#cb2-198" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-199"><a href="#cb2-199" aria-hidden="true" tabindex="-1"></a>**Third Act:** When requirements are ambiguous, parallel prototyping is more useful than waiting for clarity. Three small experiments give you a conversation tool — the customer can react to something concrete rather than trying to articulate a requirement in the abstract.</span>
+<span id="cb2-200"><a href="#cb2-200" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-201"><a href="#cb2-201" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-202"><a href="#cb2-202" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-203"><a href="#cb2-203" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q10. Tell me about a time you had to deliver bad news to a customer.</span></span>
+<span id="cb2-204"><a href="#cb2-204" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-205"><a href="#cb2-205" aria-hidden="true" tabindex="-1"></a>**Situation:** Three weeks before a committed go-live date, we identified that one of the core use cases — real-time classification of incoming documents within 200ms — was not achievable with the current architecture. The model inference time alone was 180-220ms on the customer's document sizes, leaving no headroom for any pipeline overhead.</span>
+<span id="cb2-206"><a href="#cb2-206" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-207"><a href="#cb2-207" aria-hidden="true" tabindex="-1"></a>**Task:** I had to tell the customer that either the deadline or the latency requirement had to change — and I had to do it before they had already built downstream integrations that assumed 200ms.</span>
+<span id="cb2-208"><a href="#cb2-208" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-209"><a href="#cb2-209" aria-hidden="true" tabindex="-1"></a>**Action:** I called the customer's technical lead the day we confirmed the issue — I did not wait for a scheduled sync. I walked through the diagnosis: model size, inference time measurements, network overhead budget. I presented three concrete paths: (1) accept 350ms latency with current architecture, (2) hit 200ms by switching to a smaller model with slightly lower accuracy (I had the accuracy numbers), (3) use async processing with a webhook callback, which had no latency constraint but required downstream integration changes.</span>
+<span id="cb2-210"><a href="#cb2-210" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-211"><a href="#cb2-211" aria-hidden="true" tabindex="-1"></a>I was explicit that option 1 was the no-change path and would miss the SLA, but I presented all three as genuine options — not a recommendation to abandon the requirement.</span>
+<span id="cb2-212"><a href="#cb2-212" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-213"><a href="#cb2-213" aria-hidden="true" tabindex="-1"></a>**Result:** The customer chose option 3. Their downstream system was not actually latency-sensitive — the 200ms requirement had been inherited from an older spec that predated the current workflow. The async path was actually better for their architecture. Go-live happened on the original date.</span>
+<span id="cb2-214"><a href="#cb2-214" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-215"><a href="#cb2-215" aria-hidden="true" tabindex="-1"></a>**Third Act:** Latency requirements often come from documents that were written before the actual workflow existed. Now I validate every SLA by asking "what breaks if you're 50% slower?" Often the answer is "nothing" — the requirement is inherited, not real. This has prevented two similar near-misses since.</span>
+<span id="cb2-216"><a href="#cb2-216" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-217"><a href="#cb2-217" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-218"><a href="#cb2-218" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-219"><a href="#cb2-219" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q11. Tell me about a time you went above and beyond for a customer.</span></span>
+<span id="cb2-220"><a href="#cb2-220" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-221"><a href="#cb2-221" aria-hidden="true" tabindex="-1"></a>**Situation:** A customer was preparing for a board review of the AI deployment and asked for a summary of results. Their success metrics had been informally tracked — no formal reporting infrastructure existed.</span>
+<span id="cb2-222"><a href="#cb2-222" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-223"><a href="#cb2-223" aria-hidden="true" tabindex="-1"></a>**Task:** This was not in scope. But a good result at the board review would directly influence continued investment in the platform.</span>
+<span id="cb2-224"><a href="#cb2-224" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-225"><a href="#cb2-225" aria-hidden="true" tabindex="-1"></a>**Action:** I spent a weekend building a one-page executive summary: before/after processing time, error rate reduction, cost per document comparison, and projected annual savings based on their volume. I sourced the numbers from their system logs (with their permission) and cross-checked against their original success criteria from the kickoff. I also included two quotes from their operations staff who had been early adopters — I'd collected these informally during weekly syncs.</span>
+<span id="cb2-226"><a href="#cb2-226" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-227"><a href="#cb2-227" aria-hidden="true" tabindex="-1"></a>I sent the draft to their project lead on Sunday night so they had Monday to review and adjust.</span>
+<span id="cb2-228"><a href="#cb2-228" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-229"><a href="#cb2-229" aria-hidden="true" tabindex="-1"></a>**Result:** The board approved a follow-on phase with expanded scope. The project lead specifically mentioned the executive summary as a factor in the presentation's success.</span>
+<span id="cb2-230"><a href="#cb2-230" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-231"><a href="#cb2-231" aria-hidden="true" tabindex="-1"></a>**Third Act:** The relationship between technical delivery and commercial success is not automatic — someone has to translate the technical results into business language. I now treat the customer's internal advocacy as part of my job, not an extra. The best technical outcome is worthless if the sponsor can't communicate it up the chain.</span>
+<span id="cb2-232"><a href="#cb2-232" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-233"><a href="#cb2-233" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-234"><a href="#cb2-234" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-235"><a href="#cb2-235" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q12. Tell me about a time you had to set boundaries on scope.</span></span>
+<span id="cb2-236"><a href="#cb2-236" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-237"><a href="#cb2-237" aria-hidden="true" tabindex="-1"></a>**Situation:** Mid-pilot, a customer began sending requests for features outside the agreed scope: custom reporting, a mobile interface, integration with a third system that wasn't in the original design. Each request was reasonable individually, but collectively they represented 6 additional weeks of work.</span>
+<span id="cb2-238"><a href="#cb2-238" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-239"><a href="#cb2-239" aria-hidden="true" tabindex="-1"></a>**Task:** I needed to protect the original delivery commitment without damaging the relationship.</span>
+<span id="cb2-240"><a href="#cb2-240" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-241"><a href="#cb2-241" aria-hidden="true" tabindex="-1"></a>**Action:** I acknowledged each request in writing, captured them all in a shared backlog document, and scheduled a scope review. In the review, I explained the trade-off explicitly: adding these features before go-live would push the date by 6 weeks. Alternatively, we could go live with the original scope on schedule and work through the backlog in a post-launch phase.</span>
+<span id="cb2-242"><a href="#cb2-242" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-243"><a href="#cb2-243" aria-hidden="true" tabindex="-1"></a>I also showed the customer what they would lose by delaying: 6 weeks of production data, which would actually make the backlog features better (the reporting would be richer, the integration more informed).</span>
+<span id="cb2-244"><a href="#cb2-244" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-245"><a href="#cb2-245" aria-hidden="true" tabindex="-1"></a>**Result:** The customer chose on-schedule go-live. The backlog became the roadmap for the next three-month engagement, which they extended the contract for. Ironically, two of the originally requested features turned out to be unnecessary once they were in production.</span>
+<span id="cb2-246"><a href="#cb2-246" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-247"><a href="#cb2-247" aria-hidden="true" tabindex="-1"></a>**Third Act:** Scope creep is usually not bad faith — it is enthusiasm. The customer is excited about the system and is imagining all the things it could do. Channeling that enthusiasm into a structured backlog turns scope risk into a sales pipeline.</span>
+<span id="cb2-248"><a href="#cb2-248" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-249"><a href="#cb2-249" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-250"><a href="#cb2-250" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-251"><a href="#cb2-251" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q13. Describe a time when two stakeholders had conflicting requirements.</span></span>
+<span id="cb2-252"><a href="#cb2-252" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-253"><a href="#cb2-253" aria-hidden="true" tabindex="-1"></a>**Situation:** The operations lead at a customer wanted the AI system to flag any prediction below 90% confidence for human review. The IT lead wanted to minimize review queue volume to reduce headcount cost. A 90% confidence threshold would send 34% of predictions to review; IT was targeting under 10%.</span>
+<span id="cb2-254"><a href="#cb2-254" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-255"><a href="#cb2-255" aria-hidden="true" tabindex="-1"></a>**Task:** I was stuck in the middle. Both stakeholders had legitimate positions, and I was their shared technical resource.</span>
+<span id="cb2-256"><a href="#cb2-256" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-257"><a href="#cb2-257" aria-hidden="true" tabindex="-1"></a>**Action:** I first verified the numbers: I pulled the prediction confidence distribution and the error rate by confidence band. At 90% threshold, 34% would be reviewed, and the error rate in the below-threshold bucket was 18%. At a threshold that yielded 10% review volume, the error rate was 8% — still higher than operations was comfortable with, but the actual error count was lower due to lower volume.</span>
+<span id="cb2-258"><a href="#cb2-258" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-259"><a href="#cb2-259" aria-hidden="true" tabindex="-1"></a>I then facilitated a meeting with both stakeholders. I presented the data as a shared fact base, not my recommendation. The key insight: the disagreement was about absolute error rate (operations) versus error count (IT). Once they saw both framings, they could have a productive conversation. They agreed on a tiered approach: high-stakes document types at 85% threshold (operations' priority), standard types at 70% (IT's priority).</span>
+<span id="cb2-260"><a href="#cb2-260" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-261"><a href="#cb2-261" aria-hidden="true" tabindex="-1"></a>**Result:** The tiered threshold reduced overall review volume by 41% while keeping error rates on high-stakes documents at 4%. Both stakeholders signed off.</span>
+<span id="cb2-262"><a href="#cb2-262" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-263"><a href="#cb2-263" aria-hidden="true" tabindex="-1"></a>**Third Act:** Stakeholder conflicts are often framing conflicts. Making the trade-off visible in a shared data view — instead of arguing positions — almost always moves the conversation forward. I now build a "decision matrix" view whenever I know stakeholders have different success criteria.</span>
+<span id="cb2-264"><a href="#cb2-264" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-265"><a href="#cb2-265" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-266"><a href="#cb2-266" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-267"><a href="#cb2-267" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q14. Tell me about a time you had to quickly build trust with a new customer.</span></span>
+<span id="cb2-268"><a href="#cb2-268" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-269"><a href="#cb2-269" aria-hidden="true" tabindex="-1"></a>**Situation:** I inherited a customer relationship mid-pilot after the previous engineer left the company. The customer had already experienced one deadline slip and had concerns about continuity.</span>
+<span id="cb2-270"><a href="#cb2-270" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-271"><a href="#cb2-271" aria-hidden="true" tabindex="-1"></a>**Task:** I had two weeks to establish credibility before a milestone review.</span>
+<span id="cb2-272"><a href="#cb2-272" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-273"><a href="#cb2-273" aria-hidden="true" tabindex="-1"></a>**Action:** In the first 48 hours, I did three things: read every email, doc, and Slack thread from the previous three months; scheduled a 30-minute call with the customer's technical lead to listen (not present); and sent a written summary of my understanding of the current state and open items within 24 hours of that call.</span>
+<span id="cb2-274"><a href="#cb2-274" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-275"><a href="#cb2-275" aria-hidden="true" tabindex="-1"></a>On the call, I asked: "What has frustrated you most about this engagement so far?" and "What would make this milestone review a success for you?" Both questions required genuine listening — I didn't prepare answers, I took notes.</span>
+<span id="cb2-276"><a href="#cb2-276" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-277"><a href="#cb2-277" aria-hidden="true" tabindex="-1"></a>The technical lead said two things: they felt updates were reactive (they had to ask for status), and they weren't sure the original scope was still the right scope after what they'd learned in the pilot. I addressed both: I set up a weekly written update (sent Monday morning, no meeting required) and I proposed a half-day scope review session before the milestone.</span>
+<span id="cb2-278"><a href="#cb2-278" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-279"><a href="#cb2-279" aria-hidden="true" tabindex="-1"></a>**Result:** The milestone review was the best one in the engagement. The scope review surfaced three changes that made the final product significantly more useful. The customer renewed for a follow-on phase.</span>
+<span id="cb2-280"><a href="#cb2-280" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-281"><a href="#cb2-281" aria-hidden="true" tabindex="-1"></a>**Third Act:** Trust is rebuilt through follow-through on small things before you get the chance to deliver on big things. A weekly written status update that arrives when you said it would arrive is worth more than a brilliant technical solution delivered late and without communication.</span>
+<span id="cb2-282"><a href="#cb2-282" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-283"><a href="#cb2-283" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-284"><a href="#cb2-284" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-285"><a href="#cb2-285" aria-hidden="true" tabindex="-1"></a><span class="fu">### Q15. Tell me about your most technically complex customer engagement.</span></span>
+<span id="cb2-286"><a href="#cb2-286" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-287"><a href="#cb2-287" aria-hidden="true" tabindex="-1"></a>**Situation:** A customer needed to unify document classification across three legacy systems, each with different schemas, different label taxonomies, and 7 years of historical data with no consistency in labeling conventions. They had attempted this internally twice before and abandoned it.</span>
+<span id="cb2-288"><a href="#cb2-288" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-289"><a href="#cb2-289" aria-hidden="true" tabindex="-1"></a>**Task:** I was responsible for both the technical design and the customer relationship. There was no prior template for this problem.</span>
+<span id="cb2-290"><a href="#cb2-290" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-291"><a href="#cb2-291" aria-hidden="true" tabindex="-1"></a>**Action:** I broke the problem into three phases. Phase 0 (two weeks): audit the three schemas, sample 500 documents from each system, manually label a subset to understand actual distribution. This revealed that 60% of documents across all three systems fell into 8 common categories — the divergence was in the long tail and in naming conventions, not in actual content types.</span>
+<span id="cb2-292"><a href="#cb2-292" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-293"><a href="#cb2-293" aria-hidden="true" tabindex="-1"></a>Phase 1 (four weeks): build a unified taxonomy mapping with config-driven aliases (so "Invoice", "INV", "invoice_document" all mapped to the same canonical class). Train a single classifier on the merged training set, stratified by source system. Test accuracy by source system separately — not just overall.</span>
+<span id="cb2-294"><a href="#cb2-294" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-295"><a href="#cb2-295" aria-hidden="true" tabindex="-1"></a>Phase 2 (two weeks): shadow deployment against all three systems simultaneously, comparing model output to historical human decisions. Present disagreement cases to the customer for adjudication — this both validated the model and updated the unified taxonomy.</span>
+<span id="cb2-296"><a href="#cb2-296" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-297"><a href="#cb2-297" aria-hidden="true" tabindex="-1"></a>**Result:** The classifier achieved 88% accuracy across all three systems — better than any single-system model the customer had run before. The config-driven taxonomy mapping became reusable infrastructure for three subsequent customer engagements.</span>
+<span id="cb2-298"><a href="#cb2-298" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-299"><a href="#cb2-299" aria-hidden="true" tabindex="-1"></a>**Third Act:** The biggest risk in legacy system integrations is starting to build before you understand what the data actually looks like — not what it's supposed to look like. The two-week audit phase saved six weeks of rework. I now require a data audit before any legacy integration project.</span>
+<span id="cb2-300"><a href="#cb2-300" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-301"><a href="#cb2-301" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-302"><a href="#cb2-302" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-303"><a href="#cb2-303" aria-hidden="true" tabindex="-1"></a><span class="fu">## Question Reference Table</span></span>
+<span id="cb2-304"><a href="#cb2-304" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-305"><a href="#cb2-305" aria-hidden="true" tabindex="-1"></a>| Question | Dimension Tested | Primary Story Element |</span>
+<span id="cb2-306"><a href="#cb2-306" aria-hidden="true" tabindex="-1"></a>|----------|-----------------|----------------------|</span>
+<span id="cb2-307"><a href="#cb2-307" aria-hidden="true" tabindex="-1"></a>| Q1: Customer unhappy with output | Customer relationship + technical diagnosis | Proactive quality review |</span>
+<span id="cb2-308"><a href="#cb2-308" aria-hidden="true" tabindex="-1"></a>| Q2: Explaining technical limitations | Communication + customer empathy | Analogy + needs reframing |</span>
+<span id="cb2-309"><a href="#cb2-309" aria-hidden="true" tabindex="-1"></a>| Q3: Pushing back on a request | Commercial awareness + data-driven | Data before alternatives |</span>
+<span id="cb2-310"><a href="#cb2-310" aria-hidden="true" tabindex="-1"></a>| Q4: Learning quickly under pressure | Adaptability + delivery | Scope down, ship fast |</span>
+<span id="cb2-311"><a href="#cb2-311" aria-hidden="true" tabindex="-1"></a>| Q5: Disagreeing with a teammate | Collaboration + intellectual honesty | Structured experiment |</span>
+<span id="cb2-312"><a href="#cb2-312" aria-hidden="true" tabindex="-1"></a>| Q6: Mistake affecting a customer | Accountability + trust | Proactive transparency |</span>
+<span id="cb2-313"><a href="#cb2-313" aria-hidden="true" tabindex="-1"></a>| Q7: Competing priorities | Execution + time management | Time-boxing + delegation |</span>
+<span id="cb2-314"><a href="#cb2-314" aria-hidden="true" tabindex="-1"></a>| Q8: Influencing without authority | Leadership + communication | Risk framing, not blame |</span>
+<span id="cb2-315"><a href="#cb2-315" aria-hidden="true" tabindex="-1"></a>| Q9: Ambiguous requirements | Ambiguity + proactivity | Parallel prototyping |</span>
+<span id="cb2-316"><a href="#cb2-316" aria-hidden="true" tabindex="-1"></a>| Q10: Delivering bad news | Honesty + problem-solving | Options, not bad news alone |</span>
+<span id="cb2-317"><a href="#cb2-317" aria-hidden="true" tabindex="-1"></a>| Q11: Going above and beyond | Customer advocacy | Technical-to-business translation |</span>
+<span id="cb2-318"><a href="#cb2-318" aria-hidden="true" tabindex="-1"></a>| Q12: Setting scope boundaries | Commercial awareness + relationship | Backlog as sales pipeline |</span>
+<span id="cb2-319"><a href="#cb2-319" aria-hidden="true" tabindex="-1"></a>| Q13: Conflicting stakeholders | Facilitation + data framing | Shared decision matrix |</span>
+<span id="cb2-320"><a href="#cb2-320" aria-hidden="true" tabindex="-1"></a>| Q14: Building trust quickly | Relationship + follow-through | Small commitments, kept fast |</span>
+<span id="cb2-321"><a href="#cb2-321" aria-hidden="true" tabindex="-1"></a>| Q15: Most complex engagement | Technical depth + structure | Phase 0 audit discipline |</span>
+<span id="cb2-322"><a href="#cb2-322" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-323"><a href="#cb2-323" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb2-324"><a href="#cb2-324" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-325"><a href="#cb2-325" aria-hidden="true" tabindex="-1"></a><span class="fu">## Preparation Checklist</span></span>
+<span id="cb2-326"><a href="#cb2-326" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-327"><a href="#cb2-327" aria-hidden="true" tabindex="-1"></a>Before your interview, have written answers for:</span>
+<span id="cb2-328"><a href="#cb2-328" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-329"><a href="#cb2-329" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> Your five core stories (one per dimension in the five-story framework)</span>
+<span id="cb2-330"><a href="#cb2-330" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> At least two stories where you made a mistake or failed</span>
+<span id="cb2-331"><a href="#cb2-331" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> At least one story where you influenced a decision without authority</span>
+<span id="cb2-332"><a href="#cb2-332" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> At least one story about a difficult customer interaction</span>
+<span id="cb2-333"><a href="#cb2-333" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> Quantified results for every story (%, time saved, revenue impact, churn prevented)</span>
+<span id="cb2-334"><a href="#cb2-334" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-335"><a href="#cb2-335" aria-hidden="true" tabindex="-1"></a>During the interview:</span>
+<span id="cb2-336"><a href="#cb2-336" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-337"><a href="#cb2-337" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> Lead with context (30 seconds) before diving into action</span>
+<span id="cb2-338"><a href="#cb2-338" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> Use "I" not "we" — interviewers want to know what you specifically did</span>
+<span id="cb2-339"><a href="#cb2-339" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> Include the third act — what changed in how you work as a result?</span>
+<span id="cb2-340"><a href="#cb2-340" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> If the story is longer than 3 minutes, pause and ask if they want more detail</span>
+<span id="cb2-341"><a href="#cb2-341" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-342"><a href="#cb2-342" aria-hidden="true" tabindex="-1"></a>::: {.callout-warning}</span>
+<span id="cb2-343"><a href="#cb2-343" aria-hidden="true" tabindex="-1"></a>**Common Behavioral Interview Mistakes for FDE Roles**</span>
+<span id="cb2-344"><a href="#cb2-344" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-345"><a href="#cb2-345" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Describing what the team did without specifying your individual contribution</span>
+<span id="cb2-346"><a href="#cb2-346" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Presenting only successes — interviewers expect and value failures with learning</span>
+<span id="cb2-347"><a href="#cb2-347" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Omitting the customer's perspective — FDE stories without customer context sound like standard engineering stories</span>
+<span id="cb2-348"><a href="#cb2-348" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Forgetting the business outcome — "accuracy improved" is incomplete; "accuracy improvement reduced customer churn by X%" is an FDE answer</span>
+<span id="cb2-349"><a href="#cb2-349" aria-hidden="true" tabindex="-1"></a>:::</span></code><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal=""><i class="bi"></i></button></pre></div>
+</div></div></div></div></div>
+</div> <!-- /content -->
+
+
+
+
+<footer class="footer"><div class="nav-footer"><div class="nav-footer-center"><div class="toc-actions d-sm-block d-md-none"><ul><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/edit/main/chapters/41-fde-behavioral.qmd" class="toc-action"><i class="bi bi-github"></i>Edit this page</a></li><li><a href="https://github.com/AKhileshPothuri/learnwithakhilesh/issues/new" class="toc-action"><i class="bi empty"></i>Report an issue</a></li></ul></div></div></div></footer></body></html>
